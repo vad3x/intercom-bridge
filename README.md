@@ -1,225 +1,67 @@
-# Smart Intercom
+| Supported Targets | ESP32-C5 | ESP32-C6 | ESP32-H2 |
+| ----------------- | -------- | -------- | -------- |
 
-ESP32-C6 firmware for making an IR204E analog intercom "smart" with:
-- Buzz/ring notification detection
-- Remote door unlock via HTTP API
-- Future: Matter/HomeKit integration
+# Light Bulb Example
 
-## Architecture
+This test code shows how to configure Zigbee end device and use it as HA on/off light bulb.
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        IR204E Intercom                          │
-│  ┌──────────┐                              ┌──────────┐        │
-│  │  Ring    │                              │  Door    │        │
-│  │  Signal  │                              │  Button  │        │
-│  └────┬─────┘                              └────┬─────┘        │
-└───────┼─────────────────────────────────────────┼──────────────┘
-        │                                         │
-        │ (AC/DC)                                 │ (Parallel)
-        ▼                                         ▼
-┌───────────────┐                        ┌───────────────┐
-│  Optocoupler  │                        │ PhotoMOS Relay│
-│  HCPL-817     │                        │  AQY212EHA    │
-└───────┬───────┘                        └───────┬───────┘
-        │                                         │
-        │ (GPIO Input)                           │ (GPIO Output)
-        ▼                                         ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                      ESP32-C6 (Beetle)                          │
-│                                                                 │
-│   ┌─────────────┐    ┌─────────────┐    ┌─────────────┐       │
-│   │ GPIO Handler│───▶│    Main     │───▶│ HTTP Server │       │
-│   │ (Interrupt) │    │  App Logic  │    │ /unlock     │       │
-│   └─────────────┘    └─────────────┘    │ /status     │       │
-│                                          └─────────────┘       │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              │ WiFi
-                              ▼
-                    ┌─────────────────┐
-                    │   Home Network  │
-                    │   Apple Home    │
-                    │   (Future)      │
-                    └─────────────────┘
-```
+The ESP Zigbee SDK provides more examples and tools for productization:
+* [ESP Zigbee SDK Docs](https://docs.espressif.com/projects/esp-zigbee-sdk)
+* [ESP Zigbee SDK Repo](https://github.com/espressif/esp-zigbee-sdk)
 
-## Hardware
+## Hardware Required
 
-| Component | Part Number | Purpose |
-|-----------|-------------|---------|
-| Controller | DFRobot Beetle ESP32-C6 (DFR1117) | WiFi + GPIO + Matter-ready |
-| Optocoupler | Broadcom HCPL-817-000E | Isolate ring detection |
-| PhotoMOS Relay | Panasonic AQY212EHA | Isolated door unlock |
-| Connectors | WAGO 221 | Non-destructive intercom tap |
+* One development board with ESP32-H2 SoC acting as Zigbee end-device (loaded with HA_on_off_light example)
+* A USB cable for power supply and programming
+* Choose another ESP32-H2 as Zigbee coordinator (see [HA_on_off_switch example](../HA_on_off_switch))
 
-See [HARDWARE.md](HARDWARE.md) for wiring diagrams and specifications.
+## Configure the project
 
-## Quick Start
+Before project configuration and build, make sure to set the correct chip target using `idf.py --preview set-target TARGET` command.
 
-### Prerequisites
+## Erase the NVRAM
 
-- VS Code with Dev Containers extension
-- Docker Desktop
-- (Optional) ESP32-C6 board for hardware testing
+Before flash it to the board, it is recommended to erase NVRAM if user doesn't want to keep the previous examples or other projects stored info using `idf.py -p PORT erase-flash`
 
-### Setup
+## Build and Flash
 
-1. Clone the repository:
-   ```bash
-   git clone <repo-url>
-   cd intercom-matter
-   ```
+Build the project, flash it to the board, and start the monitor tool to view the serial output by running `idf.py -p PORT flash monitor`.
 
-2. Open in VS Code and reopen in Dev Container when prompted
+(To exit the serial monitor, type ``Ctrl-]``.)
 
-3. Configure WiFi credentials:
-   ```bash
-   idf.py menuconfig
-   # Navigate to: Component config → WiFi Configuration
-   # Or edit main/main.c directly
-   ```
+## Example Output
 
-4. Build firmware:
-   ```bash
-   idf.py build
-   ```
-
-### Testing with QEMU (No Hardware)
-
-```bash
-cd qemu
-./run-qemu.sh
-
-# In another terminal:
-./test-api.sh
-```
-
-### Flash to Hardware
-
-```bash
-idf.py flash monitor
-```
-
-## HTTP API
-
-### Get Status
-
-```bash
-curl http://<device-ip>/status
-```
-
-Response:
-```json
-{
-  "device": "smart-intercom",
-  "version": "1.0.0",
-  "uptime_seconds": 3600,
-  "buzz": {
-    "count": 5,
-    "last_time_ms": 1234567890
-  },
-  "unlock": {
-    "count": 2,
-    "last_time_ms": 1234567000,
-    "busy": false
-  },
-  "config": {
-    "buzz_gpio": 2,
-    "unlock_gpio": 3,
-    "unlock_pulse_ms": 700,
-    "unlock_lockout_ms": 1500,
-    "buzz_cooldown_ms": 2500,
-    "debounce_ms": 30
-  }
-}
-```
-
-### Trigger Unlock
-
-```bash
-curl -X POST http://<device-ip>/unlock
-```
-
-Response (success):
-```json
-{
-  "success": true,
-  "message": "Door unlock triggered",
-  "pulse_ms": 700
-}
-```
-
-Response (lockout active):
-```json
-{
-  "success": false,
-  "error": "Unlock in progress or lockout active",
-  "retry_after_ms": 800
-}
-```
-
-## Configuration
-
-### GPIO Pins
-
-| Function | Default GPIO | Notes |
-|----------|--------------|-------|
-| Buzz Input | GPIO2 | Pull-up, falling edge interrupt |
-| Unlock Output | GPIO3 | Active HIGH pulse |
-
-### Timing
-
-| Parameter | Value | Purpose |
-|-----------|-------|---------|
-| Debounce | 30 ms | Filter noise on buzz input |
-| Buzz Cooldown | 2500 ms | Prevent duplicate buzz events |
-| Unlock Pulse | 700 ms | Duration relay is activated |
-| Unlock Lockout | 1500 ms | Minimum time between unlocks |
-
-## Project Structure
+As you run the example, you will see the following log:
 
 ```
-intercom-matter/
-├── main/
-│   ├── main.c              # Application entry, WiFi init
-│   ├── gpio_handler.c/h    # Buzz detection, unlock control
-│   ├── http_handler.c/h    # REST API endpoints
-│   └── CMakeLists.txt      # Component build config
-├── qemu/
-│   ├── docker-compose.yml  # QEMU container config
-│   ├── run-qemu.sh         # Launch emulator
-│   └── test-api.sh         # API test script
-├── .devcontainer/
-│   └── devcontainer.json   # VS Code Dev Container
-├── CMakeLists.txt          # Project build config
-├── sdkconfig.defaults      # Default ESP-IDF config
-├── partitions.csv          # Flash partition table
-└── HARDWARE.md             # Wiring documentation
+I (403) app_start: Starting scheduler on CPU0
+I (408) main_task: Started on CPU0
+I (408) main_task: Calling app_main()
+I (428) phy: phy_version: 230,2, 9aae6ea, Jan 15 2024, 11:17:12
+I (428) phy: libbtbb version: 944f18e, Jan 15 2024, 11:17:25
+I (438) main_task: Returned from app_main()
+I (548) ESP_ZB_ON_OFF_LIGHT: ZDO signal: ZDO Config Ready (0x17), status: ESP_FAIL
+I (548) ESP_ZB_ON_OFF_LIGHT: Initialize Zigbee stack
+W (548) rmt: channel resolution loss, real=10666666
+I (558) gpio: GPIO[8]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 1| Pulldown: 0| Intr:0 
+I (548) ESP_ZB_ON_OFF_LIGHT: Deferred driver initialization successful
+I (568) ESP_ZB_ON_OFF_LIGHT: Device started up in  factory-reset mode
+I (578) ESP_ZB_ON_OFF_LIGHT: Start network steering
+I (3558) ESP_ZB_ON_OFF_LIGHT: Joined network successfully (Extended PAN ID: 74:4d:bd:ff:fe:63:f7:30, PAN ID: 0x13af, Channel:13, Short Address: 0x7c16)
+I (10238) ESP_ZB_ON_OFF_LIGHT: Received message: endpoint(10), cluster(0x6), attribute(0x0), data size(1)
+I (10238) ESP_ZB_ON_OFF_LIGHT: Light sets to On
+I (10798) ESP_ZB_ON_OFF_LIGHT: Received message: endpoint(10), cluster(0x6), attribute(0x0), data size(1)
+I (10798) ESP_ZB_ON_OFF_LIGHT: Light sets to Off
+I (11228) ESP_ZB_ON_OFF_LIGHT: Received message: endpoint(10), cluster(0x6), attribute(0x0), data size(1)
+I (11228) ESP_ZB_ON_OFF_LIGHT: Light sets to On
+I (11618) ESP_ZB_ON_OFF_LIGHT: Received message: endpoint(10), cluster(0x6), attribute(0x0), data size(1)
+I (11618) ESP_ZB_ON_OFF_LIGHT: Light sets to Off
 ```
 
-## Safety Notes
+## Light Control Functions
 
-- **Never connect intercom wires directly to ESP32 GPIO**
-- Always use optical isolation (optocoupler for input, PhotoMOS for output)
-- Power ESP32 from its own USB supply, not from intercom
-- This design is reversible and non-destructive
+ * By toggling the switch button (BOOT) on the ESP32-H2 board loaded with the `HA_on_off_switch` example, the LED on this board loaded with `HA_on_off_light` example will be on and off.
 
-## Future Roadmap
+## Troubleshooting
 
-1. ✅ HTTP API for remote control
-2. ⬜ WiFi provisioning (SmartConfig or BLE)
-3. ⬜ ESP-Matter integration
-4. ⬜ HomeKit Lock + Doorbell accessory
-5. ⬜ Audio passthrough (optional)
-
-## License
-
-MIT License - See LICENSE file for details.
-
-## Contributing
-
-Contributions welcome! Please open an issue first to discuss changes.
-
-
-
+For any technical queries, please open an [issue](https://github.com/espressif/esp-idf/issues) on GitHub. We will get back to you soon.

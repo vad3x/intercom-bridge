@@ -1,53 +1,23 @@
 {
-    "configurations": [
-        {
-            "name": "ESP-IDF",
-            "compilerPath": "/opt/esp/tools/riscv32-esp-elf/esp-13.2.0_20230928/riscv32-esp-elf/bin/riscv32-esp-elf-gcc",
-            "cStandard": "c17",
-            "cppStandard": "c++17",
-            "includePath": [
-                "${workspaceFolder}/**",
-                "${workspaceFolder}/build/config",
-                "/opt/esp/idf/components/**",
-                "/opt/esp/idf/components/freertos/FreeRTOS-Kernel/include",
-                "/opt/esp/idf/components/freertos/esp_additions/include",
-                "/opt/esp/idf/components/esp_common/include",
-                "/opt/esp/idf/components/esp_system/include",
-                "/opt/esp/idf/components/esp_hw_support/include",
-                "/opt/esp/idf/components/esp_rom/include",
-                "/opt/esp/idf/components/soc/esp32c6/include",
-                "/opt/esp/idf/components/hal/include",
-                "/opt/esp/idf/components/hal/esp32c6/include",
-                "/opt/esp/idf/components/driver/include",
-                "/opt/esp/idf/components/esp_wifi/include",
-                "/opt/esp/idf/components/esp_event/include",
-                "/opt/esp/idf/components/esp_netif/include",
-                "/opt/esp/idf/components/nvs_flash/include",
-                "/opt/esp/idf/components/esp_http_server/include",
-                "/opt/esp/idf/components/json/cJSON",
-                "/opt/esp/idf/components/esp_timer/include",
-                "/opt/esp/idf/components/log/include",
-                "/opt/esp/idf/components/heap/include",
-                "/opt/esp/idf/components/newlib/platform_include"
-            ],
-            "defines": [
-                "ESP_PLATFORM",
-                "IDF_VER=\"v5.2\"",
-                "CONFIG_IDF_TARGET_ESP32C6=1",
-                "CONFIG_IDF_TARGET=\"esp32c6\""
-            ],
-            "intelliSenseMode": "gcc-x64",
-            "browse": {
-                "path": [
-                    "${workspaceFolder}",
-                    "/opt/esp/idf/components"
-                ],
-                "limitSymbolsToIncludedHeaders": true
-            }
-        }
-    ],
-    "version": 4
+  "configurations": [
+    {
+      "name": "ESP-IDF",
+      "compilerPath": "${config:idf.toolsPath}/tools/xtensa-esp-elf/esp-14.2.0_20251107/xtensa-esp-elf/bin/xtensa-esp32-elf-gcc",
+      "compileCommands": "${config:idf.buildPath}/compile_commands.json",
+      "includePath": [
+        "${config:idf.espIdfPath}/components/**",
+        "${config:idf.espIdfPathWin}/components/**",
+        "${workspaceFolder}/**"
+      ],
+      "browse": {
+        "path": [
+          "${config:idf.espIdfPath}/components",
+          "${config:idf.espIdfPathWin}/components",
+          "${workspaceFolder}"
+        ],
+        "limitSymbolsToIncludedHeaders": true
+      }
+    }
+  ],
+  "version": 4
 }
-
-
-
