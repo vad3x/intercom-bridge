@@ -1,0 +1,65 @@
+# QEMU ESP32-C6 Emulation Environment
+# For testing firmware without physical hardware
+
+version: '3.8'
+
+services:
+  qemu-esp32c6:
+    image: espressif/qemu:esp-develop-20220919
+    container_name: intercom-qemu
+    
+    volumes:
+      # Mount project directory
+      - ..:/project:ro
+      # Mount build output
+      - ../build:/project/build:ro
+    
+    ports:
+      # HTTP server (mapped to 8080 on host)
+      - "8080:80"
+      # QEMU monitor
+      - "5555:5555"
+      # GDB server
+      - "1234:1234"
+    
+    working_dir: /project
+    
+    # Run QEMU with firmware
+    command: >
+      qemu-system-riscv32
+      -M esp32c6
+      -nographic
+      -drive file=/project/build/intercom-matter.bin,if=mtd,format=raw
+      -serial mon:stdio
+      -global driver=timer.esp32c6.timg,property=wdt_disable,value=true
+      -nic user,model=open_eth,hostfwd=tcp::80-:80
+    
+    # Keep container running for interactive use
+    stdin_open: true
+    tty: true
+
+  # Build service (optional, for building inside Docker)
+  build:
+    image: espressif/idf:release-v5.2
+    container_name: intercom-build
+    
+    volumes:
+      - ..:/project
+    
+    working_dir: /project
+    
+    environment:
+      - IDF_TARGET=esp32c6
+    
+    command: >
+      bash -c "
+        source /opt/esp/idf/export.sh &&
+        idf.py set-target esp32c6 &&
+        idf.py build
+      "
+    
+    profiles:
+      - build
+
+
+

@@ -1,0 +1,24 @@
+{
+    "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
+    "cmake.configureOnOpen": false,
+    "files.associations": {
+        "*.h": "c",
+        "*.c": "c",
+        "sdkconfig": "properties",
+        "sdkconfig.defaults": "properties",
+        "sdkconfig.qemu": "properties"
+    },
+    "editor.formatOnSave": false,
+    "editor.tabSize": 4,
+    "editor.insertSpaces": true,
+    "[c]": {
+        "editor.tabSize": 4
+    },
+    "files.watcherExclude": {
+        "**/target": true
+    },
+    "idf.pythonInstallPath": "/usr/bin/python3"
+}
+
+
+
