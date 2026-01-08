@@ -1,7 +1,7 @@
 /*
    Smart Intercom - ESP32-C6 Matter Controller
 
-   Simplified door lock with contact sensor for buzz detection.
+   Simplified door lock with button for buzz detection.
    No PIN codes, users, or schedules - just lock/unlock and ring notification.
 */
 
@@ -27,13 +27,13 @@
 #define UNLOCK_PULSE_MS 700    // Duration of relay activation
 #define DEBOUNCE_MS 30         // Buzz signal debounce time
 #define BUZZ_COOLDOWN_MS 2500  // Minimum time between buzz events
-#define BUZZ_ACTIVE_MS 2000    // How long contact sensor stays "open"
+#define BUZZ_HOLD_MS 4000      // How long button stays "pressed" in HomeKit
 
 /*
  * Endpoint IDs (set in app_main.cpp)
  */
 extern uint16_t door_lock_endpoint_id;
-extern uint16_t contact_sensor_endpoint_id;
+extern uint16_t buzz_button_endpoint_id;
 
 typedef void *app_driver_handle_t;
 

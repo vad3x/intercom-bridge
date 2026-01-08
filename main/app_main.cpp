@@ -28,7 +28,7 @@
 
 static const char *TAG = "app_main";
 uint16_t door_lock_endpoint_id = 0;
-uint16_t contact_sensor_endpoint_id = 0;
+uint16_t buzz_button_endpoint_id = 0;
 
 using namespace esp_matter;
 using namespace esp_matter::attribute;
@@ -176,14 +176,20 @@ extern "C" void app_main() {
     door_lock_endpoint_id = endpoint::get_id(lock_endpoint);
     ESP_LOGI(TAG, "Door lock created with endpoint_id %d", door_lock_endpoint_id);
 
-    // Create Contact Sensor endpoint for buzz/ring detection
-    // Shows as "Contact Sensor" in HomeKit - "Open" when ringing
-    contact_sensor::config_t contact_config;
-    endpoint_t *buzz_endpoint = contact_sensor::create(node, &contact_config, ENDPOINT_FLAG_NONE, NULL);
-    ABORT_APP_ON_FAILURE(buzz_endpoint != nullptr, ESP_LOGE(TAG, "Failed to create contact sensor endpoint"));
+    // Create Generic Switch endpoint for buzz/ring button
+    // Shows as "Button" in HomeKit - triggers press events when someone buzzes
+    generic_switch::config_t switch_config;
+    switch_config.switch_cluster.number_of_positions = 2;  // Momentary button (0=released, 1=pressed)
+    switch_config.switch_cluster.current_position = 0;     // Start released
+    endpoint_t *buzz_endpoint = generic_switch::create(node, &switch_config, ENDPOINT_FLAG_NONE, NULL);
+    ABORT_APP_ON_FAILURE(buzz_endpoint != nullptr, ESP_LOGE(TAG, "Failed to create generic switch endpoint"));
 
-    contact_sensor_endpoint_id = endpoint::get_id(buzz_endpoint);
-    ESP_LOGI(TAG, "Contact sensor (buzz) created with endpoint_id %d", contact_sensor_endpoint_id);
+    // Add momentary switch feature (for button press events)
+    cluster_t *switch_cluster = cluster::get(buzz_endpoint, Switch::Id);
+    cluster::switch_cluster::feature::momentary_switch::add(switch_cluster);
+
+    buzz_button_endpoint_id = endpoint::get_id(buzz_endpoint);
+    ESP_LOGI(TAG, "Buzz button (generic switch) created with endpoint_id %d", buzz_button_endpoint_id);
 
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD
     /* Set OpenThread platform config */

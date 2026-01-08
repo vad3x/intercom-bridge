@@ -27,7 +27,7 @@ static volatile bool s_buzz_pending = false;
 static volatile int64_t s_last_buzz_time = 0;
 static TimerHandle_t s_unlock_timer = NULL;
 static TimerHandle_t s_debounce_timer = NULL;
-static TimerHandle_t s_buzz_reset_timer = NULL;
+static TimerHandle_t s_buzz_release_timer = NULL;
 
 /**
  * @brief Get current time in milliseconds
@@ -48,31 +48,43 @@ static void unlock_timer_cb(TimerHandle_t timer)
 }
 
 /**
- * @brief Update contact sensor state in Matter
+ * @brief Release button after hold time
  */
-static void update_contact_sensor(bool is_open)
+static void buzz_release_timer_cb(TimerHandle_t timer)
 {
-    if (contact_sensor_endpoint_id == 0) {
-        ESP_LOGW(TAG, "Contact sensor endpoint not initialized");
-        return;
-    }
+    ESP_LOGI(TAG, "Buzz button released (auto-reset after %d ms)", BUZZ_HOLD_MS);
     
-    ESP_LOGI(TAG, "Updating contact sensor: %s", is_open ? "OPEN (ringing)" : "CLOSED (idle)");
-    
-    // Update Boolean State cluster
-    esp_matter_attr_val_t val = esp_matter_bool(is_open);
-    attribute::update(contact_sensor_endpoint_id, 
-                      BooleanState::Id, 
-                      BooleanState::Attributes::StateValue::Id, 
+    // Release button (position 0 = released)
+    esp_matter_attr_val_t val = esp_matter_uint8(0);
+    attribute::update(buzz_button_endpoint_id, 
+                      Switch::Id, 
+                      Switch::Attributes::CurrentPosition::Id, 
                       &val);
 }
 
 /**
- * @brief Timer callback to reset contact sensor after buzz
+ * @brief Send button press event to Matter (GenericSwitch cluster)
  */
-static void buzz_reset_timer_cb(TimerHandle_t timer)
+static void send_buzz_button_press()
 {
-    update_contact_sensor(false);  // Contact closed (idle)
+    if (buzz_button_endpoint_id == 0) {
+        ESP_LOGW(TAG, "Buzz button endpoint not initialized");
+        return;
+    }
+    
+    ESP_LOGI(TAG, "Sending buzz button press event (will hold for %d ms)", BUZZ_HOLD_MS);
+    
+    // Press button (position 1 = pressed)
+    esp_matter_attr_val_t val = esp_matter_uint8(1);
+    attribute::update(buzz_button_endpoint_id, 
+                      Switch::Id, 
+                      Switch::Attributes::CurrentPosition::Id, 
+                      &val);
+    
+    // Start timer to auto-release after BUZZ_HOLD_MS
+    if (s_buzz_release_timer) {
+        xTimerStart(s_buzz_release_timer, 0);
+    }
 }
 
 /**
@@ -103,13 +115,8 @@ static void debounce_timer_cb(TimerHandle_t timer)
     s_last_buzz_time = now;
     ESP_LOGI(TAG, "=== BUZZ/RING DETECTED ===");
     
-    // Update contact sensor to "open" (ringing)
-    update_contact_sensor(true);
-    
-    // Start timer to reset contact sensor
-    if (s_buzz_reset_timer) {
-        xTimerStart(s_buzz_reset_timer, 0);
-    }
+    // Send button press event
+    send_buzz_button_press();
 }
 
 /**
@@ -151,11 +158,11 @@ esp_err_t app_driver_gpio_init()
         return ESP_ERR_NO_MEM;
     }
     
-    // Create buzz reset timer
-    s_buzz_reset_timer = xTimerCreate("buzz_reset", pdMS_TO_TICKS(BUZZ_ACTIVE_MS),
-                                       pdFALSE, NULL, buzz_reset_timer_cb);
-    if (!s_buzz_reset_timer) {
-        ESP_LOGE(TAG, "Failed to create buzz reset timer");
+    // Create buzz release timer (auto-releases button after BUZZ_HOLD_MS)
+    s_buzz_release_timer = xTimerCreate("buzz_release", pdMS_TO_TICKS(BUZZ_HOLD_MS),
+                                         pdFALSE, NULL, buzz_release_timer_cb);
+    if (!s_buzz_release_timer) {
+        ESP_LOGE(TAG, "Failed to create buzz release timer");
         return ESP_ERR_NO_MEM;
     }
     
