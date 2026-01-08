@@ -1,5 +1,19 @@
 {
   "C_Cpp.intelliSenseEngine": "default",
+  "C_Cpp.formatting": "clangFormat",
+  "C_Cpp.clang_format_style": "file",
+  "C_Cpp.clang_format_fallbackStyle": "Google",
+  
+  "editor.formatOnSave": true,
+  "editor.defaultFormatter": "ms-vscode.cpptools",
+  
+  "[cpp]": {
+    "editor.defaultFormatter": "ms-vscode.cpptools"
+  },
+  "[c]": {
+    "editor.defaultFormatter": "ms-vscode.cpptools"
+  },
+  
   "idf.espIdfPath": "/opt/espressif/esp-idf",
   "idf.pythonInstallPath": "/usr/bin/python3",
   "idf.openOcdConfigs": [
@@ -10,5 +24,9 @@
   "idf.customExtraVars": {
     "IDF_TARGET": "esp32c6",
     "ESP_MATTER_PATH": "/opt/espressif/esp-matter"
+  },
+  "files.watcherExclude": {
+    "**/target": true,
+    "**/build": true
   }
 }
