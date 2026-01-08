@@ -9,5 +9,11 @@
   "idf.toolsPath": "/Users/vorekhov/.espressif",
   "idf.customExtraVars": {
     "IDF_TARGET": "esp32c6"
-  }
+  },
+  "clangd.path": "/Users/vorekhov/.espressif/tools/esp-clang/esp-19.1.2_20250312/esp-clang/bin/clangd",
+  "clangd.arguments": [
+    "--background-index",
+    "--query-driver=**",
+    "--compile-commands-dir=/Users/vorekhov/projects/intercom-matter/intercom-matter/build"
+  ]
 }
