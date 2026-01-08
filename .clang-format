@@ -14,18 +14,8 @@ NamespaceIndentation: None
 # Line length
 ColumnLimit: 120
 
-# Braces
-BreakBeforeBraces: Custom
-BraceWrapping:
-  AfterClass: true
-  AfterControlStatement: false
-  AfterEnum: false
-  AfterFunction: true
-  AfterNamespace: false
-  AfterStruct: true
-  BeforeCatch: false
-  BeforeElse: false
-  IndentBraces: false
+# Braces - Google style (same line)
+BreakBeforeBraces: Attach
 
 # Pointers and references
 PointerAlignment: Right

@@ -1,6 +1,6 @@
 /*
    Smart Intercom - ESP32-C6 Matter Controller
-   
+
    Simplified door lock with contact sensor for buzz detection.
    No PIN codes, users, or schedules - just lock/unlock and ring notification.
 */
@@ -18,16 +18,16 @@
 /*
  * GPIO Configuration
  */
-#define BUZZ_GPIO           2   // Input: Optocoupler output (active LOW when ringing)
-#define UNLOCK_GPIO         3   // Output: PhotoMOS relay control (active HIGH)
+#define BUZZ_GPIO 2    // Input: Optocoupler output (active LOW when ringing)
+#define UNLOCK_GPIO 3  // Output: PhotoMOS relay control (active HIGH)
 
 /*
  * Timing Constants (milliseconds)
  */
-#define UNLOCK_PULSE_MS     700     // Duration of relay activation
-#define DEBOUNCE_MS         30      // Buzz signal debounce time
-#define BUZZ_COOLDOWN_MS    2500    // Minimum time between buzz events
-#define BUZZ_ACTIVE_MS      2000    // How long contact sensor stays "open"
+#define UNLOCK_PULSE_MS 700    // Duration of relay activation
+#define DEBOUNCE_MS 30         // Buzz signal debounce time
+#define BUZZ_COOLDOWN_MS 2500  // Minimum time between buzz events
+#define BUZZ_ACTIVE_MS 2000    // How long contact sensor stays "open"
 
 /*
  * Endpoint IDs (set in app_main.cpp)
@@ -69,14 +69,14 @@ void door_lock_init();
 
 /** Initialize GPIO for intercom hardware
  * Sets up UNLOCK_GPIO as output and BUZZ_GPIO as input with interrupt
- * 
+ *
  * @return ESP_OK on success
  */
 esp_err_t app_driver_gpio_init();
 
 /** Trigger door unlock pulse
  * Pulses UNLOCK_GPIO HIGH for UNLOCK_PULSE_MS duration
- * 
+ *
  * @return ESP_OK on success, ESP_ERR_INVALID_STATE if pulse already in progress
  */
 esp_err_t app_driver_unlock_pulse();
@@ -87,18 +87,20 @@ esp_err_t app_driver_unlock_pulse();
 bool app_driver_is_unlocking();
 
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD
-#define ESP_OPENTHREAD_DEFAULT_RADIO_CONFIG()                                           \
-    {                                                                                   \
-        .radio_mode = RADIO_MODE_NATIVE,                                                \
+#define ESP_OPENTHREAD_DEFAULT_RADIO_CONFIG() \
+    {                                         \
+        .radio_mode = RADIO_MODE_NATIVE,      \
     }
 
-#define ESP_OPENTHREAD_DEFAULT_HOST_CONFIG()                                            \
-    {                                                                                   \
-        .host_connection_mode = HOST_CONNECTION_MODE_NONE,                              \
+#define ESP_OPENTHREAD_DEFAULT_HOST_CONFIG()               \
+    {                                                      \
+        .host_connection_mode = HOST_CONNECTION_MODE_NONE, \
     }
 
-#define ESP_OPENTHREAD_DEFAULT_PORT_CONFIG()                                            \
-    {                                                                                   \
-        .storage_partition_name = "nvs", .netif_queue_size = 10, .task_queue_size = 10, \
+#define ESP_OPENTHREAD_DEFAULT_PORT_CONFIG() \
+    {                                        \
+        .storage_partition_name = "nvs",     \
+        .netif_queue_size = 10,              \
+        .task_queue_size = 10,               \
     }
 #endif

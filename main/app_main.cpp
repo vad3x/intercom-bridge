@@ -44,10 +44,9 @@ extern const char decryption_key_end[] asm("_binary_esp_image_encryption_key_pem
 
 static const char *s_decryption_key = decryption_key_start;
 static const uint16_t s_decryption_key_len = decryption_key_end - decryption_key_start;
-#endif // CONFIG_ENABLE_ENCRYPTED_OTA
+#endif  // CONFIG_ENABLE_ENCRYPTED_OTA
 
-static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
-{
+static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg) {
     switch (event->Type) {
     case chip::DeviceLayer::DeviceEventType::kInterfaceIpAddressChanged:
         ESP_LOGI(TAG, "Interface IP Address changed");
@@ -77,28 +76,25 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
         ESP_LOGI(TAG, "Commissioning window closed");
         break;
 
-    case chip::DeviceLayer::DeviceEventType::kFabricRemoved:
-        {
-            ESP_LOGI(TAG, "Fabric removed successfully");
-            if (chip::Server::GetInstance().GetFabricTable().FabricCount() == 0)
-            {
-                chip::CommissioningWindowManager & commissionMgr = chip::Server::GetInstance().GetCommissioningWindowManager();
-                constexpr auto kTimeoutSeconds = chip::System::Clock::Seconds16(k_timeout_seconds);
-                if (!commissionMgr.IsCommissioningWindowOpen())
-                {
-                    /* After removing last fabric, this example does not remove the Wi-Fi credentials
-                     * and still has IP connectivity so, only advertising on DNS-SD.
-                     */
-                    CHIP_ERROR err = commissionMgr.OpenBasicCommissioningWindow(kTimeoutSeconds,
-                                                    chip::CommissioningWindowAdvertisement::kDnssdOnly);
-                    if (err != CHIP_NO_ERROR)
-                    {
-                        ESP_LOGE(TAG, "Failed to open commissioning window, err:%" CHIP_ERROR_FORMAT, err.Format());
-                    }
+    case chip::DeviceLayer::DeviceEventType::kFabricRemoved: {
+        ESP_LOGI(TAG, "Fabric removed successfully");
+        if (chip::Server::GetInstance().GetFabricTable().FabricCount() == 0) {
+            chip::CommissioningWindowManager &commissionMgr =
+                chip::Server::GetInstance().GetCommissioningWindowManager();
+            constexpr auto kTimeoutSeconds = chip::System::Clock::Seconds16(k_timeout_seconds);
+            if (!commissionMgr.IsCommissioningWindowOpen()) {
+                /* After removing last fabric, this example does not remove the Wi-Fi credentials
+                 * and still has IP connectivity so, only advertising on DNS-SD.
+                 */
+                CHIP_ERROR err = commissionMgr.OpenBasicCommissioningWindow(
+                    kTimeoutSeconds, chip::CommissioningWindowAdvertisement::kDnssdOnly);
+                if (err != CHIP_NO_ERROR) {
+                    ESP_LOGE(TAG, "Failed to open commissioning window, err:%" CHIP_ERROR_FORMAT, err.Format());
                 }
             }
-        break;
         }
+        break;
+    }
 
     case chip::DeviceLayer::DeviceEventType::kFabricWillBeRemoved:
         ESP_LOGI(TAG, "Fabric will be removed");
@@ -124,8 +120,7 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
 // This callback is invoked when clients interact with the Identify Cluster.
 // In the callback implementation, an endpoint can identify itself. (e.g., by flashing an LED or light).
 static esp_err_t app_identification_cb(identification::callback_type_t type, uint16_t endpoint_id, uint8_t effect_id,
-                                       uint8_t effect_variant, void *priv_data)
-{
+                                       uint8_t effect_variant, void *priv_data) {
     ESP_LOGI(TAG, "Identification callback: type: %u, effect: %u, variant: %u", type, effect_id, effect_variant);
     return ESP_OK;
 }
@@ -134,8 +129,7 @@ static esp_err_t app_identification_cb(identification::callback_type_t type, uin
 // handle the desired attributes and return an appropriate error code. If the attribute
 // is not of your interest, please do not return an error code and strictly return ESP_OK.
 static esp_err_t app_attribute_update_cb(attribute::callback_type_t type, uint16_t endpoint_id, uint32_t cluster_id,
-                                         uint32_t attribute_id, esp_matter_attr_val_t *val, void *priv_data)
-{
+                                         uint32_t attribute_id, esp_matter_attr_val_t *val, void *priv_data) {
     esp_err_t err = ESP_OK;
 
     if (type == PRE_UPDATE) {
@@ -147,19 +141,17 @@ static esp_err_t app_attribute_update_cb(attribute::callback_type_t type, uint16
     return err;
 }
 
-extern "C" void app_main()
-{
+extern "C" void app_main() {
     esp_err_t err = ESP_OK;
 
     /* Initialize the ESP NVS layer */
     nvs_flash_init();
 
 #if CONFIG_PM_ENABLE
-    esp_pm_config_t pm_config = {
-        .max_freq_mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
-        .min_freq_mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
+    esp_pm_config_t pm_config = {.max_freq_mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
+                                 .min_freq_mhz = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
 #if CONFIG_FREERTOS_USE_TICKLESS_IDLE
-        .light_sleep_enable = true
+                                 .light_sleep_enable = true
 #endif
     };
     err = esp_pm_configure(&pm_config);
@@ -176,7 +168,7 @@ extern "C" void app_main()
     door_lock::config_t door_lock_config;
     endpoint_t *lock_endpoint = door_lock::create(node, &door_lock_config, ENDPOINT_FLAG_NONE, NULL);
     ABORT_APP_ON_FAILURE(lock_endpoint != nullptr, ESP_LOGE(TAG, "Failed to create door lock endpoint"));
-    
+
     // Set auto-relock to 1 second (door naturally re-locks after pulse)
     cluster_t *door_lock_cluster = cluster::get(lock_endpoint, DoorLock::Id);
     cluster::door_lock::attribute::create_auto_relock_time(door_lock_cluster, 1);
@@ -189,7 +181,7 @@ extern "C" void app_main()
     contact_sensor::config_t contact_config;
     endpoint_t *buzz_endpoint = contact_sensor::create(node, &contact_config, ENDPOINT_FLAG_NONE, NULL);
     ABORT_APP_ON_FAILURE(buzz_endpoint != nullptr, ESP_LOGE(TAG, "Failed to create contact sensor endpoint"));
-    
+
     contact_sensor_endpoint_id = endpoint::get_id(buzz_endpoint);
     ESP_LOGI(TAG, "Contact sensor (buzz) created with endpoint_id %d", contact_sensor_endpoint_id);
 
@@ -213,7 +205,7 @@ extern "C" void app_main()
 #if CONFIG_ENABLE_ENCRYPTED_OTA
     err = esp_matter_ota_requestor_encrypted_init(s_decryption_key, s_decryption_key_len);
     ABORT_APP_ON_FAILURE(err == ESP_OK, ESP_LOGE(TAG, "Failed to initialized the encrypted OTA, err: %d", err));
-#endif // CONFIG_ENABLE_ENCRYPTED_OTA
+#endif  // CONFIG_ENABLE_ENCRYPTED_OTA
 
 #if CONFIG_ENABLE_CHIP_SHELL
     esp_matter::console::diagnostics_register_commands();
