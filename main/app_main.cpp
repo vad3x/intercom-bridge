@@ -28,6 +28,7 @@
 
 static const char *TAG = "app_main";
 uint16_t door_lock_endpoint_id = 0;
+uint16_t contact_sensor_endpoint_id = 0;
 
 using namespace esp_matter;
 using namespace esp_matter::attribute;
@@ -171,21 +172,26 @@ extern "C" void app_main()
     node_t *node = node::create(&node_config, app_attribute_update_cb, app_identification_cb);
     ABORT_APP_ON_FAILURE(node != nullptr, ESP_LOGE(TAG, "Failed to create Matter node"));
 
+    // Create Door Lock endpoint (simplified - no credentials, users, or schedules)
     door_lock::config_t door_lock_config;
-    cluster::door_lock::feature::credential_over_the_air_access::config_t cota_config;
-    cluster::door_lock::feature::pin_credential::config_t pin_credential_config;
-    cluster::door_lock::feature::user::config_t user_config;
-    // endpoint handles can be used to add/modify clusters.
-    endpoint_t *endpoint = door_lock::create(node, &door_lock_config, ENDPOINT_FLAG_NONE, NULL);
-    ABORT_APP_ON_FAILURE(endpoint != nullptr, ESP_LOGE(TAG, "Failed to create door lock endpoint"));
-    cluster_t *door_lock_cluster = cluster::get(endpoint, DoorLock::Id);
-    cluster::door_lock::feature::credential_over_the_air_access::add(door_lock_cluster, &cota_config);
-    cluster::door_lock::feature::pin_credential::add(door_lock_cluster, &pin_credential_config);
-    cluster::door_lock::feature::user::add(door_lock_cluster, &user_config);
-    cluster::door_lock::attribute::create_auto_relock_time(door_lock_cluster, 5);
+    endpoint_t *lock_endpoint = door_lock::create(node, &door_lock_config, ENDPOINT_FLAG_NONE, NULL);
+    ABORT_APP_ON_FAILURE(lock_endpoint != nullptr, ESP_LOGE(TAG, "Failed to create door lock endpoint"));
+    
+    // Set auto-relock to 1 second (door naturally re-locks after pulse)
+    cluster_t *door_lock_cluster = cluster::get(lock_endpoint, DoorLock::Id);
+    cluster::door_lock::attribute::create_auto_relock_time(door_lock_cluster, 1);
 
-    door_lock_endpoint_id = endpoint::get_id(endpoint);
+    door_lock_endpoint_id = endpoint::get_id(lock_endpoint);
     ESP_LOGI(TAG, "Door lock created with endpoint_id %d", door_lock_endpoint_id);
+
+    // Create Contact Sensor endpoint for buzz/ring detection
+    // Shows as "Contact Sensor" in HomeKit - "Open" when ringing
+    contact_sensor::config_t contact_config;
+    endpoint_t *buzz_endpoint = contact_sensor::create(node, &contact_config, ENDPOINT_FLAG_NONE, NULL);
+    ABORT_APP_ON_FAILURE(buzz_endpoint != nullptr, ESP_LOGE(TAG, "Failed to create contact sensor endpoint"));
+    
+    contact_sensor_endpoint_id = endpoint::get_id(buzz_endpoint);
+    ESP_LOGI(TAG, "Contact sensor (buzz) created with endpoint_id %d", contact_sensor_endpoint_id);
 
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD
     /* Set OpenThread platform config */

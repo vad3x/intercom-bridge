@@ -1,5 +1,5 @@
 {
-	"name": "ESP-IDF QEMU",
+	"name": "Smart Intercom ESP-Matter",
 	"build": {
 		"dockerfile": "Dockerfile"
 	},
@@ -7,15 +7,24 @@
 		"vscode": {
 			"settings": {
 				"terminal.integrated.defaultProfile.linux": "bash",
-				"idf.espIdfPath": "/opt/esp/idf",
-				"idf.toolsPath": "/opt/esp",
-				"idf.gitPath": "/usr/bin/git"
+				"idf.espIdfPath": "/opt/espressif/esp-idf",
+				"idf.toolsPath": "/opt/espressif/tools",
+				"idf.gitPath": "/usr/bin/git",
+				"idf.port": "/dev/ttyUSB0"
 			},
 			"extensions": [
 				"espressif.esp-idf-extension",
-				"espressif.esp-idf-web"
+				"ms-vscode.cpptools"
 			]
 		}
 	},
-	"runArgs": ["--privileged"]
+	"containerEnv": {
+		"ESP_MATTER_PATH": "/opt/espressif/esp-matter",
+		"IDF_TARGET": "esp32c6"
+	},
+	"mounts": [
+		"source=/dev,target=/dev,type=bind"
+	],
+	"runArgs": ["--privileged"],
+	"postStartCommand": "bash -c 'source /opt/espressif/esp-matter/export.sh && echo ESP-Matter ready! Run: idf.py build'"
 }

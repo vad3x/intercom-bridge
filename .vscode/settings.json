@@ -1,19 +1,14 @@
 {
   "C_Cpp.intelliSenseEngine": "default",
-  "idf.espIdfPath": "/Users/vorekhov/.espressif/v5.5.2/esp-idf",
-  "idf.pythonInstallPath": "/Users/vorekhov/.local/share/mise/installs/python/3/bin/python",
+  "idf.espIdfPath": "/opt/espressif/esp-idf",
+  "idf.pythonInstallPath": "/usr/bin/python3",
   "idf.openOcdConfigs": [
     "board/esp32c6-builtin.cfg"
   ],
   "idf.port": "detect",
-  "idf.toolsPath": "/Users/vorekhov/.espressif",
+  "idf.toolsPath": "/opt/espressif/tools",
   "idf.customExtraVars": {
-    "IDF_TARGET": "esp32c6"
-  },
-  "clangd.path": "/Users/vorekhov/.espressif/tools/esp-clang/esp-19.1.2_20250312/esp-clang/bin/clangd",
-  "clangd.arguments": [
-    "--background-index",
-    "--query-driver=**",
-    "--compile-commands-dir=/Users/vorekhov/projects/intercom-matter/intercom-matter/build"
-  ]
+    "IDF_TARGET": "esp32c6",
+    "ESP_MATTER_PATH": "/opt/espressif/esp-matter"
+  }
 }

@@ -1,114 +1,83 @@
 /*
-   This example code is in the Public Domain (or CC0 licensed, at your option.)
-
-   Unless required by applicable law or agreed to in writing, this
-   software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
-   CONDITIONS OF ANY KIND, either express or implied.
+   Smart Intercom - Door Lock Callbacks
+   
+   Simplified callbacks for Matter Door Lock cluster.
+   Only handles lock/unlock commands - no credentials, users, or schedules.
 */
 
 #include <esp_log.h>
 #include "door_lock_manager.h"
 #include <lib/core/DataModelTypes.h>
+#include <lib/core/Optional.h>
+#include <app/data-model/Nullable.h>
+#include <app/clusters/door-lock-server/door-lock-server.h>
 
-static const char *TAG = "doorlock_callback";
+static const char *TAG = "lock_callbacks";
 
+using chip::EndpointId;
+using chip::FabricIndex;
+using chip::NodeId;
+using chip::ByteSpan;
+using chip::Optional;
+using chip::app::Clusters::DoorLock::OperationErrorEnum;
+using chip::app::DataModel::Nullable;
+
+/**
+ * @brief Initialize door lock
+ * Called from app_main to ensure callbacks are linked
+ */
 void door_lock_init()
 {
-    ESP_LOGI(TAG, "doorlock example init");
+    ESP_LOGI(TAG, "Door lock callbacks initialized (simplified mode)");
 }
 
+/**
+ * @brief Called when Matter stack initializes the door lock cluster
+ */
 void emberAfDoorLockClusterInitCallback(EndpointId endpoint)
 {
+    ESP_LOGI(TAG, "Door Lock cluster init on endpoint %d", endpoint);
+    
     DoorLockServer::Instance().InitServer(endpoint);
+    BoltLockMgr().Init();
     BoltLockMgr().InitLockState();
 }
 
-bool emberAfPluginDoorLockOnDoorLockCommand(chip::EndpointId endpointId, const Nullable<chip::FabricIndex> & fabricIdx,
-                                            const Nullable<chip::NodeId> & nodeId, const Optional<ByteSpan> & pinCode,
+/**
+ * @brief Handle Lock command
+ * No-op for intercom - door is always locked by spring mechanism
+ */
+bool emberAfPluginDoorLockOnDoorLockCommand(EndpointId endpointId, 
+                                            const Nullable<FabricIndex> & fabricIdx,
+                                            const Nullable<NodeId> & nodeId, 
+                                            const Optional<ByteSpan> & pinCode,
                                             OperationErrorEnum & err)
 {
-    ESP_LOGI(TAG, "Door Lock App: Lock Command endpoint=%d", endpointId);
-    bool status = BoltLockMgr().Lock(endpointId, pinCode, err);
-    return status;
+    ESP_LOGI(TAG, "Lock command on endpoint %d", endpointId);
+    return BoltLockMgr().Lock(endpointId, pinCode, err);
 }
 
-bool emberAfPluginDoorLockOnDoorUnlockCommand(chip::EndpointId endpointId, const Nullable<chip::FabricIndex> & fabricIdx,
-                                              const Nullable<chip::NodeId> & nodeId, const Optional<ByteSpan> & pinCode,
+/**
+ * @brief Handle Unlock command
+ * This triggers the relay pulse to release the door
+ */
+bool emberAfPluginDoorLockOnDoorUnlockCommand(EndpointId endpointId, 
+                                              const Nullable<FabricIndex> & fabricIdx,
+                                              const Nullable<NodeId> & nodeId, 
+                                              const Optional<ByteSpan> & pinCode,
                                               OperationErrorEnum & err)
 {
-    ESP_LOGI(TAG, "Door Lock App: Unlock Command endpoint=%d", endpointId);
-    bool status = BoltLockMgr().Unlock(endpointId, pinCode, err);
-    return status;
+    ESP_LOGI(TAG, "Unlock command on endpoint %d", endpointId);
+    return BoltLockMgr().Unlock(endpointId, pinCode, err);
 }
 
-bool emberAfPluginDoorLockGetCredential(chip::EndpointId endpointId, uint16_t credentialIndex, CredentialTypeEnum credentialType,
-                                        EmberAfPluginDoorLockCredentialInfo & credential)
+/**
+ * @brief Called when auto-relock timer fires
+ * The Matter stack automatically calls this after auto_relock_time seconds
+ */
+void emberAfPluginDoorLockOnAutoRelock(EndpointId endpointId)
 {
-    return BoltLockMgr().GetCredential(endpointId, credentialIndex, credentialType, credential);
-}
-
-bool emberAfPluginDoorLockSetCredential(chip::EndpointId endpointId, uint16_t credentialIndex, chip::FabricIndex creator,
-                                        chip::FabricIndex modifier, DlCredentialStatus credentialStatus,
-                                        CredentialTypeEnum credentialType, const chip::ByteSpan & credentialData)
-{
-    return BoltLockMgr().SetCredential(endpointId, credentialIndex, creator, modifier, credentialStatus, credentialType,
-                                       credentialData);
-}
-
-bool emberAfPluginDoorLockGetUser(chip::EndpointId endpointId, uint16_t userIndex, EmberAfPluginDoorLockUserInfo & user)
-{
-    return BoltLockMgr().GetUser(endpointId, userIndex, user);
-}
-
-bool emberAfPluginDoorLockSetUser(chip::EndpointId endpointId, uint16_t userIndex, chip::FabricIndex creator,
-                                  chip::FabricIndex modifier, const chip::CharSpan & userName, uint32_t uniqueId,
-                                  UserStatusEnum userStatus, UserTypeEnum usertype, CredentialRuleEnum credentialRule,
-                                  const CredentialStruct * credentials, size_t totalCredentials)
-{
-
-    return BoltLockMgr().SetUser(endpointId, userIndex, creator, modifier, userName, uniqueId, userStatus, usertype, credentialRule,
-                                 credentials, totalCredentials);
-}
-
-DlStatus emberAfPluginDoorLockGetSchedule(chip::EndpointId endpointId, uint8_t weekdayIndex, uint16_t userIndex,
-                                          EmberAfPluginDoorLockWeekDaySchedule & schedule)
-{
-    return BoltLockMgr().GetWeekdaySchedule(endpointId, weekdayIndex, userIndex, schedule);
-}
-
-DlStatus emberAfPluginDoorLockGetSchedule(chip::EndpointId endpointId, uint8_t yearDayIndex, uint16_t userIndex,
-                                          EmberAfPluginDoorLockYearDaySchedule & schedule)
-{
-    return BoltLockMgr().GetYeardaySchedule(endpointId, yearDayIndex, userIndex, schedule);
-}
-
-DlStatus emberAfPluginDoorLockGetSchedule(chip::EndpointId endpointId, uint8_t holidayIndex,
-                                          EmberAfPluginDoorLockHolidaySchedule & holidaySchedule)
-{
-    return BoltLockMgr().GetHolidaySchedule(endpointId, holidayIndex, holidaySchedule);
-}
-
-DlStatus emberAfPluginDoorLockSetSchedule(chip::EndpointId endpointId, uint8_t weekdayIndex, uint16_t userIndex,
-                                          DlScheduleStatus status, DaysMaskMap daysMask, uint8_t startHour, uint8_t startMinute,
-                                          uint8_t endHour, uint8_t endMinute)
-{
-    return BoltLockMgr().SetWeekdaySchedule(endpointId, weekdayIndex, userIndex, status, daysMask, startHour, startMinute, endHour,
-                                            endMinute);
-}
-
-DlStatus emberAfPluginDoorLockSetSchedule(chip::EndpointId endpointId, uint8_t yearDayIndex, uint16_t userIndex,
-                                          DlScheduleStatus status, uint32_t localStartTime, uint32_t localEndTime)
-{
-    return BoltLockMgr().SetYeardaySchedule(endpointId, yearDayIndex, userIndex, status, localStartTime, localEndTime);
-}
-
-DlStatus emberAfPluginDoorLockSetSchedule(chip::EndpointId endpointId, uint8_t holidayIndex, DlScheduleStatus status,
-                                          uint32_t localStartTime, uint32_t localEndTime, OperatingModeEnum operatingMode)
-{
-    return BoltLockMgr().SetHolidaySchedule(endpointId, holidayIndex, status, localStartTime, localEndTime, operatingMode);
-}
-
-void emberAfPluginDoorLockOnAutoRelock(chip::EndpointId endpointId)
-{
-    ESP_LOGI(TAG, "Door auto relock");
+    ESP_LOGI(TAG, "Auto-relock triggered on endpoint %d", endpointId);
+    // The Matter stack handles setting the state back to Locked
+    // No hardware action needed - door naturally re-locks
 }

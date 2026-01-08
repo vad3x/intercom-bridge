@@ -1,222 +1,197 @@
 # Smart Intercom
 
-ESP32-C6 firmware for making an IR204E analog intercom "smart" with:
-- Buzz/ring notification detection
-- Remote door unlock via HTTP API
-- Future: Matter/HomeKit integration
+ESP32-C6 Matter controller for IR204E analog intercom with HomeKit integration.
+
+## Features
+
+- 🔐 **Door Lock** - Unlock intercom door from Apple Home
+- 🔔 **Ring Detection** - Get notified when someone rings
+- 🏠 **Matter/HomeKit** - Native Apple Home support via Matter
+- ⚡ **Safe Design** - Optical isolation protects your ESP32
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        IR204E Intercom                          │
-│  ┌──────────┐                              ┌──────────┐        │
-│  │  Ring    │                              │  Door    │        │
-│  │  Signal  │                              │  Button  │        │
-│  └────┬─────┘                              └────┬─────┘        │
-└───────┼─────────────────────────────────────────┼──────────────┘
-        │                                         │
-        │ (AC/DC)                                 │ (Parallel)
-        ▼                                         ▼
-┌───────────────┐                        ┌───────────────┐
-│  Optocoupler  │                        │ PhotoMOS Relay│
-│  HCPL-817     │                        │  AQY212EHA    │
-└───────┬───────┘                        └───────┬───────┘
-        │                                         │
-        │ (GPIO Input)                           │ (GPIO Output)
-        ▼                                         ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                      ESP32-C6 (Beetle)                          │
+┌────────────────────────────────────────────────────────────────┐
+│                      Matter Device                              │
 │                                                                 │
-│   ┌─────────────┐    ┌─────────────┐    ┌─────────────┐       │
-│   │ GPIO Handler│───▶│    Main     │───▶│ HTTP Server │       │
-│   │ (Interrupt) │    │  App Logic  │    │ /unlock     │       │
-│   └─────────────┘    └─────────────┘    │ /status     │       │
-│                                          └─────────────┘       │
+│  Endpoint 1: Door Lock              Endpoint 2: Contact Sensor │
+│  ┌─────────────────────┐            ┌─────────────────────┐    │
+│  │ Door Lock Cluster   │            │ Boolean State       │    │
+│  │ - Unlock command    │            │ - StateValue        │    │
+│  │ - Auto-relock (1s)  │            │ (false=idle,        │    │
+│  └──────────┬──────────┘            │  true=ringing)      │    │
+│             │                       └──────────┬──────────┘    │
+└─────────────┼──────────────────────────────────┼───────────────┘
+              │                                  │
+              ▼                                  ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                        GPIO Driver                               │
+│                                                                  │
+│  GPIO3 (output)                    GPIO2 (input)                │
+│  └─► PhotoMOS relay                └─► Optocoupler              │
+│      700ms pulse on unlock             Interrupt → debounce     │
+│                                        → update contact sensor  │
 └─────────────────────────────────────────────────────────────────┘
-                              │
-                              │ WiFi
-                              ▼
-                    ┌─────────────────┐
-                    │   Home Network  │
-                    │   Apple Home    │
-                    │   (Future)      │
-                    └─────────────────┘
+              │                                  │
+              ▼                                  ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                     IR204E Intercom                              │
+│                                                                  │
+│  Door Button (parallel)            Ring Signal                  │
+│  └─► AQY212EHA closes              └─► HCPL-817 detects         │
+│      door latch releases               sends to ESP32           │
+└─────────────────────────────────────────────────────────────────┘
 ```
+
+## HomeKit Integration
+
+After pairing, your Home app will show:
+
+| Accessory | Type | Function |
+|-----------|------|----------|
+| 🔐 Intercom Lock | Door Lock | Tap to unlock door |
+| 🚪 Ring Sensor | Contact Sensor | Shows "Open" when ringing |
+
+### Example Automations
+
+- "When Ring Sensor opens → Send notification"
+- "When Ring Sensor opens → Flash porch lights"
+- "When Ring Sensor opens → Announce on HomePod"
 
 ## Hardware
 
 | Component | Part Number | Purpose |
 |-----------|-------------|---------|
-| Controller | DFRobot Beetle ESP32-C6 (DFR1117) | WiFi + GPIO + Matter-ready |
-| Optocoupler | Broadcom HCPL-817-000E | Isolate ring detection |
-| PhotoMOS Relay | Panasonic AQY212EHA | Isolated door unlock |
-| Connectors | WAGO 221 | Non-destructive intercom tap |
+| Controller | DFRobot Beetle ESP32-C6 | Matter-capable MCU |
+| Optocoupler | HCPL-817-000E | Ring detection (isolated) |
+| PhotoMOS Relay | AQY212EHA | Door unlock (isolated) |
+| Connectors | WAGO 221 | Non-destructive wiring |
 
-See [HARDWARE.md](HARDWARE.md) for wiring diagrams and specifications.
+See [HARDWARE.md](HARDWARE.md) for wiring diagrams.
 
-## Quick Start
+## GPIO Configuration
+
+| Pin | Function | Direction | Hardware |
+|-----|----------|-----------|----------|
+| GPIO2 | Buzz input | Input, Pull-up | Optocoupler output |
+| GPIO3 | Unlock output | Output | PhotoMOS relay LED |
+
+## Timing
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| Unlock pulse | 700ms | How long relay activates |
+| Auto-relock | 1s | Matter state returns to locked |
+| Debounce | 30ms | Ring signal filtering |
+| Buzz cooldown | 2.5s | Minimum between ring events |
+| Buzz active | 2s | How long sensor stays "open" |
+
+## Building
 
 ### Prerequisites
 
-- VS Code with Dev Containers extension
-- Docker Desktop
-- (Optional) ESP32-C6 board for hardware testing
+- ESP-IDF v5.x
+- ESP-Matter SDK
 
-### Setup
-
-1. Clone the repository:
-   ```bash
-   git clone <repo-url>
-   cd intercom-matter
-   ```
-
-2. Open in VS Code and reopen in Dev Container when prompted
-
-3. Configure WiFi credentials:
-   ```bash
-   idf.py menuconfig
-   # Navigate to: Component config → WiFi Configuration
-   # Or edit main/main.c directly
-   ```
-
-4. Build firmware:
-   ```bash
-   idf.py build
-   ```
-
-### Testing with QEMU (No Hardware)
+### Build Commands
 
 ```bash
-cd qemu
-./run-qemu.sh
+# Set target
+idf.py set-target esp32c6
 
-# In another terminal:
-./test-api.sh
-```
+# Build
+idf.py build
 
-### Flash to Hardware
-
-```bash
+# Flash and monitor
 idf.py flash monitor
 ```
 
-## HTTP API
+## Commissioning
 
-### Get Status
+1. Power on the device
+2. Open Apple Home app
+3. Tap "+" → "Add Accessory"
+4. Scan QR code or enter manual code
+5. Device appears as Door Lock + Contact Sensor
 
-```bash
-curl http://<device-ip>/status
-```
-
-Response:
-```json
-{
-  "device": "smart-intercom",
-  "version": "1.0.0",
-  "uptime_seconds": 3600,
-  "buzz": {
-    "count": 5,
-    "last_time_ms": 1234567890
-  },
-  "unlock": {
-    "count": 2,
-    "last_time_ms": 1234567000,
-    "busy": false
-  },
-  "config": {
-    "buzz_gpio": 2,
-    "unlock_gpio": 3,
-    "unlock_pulse_ms": 700,
-    "unlock_lockout_ms": 1500,
-    "buzz_cooldown_ms": 2500,
-    "debounce_ms": 30
-  }
-}
-```
-
-### Trigger Unlock
+### Commission via CLI (optional)
 
 ```bash
-curl -X POST http://<device-ip>/unlock
+# Get QR code
+matter esp qrcode
+
+# Factory reset
+matter esp factoryreset
 ```
-
-Response (success):
-```json
-{
-  "success": true,
-  "message": "Door unlock triggered",
-  "pulse_ms": 700
-}
-```
-
-Response (lockout active):
-```json
-{
-  "success": false,
-  "error": "Unlock in progress or lockout active",
-  "retry_after_ms": 800
-}
-```
-
-## Configuration
-
-### GPIO Pins
-
-| Function | Default GPIO | Notes |
-|----------|--------------|-------|
-| Buzz Input | GPIO2 | Pull-up, falling edge interrupt |
-| Unlock Output | GPIO3 | Active HIGH pulse |
-
-### Timing
-
-| Parameter | Value | Purpose |
-|-----------|-------|---------|
-| Debounce | 30 ms | Filter noise on buzz input |
-| Buzz Cooldown | 2500 ms | Prevent duplicate buzz events |
-| Unlock Pulse | 700 ms | Duration relay is activated |
-| Unlock Lockout | 1500 ms | Minimum time between unlocks |
 
 ## Project Structure
 
 ```
 intercom-matter/
 ├── main/
-│   ├── main.c              # Application entry, WiFi init
-│   ├── gpio_handler.c/h    # Buzz detection, unlock control
-│   ├── http_handler.c/h    # REST API endpoints
-│   └── CMakeLists.txt      # Component build config
-├── qemu/
-│   ├── docker-compose.yml  # QEMU container config
-│   ├── run-qemu.sh         # Launch emulator
-│   └── test-api.sh         # API test script
-├── .devcontainer/
-│   └── devcontainer.json   # VS Code Dev Container
-├── CMakeLists.txt          # Project build config
-├── sdkconfig.defaults      # Default ESP-IDF config
-├── partitions.csv          # Flash partition table
-└── HARDWARE.md             # Wiring documentation
+│   ├── app_main.cpp          # Matter node + endpoints
+│   ├── app_driver.cpp        # GPIO control + buzz detection
+│   ├── app_priv.h            # Configuration + pin definitions
+│   └── lock/
+│       ├── door_lock_manager.cpp/h   # Simplified lock logic
+│       └── door_lock_callbacks.cpp   # Matter callbacks
+├── CMakeLists.txt
+├── sdkconfig.defaults
+├── partitions.csv
+├── README.md
+└── HARDWARE.md
 ```
+
+## How It Works
+
+### Unlock Flow
+
+1. User taps "Unlock" in Home app
+2. Matter sends unlock command
+3. `emberAfPluginDoorLockOnDoorUnlockCommand()` called
+4. `BoltLockMgr().Unlock()` triggers GPIO pulse
+5. PhotoMOS relay closes for 700ms
+6. Door latch releases, person can enter
+7. Auto-relock timer fires after 1s
+8. Matter state returns to "Locked"
+
+### Ring Detection Flow
+
+1. Visitor presses intercom button
+2. Intercom sends ring signal
+3. Optocoupler pulls GPIO2 LOW
+4. GPIO interrupt fires
+5. Debounce timer validates signal (30ms)
+6. Contact sensor updated to "Open"
+7. HomeKit triggers automations
+8. After 2s, sensor returns to "Closed"
+
+## Simplified Design
+
+This implementation removes complex features not needed for intercoms:
+
+| Removed | Reason |
+|---------|--------|
+| PIN credentials | No keypad on intercom |
+| User management | Single household use |
+| Schedules | Overkill for door release |
+| Credential OTA | Not applicable |
+
+The Lock command is a **no-op** - the intercom door is always locked by its spring mechanism. Only Unlock triggers hardware.
 
 ## Safety Notes
 
-- **Never connect intercom wires directly to ESP32 GPIO**
-- Always use optical isolation (optocoupler for input, PhotoMOS for output)
-- Power ESP32 from its own USB supply, not from intercom
-- This design is reversible and non-destructive
+⚠️ **Electrical Safety**
+- Never connect intercom wires directly to ESP32
+- Always use optical isolation (optocoupler + PhotoMOS)
+- Power ESP32 from separate USB supply
 
-## Future Roadmap
-
-1. ✅ HTTP API for remote control
-2. ⬜ WiFi provisioning (SmartConfig or BLE)
-3. ⬜ ESP-Matter integration
-4. ⬜ HomeKit Lock + Doorbell accessory
-5. ⬜ Audio passthrough (optional)
+⚠️ **Building Security**
+- This modification affects building access
+- Consult building management before installation
+- Keep manual intercom button functional
 
 ## License
 
-MIT License - See LICENSE file for details.
-
-## Contributing
-
-Contributions welcome! Please open an issue first to discuss changes.
+MIT License - See LICENSE for details.
