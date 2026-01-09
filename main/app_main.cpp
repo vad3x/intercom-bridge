@@ -187,19 +187,14 @@ extern "C" void app_main() {
     door_lock_endpoint_id = endpoint::get_id(lock_endpoint);
     ESP_LOGI(TAG, "Door lock created with endpoint_id %d", door_lock_endpoint_id);
 
-    // Create Generic Switch endpoint for buzz/ring button
-    generic_switch::config_t switch_config;
-    switch_config.switch_cluster.number_of_positions = 2;
-    switch_config.switch_cluster.current_position = 0;
-    endpoint_t* buzz_endpoint = generic_switch::create(node, &switch_config, ENDPOINT_FLAG_NONE, NULL);
-    ABORT_APP_ON_FAILURE(buzz_endpoint != nullptr, ESP_LOGE(TAG, "Failed to create generic switch endpoint"));
+    // Create Occupancy Sensor endpoint for ring detection (appears as Motion Sensor in HomeKit)
+    occupancy_sensor::config_t occupancy_config;
+    occupancy_config.occupancy_sensing.occupancy = 0;  // Initially no motion
+    endpoint_t* motion_endpoint = occupancy_sensor::create(node, &occupancy_config, ENDPOINT_FLAG_NONE, NULL);
+    ABORT_APP_ON_FAILURE(motion_endpoint != nullptr, ESP_LOGE(TAG, "Failed to create occupancy sensor endpoint"));
 
-    // Add momentary switch feature
-    cluster_t* switch_cluster = cluster::get(buzz_endpoint, Switch::Id);
-    cluster::switch_cluster::feature::momentary_switch::add(switch_cluster);
-
-    buzz_button_endpoint_id = endpoint::get_id(buzz_endpoint);
-    ESP_LOGI(TAG, "Buzz button (generic switch) created with endpoint_id %d", buzz_button_endpoint_id);
+    buzz_button_endpoint_id = endpoint::get_id(motion_endpoint);
+    ESP_LOGI(TAG, "Ring sensor (occupancy/motion) created with endpoint_id %d", buzz_button_endpoint_id);
 
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD
     /* Set OpenThread platform config */

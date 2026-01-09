@@ -32,7 +32,7 @@
  * Endpoint IDs (set in app_main.cpp)
  */
 extern uint16_t door_lock_endpoint_id;
-extern uint16_t buzz_button_endpoint_id;
+extern uint16_t buzz_button_endpoint_id;  // Occupancy sensor (Motion in HomeKit)
 
 /*
  * Legacy driver interface (for compatibility)

@@ -2,7 +2,7 @@
    Smart Intercom - HomeKit Actor
 
    Handles Matter/HomeKit integration:
-   - Listens to BuzzStarted/BuzzEnded → updates GenericSwitch position
+   - Listens to BuzzStarted/BuzzEnded → updates Occupancy Sensor (Motion in HomeKit)
    - Provides unlock()/lock() methods called by Matter callbacks
 */
 
@@ -21,7 +21,7 @@ public:
     /**
      * @brief Initialize HomeKit actor with endpoint IDs
      * @param lockEndpointId Matter endpoint ID for door lock
-     * @param buzzEndpointId Matter endpoint ID for buzz button (GenericSwitch)
+     * @param buzzEndpointId Matter endpoint ID for occupancy sensor (Motion in HomeKit)
      *
      * Subscribes to: buzzStarted, buzzEnded
      */
@@ -49,6 +49,6 @@ private:
 
     // Matter state updates
     static void updateLockState(bool unlocked);
-    static void updateBuzzSwitch(bool pressed);
+    static void updateOccupancy(bool occupied);
 };
 

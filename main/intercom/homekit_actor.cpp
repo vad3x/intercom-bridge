@@ -51,14 +51,14 @@ void HomekitActor::onBuzzStarted(const BuzzStartedEvent& e) {
     ESP_LOGI(TAG, "BuzzStarted received from %s (ts=%lld)",
              e.meta.source, (long long)e.meta.timestamp);
 
-    updateBuzzSwitch(true);  // Press button
+    updateOccupancy(true);  // Motion detected
 }
 
 void HomekitActor::onBuzzEnded(const BuzzEndedEvent& e) {
     ESP_LOGI(TAG, "BuzzEnded received from %s (ts=%lld)",
              e.meta.source, (long long)e.meta.timestamp);
 
-    updateBuzzSwitch(false);  // Release button
+    updateOccupancy(false);  // Motion cleared
 }
 
 void HomekitActor::updateLockState(bool unlocked) {
@@ -77,19 +77,20 @@ void HomekitActor::updateLockState(bool unlocked) {
     DoorLockServer::Instance().SetLockState(lockEndpointId_, lockState);
 }
 
-void HomekitActor::updateBuzzSwitch(bool pressed) {
+void HomekitActor::updateOccupancy(bool occupied) {
     if (buzzEndpointId_ == 0) {
-        ESP_LOGW(TAG, "Buzz endpoint not initialized");
+        ESP_LOGW(TAG, "Occupancy endpoint not initialized");
         return;
     }
 
-    uint8_t position = pressed ? 1 : 0;
-    ESP_LOGI(TAG, "Updating Matter switch position to %d", position);
+    // OccupancySensing occupancy attribute is a bitmap, bit 0 = occupied
+    uint8_t occupancyBitmap = occupied ? 1 : 0;
+    ESP_LOGI(TAG, "Updating Matter occupancy to %s", occupied ? "Occupied" : "Unoccupied");
 
-    esp_matter_attr_val_t val = esp_matter_uint8(position);
+    esp_matter_attr_val_t val = esp_matter_uint8(occupancyBitmap);
     attribute::update(buzzEndpointId_,
-                      Switch::Id,
-                      Switch::Attributes::CurrentPosition::Id,
+                      OccupancySensing::Id,
+                      OccupancySensing::Attributes::Occupancy::Id,
                       &val);
 }
 
