@@ -7,11 +7,19 @@
 
 #pragma once
 
+#include <cstdint>
 #include <esp_err.h>
 #include <esp_matter.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/timers.h>
 #include <functional>
+
+/**
+ * @brief Configuration for Matter access control driver
+ */
+struct MatterAccessControlConfig {
+    uint32_t ringHoldMs;  // How long occupancy stays active after ring
+};
 
 /**
  * @brief Matter-based access control driver
@@ -23,8 +31,13 @@
  * Also creates Matter endpoints and handles SDK callbacks.
  */
 class MatterAccessControlDriver {
-   public:
+public:
     using DispatchCallback = std::function<void()>;
+
+    /**
+     * @brief Construct with configuration
+     */
+    explicit MatterAccessControlDriver(const MatterAccessControlConfig& config) : config_(config) {}
 
     /**
      * @brief Initialize Matter - creates endpoints, starts stack
@@ -36,7 +49,7 @@ class MatterAccessControlDriver {
     /**
      * @brief Called when ring detected - updates occupancy sensor
      *
-     * Sets occupancy to true, starts timer to clear after BUZZ_HOLD_MS
+     * Sets occupancy to true, starts timer to clear after ringHoldMs
      */
     void ringing();
 
@@ -47,7 +60,8 @@ class MatterAccessControlDriver {
     // Static instance for SDK callback access
     static MatterAccessControlDriver* instance_;
 
-   private:
+private:
+    MatterAccessControlConfig config_;
     DispatchCallback onUnlockDispatched_;
     DispatchCallback onLockDispatched_;
 

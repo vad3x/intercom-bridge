@@ -8,7 +8,6 @@
 */
 
 #include "drivers/matter_access_control_driver.h"
-#include "config/app_priv.h"
 #include <app/clusters/door-lock-server/door-lock-server.h>
 #include <app/data-model/Nullable.h>
 #include <app/server/CommissioningWindowManager.h>
@@ -68,7 +67,7 @@ void MatterAccessControlDriver::init(DispatchCallback onUnlockDispatched, Dispat
     onLockDispatched_ = onLockDispatched;
 
     // Create ring timer for occupancy timeout
-    ringTimer_ = xTimerCreate("ring_hold", pdMS_TO_TICKS(BUZZ_HOLD_MS), pdFALSE, this, ringTimerCallback);
+    ringTimer_ = xTimerCreate("ring_hold", pdMS_TO_TICKS(config_.ringHoldMs), pdFALSE, this, ringTimerCallback);
     if (!ringTimer_) {
         ESP_LOGE(TAG, "Failed to create ring timer");
     }
@@ -145,7 +144,7 @@ void MatterAccessControlDriver::ringing() {
     // Reset/start timer for auto-clear
     if (ringTimer_) {
         xTimerStop(ringTimer_, 0);
-        xTimerChangePeriod(ringTimer_, pdMS_TO_TICKS(BUZZ_HOLD_MS), 0);
+        xTimerChangePeriod(ringTimer_, pdMS_TO_TICKS(config_.ringHoldMs), 0);
         xTimerStart(ringTimer_, 0);
     }
 }

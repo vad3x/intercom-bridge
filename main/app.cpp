@@ -13,8 +13,9 @@ static const char* TAG = "App";
 // ============================================================================
 
 App::App()
-    : ringDriver_({.gpioPin = BUZZ_GPIO, .debounceMs = DEBOUNCE_MS, .cooldownMs = BUZZ_COOLDOWN_MS})
+    : ringDriver_({.gpioPin = RING_GPIO, .debounceMs = RING_DEBOUNCE_MS, .cooldownMs = RING_COOLDOWN_MS})
     , doorDriver_({.gpioPin = UNLOCK_GPIO, .unlockPulseMs = UNLOCK_PULSE_MS})
+    , accessControlDriver_({.ringHoldMs = RING_HOLD_MS})
     , ringActor_(eventBus_, ringDriver_)
     , accessControlActor_(eventBus_, accessControlDriver_)
     , doorActor_(eventBus_, doorDriver_) {}

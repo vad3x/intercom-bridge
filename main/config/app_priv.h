@@ -17,16 +17,16 @@
 /*
  * GPIO Configuration
  */
-#define BUZZ_GPIO 2    // Input: Optocoupler output (active LOW when ringing)
+#define RING_GPIO 2    // Input: Optocoupler output (active LOW when ringing)
 #define UNLOCK_GPIO 3  // Output: PhotoMOS relay control (active HIGH)
 
 /*
  * Timing Constants (milliseconds)
  */
 #define UNLOCK_PULSE_MS 700    // Duration of relay activation
-#define DEBOUNCE_MS 30         // Buzz signal debounce time
-#define BUZZ_COOLDOWN_MS 2500  // Minimum time between buzz events
-#define BUZZ_HOLD_MS 4000      // How long button stays "pressed" in HomeKit
+#define RING_DEBOUNCE_MS 30    // Ring signal debounce time
+#define RING_COOLDOWN_MS 2500  // Minimum time between ring events
+#define RING_HOLD_MS 4000      // How long occupancy stays active in HomeKit
 
 /*
  * Legacy driver interface (for compatibility)
