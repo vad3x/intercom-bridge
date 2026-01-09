@@ -37,7 +37,9 @@ class MatterAccessControlDriver {
     /**
      * @brief Construct with configuration
      */
-    explicit MatterAccessControlDriver(const MatterAccessControlConfig& config) : config_(config) {}
+    explicit MatterAccessControlDriver(const MatterAccessControlConfig& config) : config_(config) {
+        instance_ = this;
+    }
 
     /**
      * @brief Initialize Matter - creates endpoints, starts stack
@@ -57,10 +59,13 @@ class MatterAccessControlDriver {
     void unlock();
     void lock();
 
-    // Static instance for SDK callback access
-    static MatterAccessControlDriver* instance_;
+    // Singleton access for SDK callbacks
+    static MatterAccessControlDriver* instance() {
+        return instance_;
+    }
 
    private:
+    inline static MatterAccessControlDriver* instance_ = nullptr;
     MatterAccessControlConfig config_;
     DispatchCallback onUnlockDispatched_;
     DispatchCallback onLockDispatched_;

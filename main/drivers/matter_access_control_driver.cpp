@@ -35,9 +35,6 @@ using chip::app::DataModel::Nullable;
 
 constexpr auto k_timeout_seconds = 300;
 
-// Static instance for SDK callback access
-MatterAccessControlDriver* MatterAccessControlDriver::instance_ = nullptr;
-
 // File-scope state
 static node_t* s_node = nullptr;
 
@@ -62,12 +59,11 @@ static void onDeviceEvent(const chip::DeviceLayer::ChipDeviceEvent* event, intpt
 void MatterAccessControlDriver::init(DispatchCallback onUnlockDispatched, DispatchCallback onLockDispatched) {
     ESP_LOGI(TAG, "Initializing MatterAccessControlDriver");
 
-    instance_ = this;
     onUnlockDispatched_ = onUnlockDispatched;
     onLockDispatched_ = onLockDispatched;
 
     // Create ring timer for occupancy timeout
-    ringTimer_ = xTimerCreate("ring_hold", pdMS_TO_TICKS(config_.ringHoldMs), pdFALSE, this, ringTimerCallback);
+    ringTimer_ = xTimerCreate("ring_hold", pdMS_TO_TICKS(config_.ringHoldMs), pdFALSE, nullptr, ringTimerCallback);
     if (!ringTimer_) {
         ESP_LOGE(TAG, "Failed to create ring timer");
     }
@@ -199,9 +195,8 @@ void MatterAccessControlDriver::updateOccupancy(bool occupied) {
 
 void MatterAccessControlDriver::ringTimerCallback(TimerHandle_t timer) {
     ESP_LOGI(TAG, "Ring hold timer expired - clearing occupancy");
-    MatterAccessControlDriver* self = static_cast<MatterAccessControlDriver*>(pvTimerGetTimerID(timer));
-    if (self) {
-        self->updateOccupancy(false);
+    if (auto* driver = instance()) {
+        driver->updateOccupancy(false);
     }
 }
 
@@ -224,8 +219,8 @@ bool emberAfPluginDoorLockOnDoorLockCommand(EndpointId endpointId, const Nullabl
                                             const Nullable<NodeId>& nodeId, const Optional<ByteSpan>& pinCode,
                                             OperationErrorEnum& err) {
     ESP_LOGI(TAG, "Lock command on endpoint %d", endpointId);
-    if (MatterAccessControlDriver::instance_) {
-        MatterAccessControlDriver::instance_->lock();
+    if (auto* driver = MatterAccessControlDriver::instance()) {
+        driver->lock();
     }
     return true;
 }
@@ -237,8 +232,8 @@ bool emberAfPluginDoorLockOnDoorUnlockCommand(EndpointId endpointId, const Nulla
                                               const Nullable<NodeId>& nodeId, const Optional<ByteSpan>& pinCode,
                                               OperationErrorEnum& err) {
     ESP_LOGI(TAG, "Unlock command on endpoint %d", endpointId);
-    if (MatterAccessControlDriver::instance_) {
-        MatterAccessControlDriver::instance_->unlock();
+    if (auto* driver = MatterAccessControlDriver::instance()) {
+        driver->unlock();
     }
     return true;
 }

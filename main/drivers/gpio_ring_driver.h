@@ -32,7 +32,9 @@ class GpioRingDriver {
     /**
      * @brief Construct with configuration
      */
-    explicit GpioRingDriver(const GpioRingConfig& config) : config_(config) {}
+    explicit GpioRingDriver(const GpioRingConfig& config) : config_(config) {
+        instance_ = this;
+    }
 
     /**
      * @brief Initialize the ring detection hardware
@@ -40,13 +42,14 @@ class GpioRingDriver {
      */
     void init(OnRingCallback onRing);
 
-    // Called from ISR context after debounce
-    static void onBuzzDetected();
-
-    // Static instance for ISR access
-    static GpioRingDriver* instance_;
+    // Singleton access for callbacks
+    static GpioRingDriver* instance() {
+        return instance_;
+    }
 
    private:
+    inline static GpioRingDriver* instance_ = nullptr;
+
     GpioRingConfig config_;
     OnRingCallback ringCallback_;
 };

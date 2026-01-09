@@ -27,7 +27,14 @@ class GpioDoorDriver {
     /**
      * @brief Construct with configuration
      */
-    explicit GpioDoorDriver(const GpioDoorConfig& config) : config_(config) {}
+    explicit GpioDoorDriver(const GpioDoorConfig& config) : config_(config) {
+        instance_ = this;
+    }
+
+    // Singleton access for callbacks
+    static GpioDoorDriver* instance() {
+        return instance_;
+    }
 
     /**
      * @brief Initialize the door unlock hardware
@@ -48,6 +55,8 @@ class GpioDoorDriver {
     void onUnlockComplete();
 
    private:
+    inline static GpioDoorDriver* instance_ = nullptr;
+
     GpioDoorConfig config_;
     volatile bool unlockInProgress_ = false;
 };
