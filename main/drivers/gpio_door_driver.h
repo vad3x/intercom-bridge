@@ -13,7 +13,7 @@
  * @brief Configuration for GPIO door driver
  */
 struct GpioDoorConfig {
-    int gpioPin;           // GPIO pin for relay control
+    int gpioPin;             // GPIO pin for relay control
     uint32_t unlockPulseMs;  // Duration of unlock pulse in milliseconds
 };
 
@@ -23,7 +23,7 @@ struct GpioDoorConfig {
  * Controls PhotoMOS relay to release door latch.
  */
 class GpioDoorDriver {
-public:
+   public:
     /**
      * @brief Construct with configuration
      */
@@ -47,7 +47,7 @@ public:
     // Called when unlock pulse ends (from timer callback)
     void onUnlockComplete();
 
-private:
+   private:
     GpioDoorConfig config_;
     volatile bool unlockInProgress_ = false;
 };

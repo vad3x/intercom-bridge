@@ -31,7 +31,7 @@ struct MatterAccessControlConfig {
  * Also creates Matter endpoints and handles SDK callbacks.
  */
 class MatterAccessControlDriver {
-public:
+   public:
     using DispatchCallback = std::function<void()>;
 
     /**
@@ -60,7 +60,7 @@ public:
     // Static instance for SDK callback access
     static MatterAccessControlDriver* instance_;
 
-private:
+   private:
     MatterAccessControlConfig config_;
     DispatchCallback onUnlockDispatched_;
     DispatchCallback onLockDispatched_;

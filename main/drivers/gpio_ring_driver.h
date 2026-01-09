@@ -14,9 +14,9 @@
  * @brief Configuration for GPIO ring driver
  */
 struct GpioRingConfig {
-    int gpioPin;           // GPIO pin for ring detection
-    uint32_t debounceMs;   // Debounce time in milliseconds
-    uint32_t cooldownMs;   // Cooldown between ring events
+    int gpioPin;          // GPIO pin for ring detection
+    uint32_t debounceMs;  // Debounce time in milliseconds
+    uint32_t cooldownMs;  // Cooldown between ring events
 };
 
 /**
@@ -26,7 +26,7 @@ struct GpioRingConfig {
  * Includes debouncing and cooldown logic.
  */
 class GpioRingDriver {
-public:
+   public:
     using OnRingCallback = std::function<void()>;
 
     /**
@@ -46,7 +46,7 @@ public:
     // Static instance for ISR access
     static GpioRingDriver* instance_;
 
-private:
+   private:
     GpioRingConfig config_;
     OnRingCallback ringCallback_;
 };
