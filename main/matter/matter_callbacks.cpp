@@ -5,7 +5,7 @@
    Routes commands to HomekitActor.
 */
 
-#include "homekit_actor.h"
+#include "actors/homekit_actor.h"
 #include <esp_log.h>
 #include <lib/core/DataModelTypes.h>
 #include <lib/core/Optional.h>

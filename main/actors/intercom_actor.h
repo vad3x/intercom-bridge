@@ -8,7 +8,7 @@
 
 #pragma once
 
-#include "events.h"
+#include "events/events.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/timers.h>
 

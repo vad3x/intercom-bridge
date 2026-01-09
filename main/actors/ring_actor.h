@@ -6,7 +6,7 @@
 
 #pragma once
 
-#include "hardware_sockets.h"
+#include "hardware/hardware_sockets.h"
 
 struct EventBus;  // Forward declaration
 

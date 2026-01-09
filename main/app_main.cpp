@@ -16,7 +16,7 @@
 #include <esp_matter_ota.h>
 
 #include <common_macros.h>
-#include <app_priv.h>
+#include "config/app_priv.h"
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD
 #include <platform/ESP32/OpenthreadLauncher.h>
 #endif
@@ -25,12 +25,12 @@
 #include <app/server/Server.h>
 
 // Actor includes
-#include "intercom/events.h"
-#include "intercom/ring_actor.h"
-#include "intercom/intercom_actor.h"
-#include "intercom/lock_actor.h"
-#include "intercom/homekit_actor.h"
-#include "gpio_adapter.h"
+#include "events/events.h"
+#include "actors/ring_actor.h"
+#include "actors/intercom_actor.h"
+#include "actors/lock_actor.h"
+#include "actors/homekit_actor.h"
+#include "hardware/gpio_adapter.h"
 
 // Forces linkage of Matter callbacks
 void matter_callbacks_init();

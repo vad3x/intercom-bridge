@@ -2,7 +2,7 @@
    Smart Intercom - Lock Actor Implementation
 */
 
-#include "lock_actor.h"
+#include "actors/lock_actor.h"
 #include <esp_log.h>
 
 static const char* TAG = "LockActor";

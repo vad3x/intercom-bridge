@@ -1,6 +1,7 @@
-idf_component_register(SRC_DIRS "." "./intercom"
+idf_component_register(SRC_DIRS "." "./actors" "./hardware" "./matter"
                        PRIV_INCLUDE_DIRS
-                         "." "./intercom" "${ESP_MATTER_PATH}/examples/common/utils")
+                         "." "./config" "./events" "./actors" "./hardware" "./matter"
+                         "${ESP_MATTER_PATH}/examples/common/utils")
 
 target_compile_options(${COMPONENT_LIB} PRIVATE "-DCHIP_HAVE_CONFIG_H")
 

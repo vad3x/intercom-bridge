@@ -2,7 +2,7 @@
    Smart Intercom - Intercom Actor Implementation
 */
 
-#include "intercom_actor.h"
+#include "actors/intercom_actor.h"
 #include <esp_log.h>
 
 static const char* TAG = "IntercomActor";

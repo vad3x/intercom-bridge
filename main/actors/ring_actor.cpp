@@ -2,8 +2,8 @@
    Smart Intercom - Ring Actor Implementation
 */
 
-#include "ring_actor.h"
-#include "events.h"
+#include "actors/ring_actor.h"
+#include "events/events.h"
 #include <esp_log.h>
 
 static const char* TAG = "RingActor";

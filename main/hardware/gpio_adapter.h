@@ -6,7 +6,7 @@
 
 #pragma once
 
-#include "intercom/hardware_sockets.h"
+#include "hardware/hardware_sockets.h"
 
 /**
  * @brief GPIO adapter implementing hardware sockets

@@ -6,8 +6,8 @@
 
 #pragma once
 
-#include "events.h"
-#include "hardware_sockets.h"
+#include "events/events.h"
+#include "hardware/hardware_sockets.h"
 
 /**
  * @brief Lock control actor

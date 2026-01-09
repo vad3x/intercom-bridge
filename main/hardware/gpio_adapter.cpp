@@ -6,8 +6,8 @@
    - Buzz detection via optocoupler (HCPL-817)
 */
 
-#include "gpio_adapter.h"
-#include <app_priv.h>
+#include "hardware/gpio_adapter.h"
+#include "config/app_priv.h"
 #include <esp_log.h>
 #include <driver/gpio.h>
 #include <esp_timer.h>

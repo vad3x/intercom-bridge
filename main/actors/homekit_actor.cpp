@@ -2,7 +2,7 @@
    Smart Intercom - HomeKit Actor Implementation
 */
 
-#include "homekit_actor.h"
+#include "actors/homekit_actor.h"
 #include <esp_log.h>
 #include <esp_matter.h>
 #include <app/clusters/door-lock-server/door-lock-server.h>
