@@ -16,16 +16,10 @@ TimerHandle_t IntercomActor::buzzTimer_ = nullptr;
 // Public Methods
 // ============================================================================
 
-IntercomActor::IntercomActor(EventBus& bus) {
+IntercomActor::IntercomActor(EventBus& bus, uint32_t buzzHoldMs) {
     bus_ = &bus;
-}
-
-void IntercomActor::init(uint32_t buzzHoldMs) {
-    ESP_LOGI(TAG, "Initializing IntercomActor (buzzHoldMs=%lu)", (unsigned long)buzzHoldMs);
-
     buzzHoldMs_ = buzzHoldMs;
 
-    // Create buzz hold timer (one-shot)
     buzzTimer_ = xTimerCreate("buzz_hold",
                               pdMS_TO_TICKS(buzzHoldMs_),
                               pdFALSE,  // One-shot
@@ -35,8 +29,11 @@ void IntercomActor::init(uint32_t buzzHoldMs) {
     if (!buzzTimer_) {
         ESP_LOGE(TAG, "Failed to create buzz timer");
     }
+}
 
-    // Subscribe to events
+void IntercomActor::init() {
+    ESP_LOGI(TAG, "Initializing IntercomActor (buzzHoldMs=%lu)", (unsigned long)buzzHoldMs_);
+
     bus_->ringPressed.subscribe(&IntercomActor::onRingPressed);
     bus_->unlockPressed.subscribe(&IntercomActor::onUnlockPressed);
 
