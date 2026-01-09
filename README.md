@@ -5,43 +5,45 @@ ESP32-C6 Matter controller for IR204E analog intercom with HomeKit integration.
 ## Features
 
 - 🔐 **Door Lock** - Unlock intercom door from Apple Home
-- 🔔 **Ring Detection** - Get notified when someone rings
+- 🔔 **Ring Detection** - Get notified when someone rings (Motion Sensor)
 - 🏠 **Matter/HomeKit** - Native Apple Home support via Matter
 - ⚡ **Safe Design** - Optical isolation protects your ESP32
 
 ## Architecture
 
 ```
-┌────────────────────────────────────────────────────────────────┐
-│                      Matter Device                              │
-│                                                                 │
-│  Endpoint 1: Door Lock              Endpoint 2: Contact Sensor │
-│  ┌─────────────────────┐            ┌─────────────────────┐    │
-│  │ Door Lock Cluster   │            │ Boolean State       │    │
-│  │ - Unlock command    │            │ - StateValue        │    │
-│  │ - Auto-relock (1s)  │            │ (false=idle,        │    │
-│  └──────────┬──────────┘            │  true=ringing)      │    │
-│             │                       └──────────┬──────────┘    │
-└─────────────┼──────────────────────────────────┼───────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                         Matter Device                                │
+│                                                                      │
+│  Endpoint 1: Door Lock              Endpoint 2: Occupancy Sensor    │
+│  ┌─────────────────────┐            ┌─────────────────────┐         │
+│  │ Door Lock Cluster   │            │ Occupancy Sensing   │         │
+│  │ - Unlock command    │            │ - Occupancy bitmap  │         │
+│  │ - Auto-relock (1s)  │            │ (appears as Motion  │         │
+│  └──────────┬──────────┘            │  Sensor in HomeKit) │         │
+│             │                       └──────────┬──────────┘         │
+└─────────────┼──────────────────────────────────┼────────────────────┘
               │                                  │
               ▼                                  ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                        GPIO Driver                               │
-│                                                                  │
-│  GPIO3 (output)                    GPIO2 (input)                │
-│  └─► PhotoMOS relay                └─► Optocoupler              │
-│      700ms pulse on unlock             Interrupt → debounce     │
-│                                        → update contact sensor  │
-└─────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                         Event Bus                                    │
+│                                                                      │
+│  RingingEvent ──────────────────► AccessControlActor ──► Matter     │
+│       ▲                                    │                         │
+│       │                           UnlockDispatchedEvent              │
+│       │                                    │                         │
+│  RingActor ◄── GpioRingDriver              ▼                         │
+│                                       DoorActor ──► GpioDoorDriver   │
+└─────────────────────────────────────────────────────────────────────┘
               │                                  │
               ▼                                  ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                     IR204E Intercom                              │
-│                                                                  │
-│  Door Button (parallel)            Ring Signal                  │
-│  └─► AQY212EHA closes              └─► HCPL-817 detects         │
-│      door latch releases               sends to ESP32           │
-└─────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                     IR204E Intercom                                  │
+│                                                                      │
+│  GPIO2 (input)                       GPIO3 (output)                 │
+│  └─► HCPL-817 optocoupler            └─► AQY212EHA PhotoMOS         │
+│      detects ring signal                 releases door latch        │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
 ## HomeKit Integration
@@ -51,13 +53,20 @@ After pairing, your Home app will show:
 | Accessory | Type | Function |
 |-----------|------|----------|
 | 🔐 Intercom Lock | Door Lock | Tap to unlock door |
-| 🚪 Ring Sensor | Contact Sensor | Shows "Open" when ringing |
+| 🚶 Ring Sensor | Motion Sensor | Detects when someone rings |
+
+### Why Motion Sensor?
+
+The ring detection appears as a Motion Sensor in HomeKit because:
+- Native notification support ("Motion detected")
+- Better automation triggers than Contact Sensor
+- 4-second auto-clear matches typical ring duration
 
 ### Example Automations
 
-- "When Ring Sensor opens → Send notification"
-- "When Ring Sensor opens → Flash porch lights"
-- "When Ring Sensor opens → Announce on HomePod"
+- "When motion detected → Send notification"
+- "When motion detected → Flash porch lights"
+- "When motion detected → Announce on HomePod"
 
 ## Hardware
 
@@ -70,22 +79,21 @@ After pairing, your Home app will show:
 
 See [HARDWARE.md](HARDWARE.md) for wiring diagrams.
 
-## GPIO Configuration
+## Configuration
 
-| Pin | Function | Direction | Hardware |
-|-----|----------|-----------|----------|
-| GPIO2 | Buzz input | Input, Pull-up | Optocoupler output |
-| GPIO3 | Unlock output | Output | PhotoMOS relay LED |
+All hardware settings are in `main/config/app_priv.h`:
 
-## Timing
+```cpp
+// GPIO Configuration
+#define RING_GPIO 2    // Input: Optocoupler output (active LOW)
+#define UNLOCK_GPIO 3  // Output: PhotoMOS relay control (active HIGH)
 
-| Parameter | Value | Description |
-|-----------|-------|-------------|
-| Unlock pulse | 700ms | How long relay activates |
-| Auto-relock | 1s | Matter state returns to locked |
-| Debounce | 30ms | Ring signal filtering |
-| Buzz cooldown | 2.5s | Minimum between ring events |
-| Buzz active | 2s | How long sensor stays "open" |
+// Timing Constants (milliseconds)
+#define UNLOCK_PULSE_MS 700    // Duration of relay activation
+#define RING_DEBOUNCE_MS 30    // Ring signal debounce time
+#define RING_COOLDOWN_MS 2500  // Minimum time between ring events
+#define RING_HOLD_MS 4000      // How long motion stays active in HomeKit
+```
 
 ## Building
 
@@ -120,7 +128,7 @@ find main \( -name "*.cpp" -o -name "*.h" \) -exec clang-format -i {} +
 2. Open Apple Home app
 3. Tap "+" → "Add Accessory"
 4. Scan QR code or enter manual code
-5. Device appears as Door Lock + Contact Sensor
+5. Device appears as Door Lock + Motion Sensor
 
 ### Commission via CLI (optional)
 
@@ -137,12 +145,26 @@ matter esp factoryreset
 ```
 intercom-matter/
 ├── main/
-│   ├── app_main.cpp          # Matter node + endpoints
-│   ├── app_driver.cpp        # GPIO control + buzz detection
-│   ├── app_priv.h            # Configuration + pin definitions
-│   └── lock/
-│       ├── door_lock_manager.cpp/h   # Simplified lock logic
-│       └── door_lock_callbacks.cpp   # Matter callbacks
+│   ├── app_main.cpp              # Entry point, initializes App
+│   ├── app.cpp/h                 # Application class, wires actors
+│   │
+│   ├── config/
+│   │   └── app_priv.h            # GPIO pins, timing constants
+│   │
+│   ├── events/
+│   │   ├── events.h              # RingingEvent, UnlockDispatchedEvent
+│   │   └── listener.h            # Event subscription template
+│   │
+│   ├── actors/
+│   │   ├── ring_actor.h          # Hardware ring → RingingEvent
+│   │   ├── access_control_actor.h # Business logic, Matter bridge
+│   │   └── door_actor.h          # UnlockDispatchedEvent → hardware
+│   │
+│   └── drivers/
+│       ├── gpio_ring_driver.cpp/h      # Optocoupler input
+│       ├── gpio_door_driver.cpp/h      # PhotoMOS relay output
+│       └── matter_access_control_driver.cpp/h  # Matter endpoints
+│
 ├── CMakeLists.txt
 ├── sdkconfig.defaults
 ├── partitions.csv
@@ -152,27 +174,56 @@ intercom-matter/
 
 ## How It Works
 
+### Actor Model
+
+The firmware uses an event-driven actor architecture:
+
+| Actor | Responsibility |
+|-------|----------------|
+| `RingActor` | Listens to hardware, emits `RingingEvent` |
+| `AccessControlActor` | Business logic, bridges events ↔ Matter |
+| `DoorActor` | Listens to `UnlockDispatchedEvent`, triggers hardware |
+
+Actors communicate via an `EventBus` with typed events.
+
+### Driver Pattern
+
+Hardware drivers use config structs for dependency injection:
+
+```cpp
+// Config passed at construction
+GpioRingDriver ringDriver_({
+    .gpioPin = RING_GPIO,
+    .debounceMs = RING_DEBOUNCE_MS,
+    .cooldownMs = RING_COOLDOWN_MS
+});
+
+// Timer callbacks use FreeRTOS timer ID pattern
+xTimerCreate("timer", period, false, this, callback);
+auto* self = static_cast<Driver*>(pvTimerGetTimerID(timer));
+```
+
 ### Unlock Flow
 
 1. User taps "Unlock" in Home app
 2. Matter sends unlock command
-3. `emberAfPluginDoorLockOnDoorUnlockCommand()` called
-4. `BoltLockMgr().Unlock()` triggers GPIO pulse
-5. PhotoMOS relay closes for 700ms
-6. Door latch releases, person can enter
-7. Auto-relock timer fires after 1s
-8. Matter state returns to "Locked"
+3. `MatterAccessControlDriver` receives callback
+4. Emits `UnlockDispatchedEvent` via `AccessControlActor`
+5. `DoorActor` triggers `GpioDoorDriver::triggerUnlock()`
+6. PhotoMOS relay closes for 700ms
+7. Door latch releases, person can enter
+8. Auto-relock timer fires after 1s (Matter state only)
 
 ### Ring Detection Flow
 
 1. Visitor presses intercom button
-2. Intercom sends ring signal
-3. Optocoupler pulls GPIO2 LOW
-4. GPIO interrupt fires
-5. Debounce timer validates signal (30ms)
-6. Contact sensor updated to "Open"
-7. HomeKit triggers automations
-8. After 2s, sensor returns to "Closed"
+2. Optocoupler pulls GPIO2 LOW
+3. GPIO ISR fires, starts debounce timer
+4. After 30ms, `GpioRingDriver` validates signal
+5. Invokes callback → `RingActor` emits `RingingEvent`
+6. `AccessControlActor` calls `MatterAccessControlDriver::ringing()`
+7. Occupancy sensor set to "occupied" (motion detected)
+8. After 4s, auto-clears to "unoccupied"
 
 ## Simplified Design
 
