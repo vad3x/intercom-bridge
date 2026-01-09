@@ -195,8 +195,8 @@ void MatterAccessControlDriver::updateOccupancy(bool occupied) {
 
 void MatterAccessControlDriver::ringTimerCallback(TimerHandle_t timer) {
     ESP_LOGI(TAG, "Ring hold timer expired - clearing occupancy");
-    if (auto* driver = instance()) {
-        driver->updateOccupancy(false);
+    if (auto* self = instance()) {
+        self->updateOccupancy(false);
     }
 }
 

@@ -31,8 +31,8 @@ void GpioDoorDriver::init() {
     s_unlock_timer =
         xTimerCreate("unlock", pdMS_TO_TICKS(config_.unlockPulseMs), pdFALSE, nullptr, [](TimerHandle_t timer) {
             gpio_set_level((gpio_num_t)s_config.gpioPin, 0);
-            if (auto* driver = instance()) {
-                driver->onUnlockComplete();
+            if (auto* self = instance()) {
+                self->onUnlockComplete();
             }
         });
 
