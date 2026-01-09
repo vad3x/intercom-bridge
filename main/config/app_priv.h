@@ -29,12 +29,6 @@
 #define BUZZ_HOLD_MS 4000      // How long button stays "pressed" in HomeKit
 
 /*
- * Endpoint IDs (set in app_main.cpp)
- */
-extern uint16_t door_lock_endpoint_id;
-extern uint16_t buzz_button_endpoint_id;  // Occupancy sensor (Motion in HomeKit)
-
-/*
  * Legacy driver interface (for compatibility)
  */
 typedef void* app_driver_handle_t;
