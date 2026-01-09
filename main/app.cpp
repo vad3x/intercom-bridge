@@ -8,6 +8,10 @@
 
 static const char* TAG = "App";
 
+// ============================================================================
+// Public Methods
+// ============================================================================
+
 App::App()
     : ringActor_(eventBus_, gpioAdapter_)
     , intercomActor_(eventBus_)
@@ -31,6 +35,10 @@ esp_err_t App::init() {
     ESP_LOGI(TAG, "All actors initialized");
     return ESP_OK;
 }
+
+// ============================================================================
+// Singleton Accessor
+// ============================================================================
 
 App& getApp() {
     static App instance;

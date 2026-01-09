@@ -25,59 +25,14 @@ static volatile int64_t s_last_buzz_time = 0;
 static TimerHandle_t s_unlock_timer = nullptr;
 static TimerHandle_t s_debounce_timer = nullptr;
 
-/**
- * @brief Get current time in milliseconds
- */
-static inline int64_t get_time_ms() {
-    return esp_timer_get_time() / 1000;
-}
+// Forward declarations of static helpers
+static inline int64_t get_time_ms();
+static void debounce_timer_cb(TimerHandle_t timer);
+static void IRAM_ATTR buzz_isr_handler(void* arg);
 
-/**
- * @brief Debounce timer callback - validates buzz signal
- */
-static void debounce_timer_cb(TimerHandle_t timer) {
-    if (!s_buzz_pending) {
-        return;
-    }
-    s_buzz_pending = false;
-
-    // Check if signal is still LOW (active) after debounce
-    int level = gpio_get_level((gpio_num_t)BUZZ_GPIO);
-    if (level != 0) {
-        ESP_LOGD(TAG, "Buzz signal bounced");
-        return;
-    }
-
-    // Check cooldown
-    int64_t now = get_time_ms();
-    if (s_last_buzz_time > 0 && (now - s_last_buzz_time) < BUZZ_COOLDOWN_MS) {
-        ESP_LOGD(TAG, "Buzz ignored (cooldown)");
-        return;
-    }
-
-    // Valid buzz detected!
-    s_last_buzz_time = now;
-    ESP_LOGI(TAG, "=== BUZZ/RING DETECTED ===");
-
-    // Call the registered callback
-    GpioAdapter::onBuzzDetected();
-}
-
-/**
- * @brief GPIO ISR for buzz detection
- */
-static void IRAM_ATTR buzz_isr_handler(void* arg) {
-    s_buzz_pending = true;
-
-    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-    if (s_debounce_timer) {
-        xTimerStartFromISR(s_debounce_timer, &xHigherPriorityTaskWoken);
-    }
-
-    if (xHigherPriorityTaskWoken) {
-        portYIELD_FROM_ISR();
-    }
-}
+// ============================================================================
+// Public Methods
+// ============================================================================
 
 void GpioAdapter::init(Callback onBuzz) {
     ESP_LOGI(TAG, "Initializing GpioAdapter");
@@ -187,5 +142,53 @@ void GpioAdapter::onBuzzDetected() {
 void GpioAdapter::onUnlockComplete() {
     unlockInProgress_ = false;
     ESP_LOGI(TAG, "Unlock pulse ended");
+}
+
+// ============================================================================
+// Static Helpers (file-scope)
+// ============================================================================
+
+static inline int64_t get_time_ms() {
+    return esp_timer_get_time() / 1000;
+}
+
+static void debounce_timer_cb(TimerHandle_t timer) {
+    if (!s_buzz_pending) {
+        return;
+    }
+    s_buzz_pending = false;
+
+    // Check if signal is still LOW (active) after debounce
+    int level = gpio_get_level((gpio_num_t)BUZZ_GPIO);
+    if (level != 0) {
+        ESP_LOGD(TAG, "Buzz signal bounced");
+        return;
+    }
+
+    // Check cooldown
+    int64_t now = get_time_ms();
+    if (s_last_buzz_time > 0 && (now - s_last_buzz_time) < BUZZ_COOLDOWN_MS) {
+        ESP_LOGD(TAG, "Buzz ignored (cooldown)");
+        return;
+    }
+
+    // Valid buzz detected!
+    s_last_buzz_time = now;
+    ESP_LOGI(TAG, "=== BUZZ/RING DETECTED ===");
+
+    GpioAdapter::onBuzzDetected();
+}
+
+static void IRAM_ATTR buzz_isr_handler(void* arg) {
+    s_buzz_pending = true;
+
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    if (s_debounce_timer) {
+        xTimerStartFromISR(s_debounce_timer, &xHigherPriorityTaskWoken);
+    }
+
+    if (xHigherPriorityTaskWoken) {
+        portYIELD_FROM_ISR();
+    }
 }
 

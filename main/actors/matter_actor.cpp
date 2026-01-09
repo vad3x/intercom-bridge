@@ -54,93 +54,16 @@ uint16_t MatterActor::buzzEndpointId_ = 0;
 // Include app.h for getApp() access in Matter callbacks
 #include "app.h"
 
-// ============================================================================
-// Internal Matter callbacks (file-scope)
-// ============================================================================
-
+// Forward declarations of file-scope callbacks (implementations below)
 static esp_err_t onAttributeUpdate(attribute::callback_type_t type, uint16_t endpoint_id,
                                    uint32_t cluster_id, uint32_t attribute_id,
-                                   esp_matter_attr_val_t* val, void* priv_data) {
-    // Attribute updates handled by actors via events
-    return ESP_OK;
-}
-
+                                   esp_matter_attr_val_t* val, void* priv_data);
 static esp_err_t onIdentification(identification::callback_type_t type, uint16_t endpoint_id,
-                                  uint8_t effect_id, uint8_t effect_variant, void* priv_data) {
-    ESP_LOGI(TAG, "Identification callback: type: %u, effect: %u, variant: %u", type, effect_id, effect_variant);
-    return ESP_OK;
-}
-
-static void onDeviceEvent(const chip::DeviceLayer::ChipDeviceEvent* event, intptr_t arg) {
-    switch (event->Type) {
-    case chip::DeviceLayer::DeviceEventType::kInterfaceIpAddressChanged:
-        ESP_LOGI(TAG, "Interface IP Address changed");
-        break;
-
-    case chip::DeviceLayer::DeviceEventType::kCommissioningComplete:
-        ESP_LOGI(TAG, "Commissioning complete");
-        break;
-
-    case chip::DeviceLayer::DeviceEventType::kFailSafeTimerExpired:
-        ESP_LOGI(TAG, "Commissioning failed, fail safe timer expired");
-        break;
-
-    case chip::DeviceLayer::DeviceEventType::kCommissioningSessionStarted:
-        ESP_LOGI(TAG, "Commissioning session started");
-        break;
-
-    case chip::DeviceLayer::DeviceEventType::kCommissioningSessionStopped:
-        ESP_LOGI(TAG, "Commissioning session stopped");
-        break;
-
-    case chip::DeviceLayer::DeviceEventType::kCommissioningWindowOpened:
-        ESP_LOGI(TAG, "Commissioning window opened");
-        break;
-
-    case chip::DeviceLayer::DeviceEventType::kCommissioningWindowClosed:
-        ESP_LOGI(TAG, "Commissioning window closed");
-        break;
-
-    case chip::DeviceLayer::DeviceEventType::kFabricRemoved: {
-        ESP_LOGI(TAG, "Fabric removed successfully");
-        if (chip::Server::GetInstance().GetFabricTable().FabricCount() == 0) {
-            chip::CommissioningWindowManager& commissionMgr =
-                chip::Server::GetInstance().GetCommissioningWindowManager();
-            constexpr auto kTimeoutSeconds = chip::System::Clock::Seconds16(k_timeout_seconds);
-            if (!commissionMgr.IsCommissioningWindowOpen()) {
-                CHIP_ERROR err = commissionMgr.OpenBasicCommissioningWindow(
-                    kTimeoutSeconds, chip::CommissioningWindowAdvertisement::kDnssdOnly);
-                if (err != CHIP_NO_ERROR) {
-                    ESP_LOGE(TAG, "Failed to open commissioning window, err:%" CHIP_ERROR_FORMAT, err.Format());
-                }
-            }
-        }
-        break;
-    }
-
-    case chip::DeviceLayer::DeviceEventType::kFabricWillBeRemoved:
-        ESP_LOGI(TAG, "Fabric will be removed");
-        break;
-
-    case chip::DeviceLayer::DeviceEventType::kFabricUpdated:
-        ESP_LOGI(TAG, "Fabric is updated");
-        break;
-
-    case chip::DeviceLayer::DeviceEventType::kFabricCommitted:
-        ESP_LOGI(TAG, "Fabric is committed");
-        break;
-
-    case chip::DeviceLayer::DeviceEventType::kBLEDeinitialized:
-        ESP_LOGI(TAG, "BLE deinitialized and memory reclaimed");
-        break;
-
-    default:
-        break;
-    }
-}
+                                  uint8_t effect_id, uint8_t effect_variant, void* priv_data);
+static void onDeviceEvent(const chip::DeviceLayer::ChipDeviceEvent* event, intptr_t arg);
 
 // ============================================================================
-// MatterActor Implementation
+// MatterActor Public Methods
 // ============================================================================
 
 MatterActor::MatterActor(EventBus& bus) {
@@ -334,5 +257,90 @@ bool emberAfPluginDoorLockOnDoorUnlockCommand(EndpointId endpointId,
 void emberAfPluginDoorLockOnAutoRelock(EndpointId endpointId) {
     ESP_LOGI(TAG, "Auto-relock triggered on endpoint %d", endpointId);
     // No hardware action needed - door naturally re-locks
+}
+
+// ============================================================================
+// File-scope static callbacks (implementations)
+// ============================================================================
+
+static esp_err_t onAttributeUpdate(attribute::callback_type_t type, uint16_t endpoint_id,
+                                   uint32_t cluster_id, uint32_t attribute_id,
+                                   esp_matter_attr_val_t* val, void* priv_data) {
+    // Attribute updates handled by actors via events
+    return ESP_OK;
+}
+
+static esp_err_t onIdentification(identification::callback_type_t type, uint16_t endpoint_id,
+                                  uint8_t effect_id, uint8_t effect_variant, void* priv_data) {
+    ESP_LOGI(TAG, "Identification callback: type: %u, effect: %u, variant: %u", type, effect_id, effect_variant);
+    return ESP_OK;
+}
+
+static void onDeviceEvent(const chip::DeviceLayer::ChipDeviceEvent* event, intptr_t arg) {
+    switch (event->Type) {
+    case chip::DeviceLayer::DeviceEventType::kInterfaceIpAddressChanged:
+        ESP_LOGI(TAG, "Interface IP Address changed");
+        break;
+
+    case chip::DeviceLayer::DeviceEventType::kCommissioningComplete:
+        ESP_LOGI(TAG, "Commissioning complete");
+        break;
+
+    case chip::DeviceLayer::DeviceEventType::kFailSafeTimerExpired:
+        ESP_LOGI(TAG, "Commissioning failed, fail safe timer expired");
+        break;
+
+    case chip::DeviceLayer::DeviceEventType::kCommissioningSessionStarted:
+        ESP_LOGI(TAG, "Commissioning session started");
+        break;
+
+    case chip::DeviceLayer::DeviceEventType::kCommissioningSessionStopped:
+        ESP_LOGI(TAG, "Commissioning session stopped");
+        break;
+
+    case chip::DeviceLayer::DeviceEventType::kCommissioningWindowOpened:
+        ESP_LOGI(TAG, "Commissioning window opened");
+        break;
+
+    case chip::DeviceLayer::DeviceEventType::kCommissioningWindowClosed:
+        ESP_LOGI(TAG, "Commissioning window closed");
+        break;
+
+    case chip::DeviceLayer::DeviceEventType::kFabricRemoved: {
+        ESP_LOGI(TAG, "Fabric removed successfully");
+        if (chip::Server::GetInstance().GetFabricTable().FabricCount() == 0) {
+            chip::CommissioningWindowManager& commissionMgr =
+                chip::Server::GetInstance().GetCommissioningWindowManager();
+            constexpr auto kTimeoutSeconds = chip::System::Clock::Seconds16(k_timeout_seconds);
+            if (!commissionMgr.IsCommissioningWindowOpen()) {
+                CHIP_ERROR err = commissionMgr.OpenBasicCommissioningWindow(
+                    kTimeoutSeconds, chip::CommissioningWindowAdvertisement::kDnssdOnly);
+                if (err != CHIP_NO_ERROR) {
+                    ESP_LOGE(TAG, "Failed to open commissioning window, err:%" CHIP_ERROR_FORMAT, err.Format());
+                }
+            }
+        }
+        break;
+    }
+
+    case chip::DeviceLayer::DeviceEventType::kFabricWillBeRemoved:
+        ESP_LOGI(TAG, "Fabric will be removed");
+        break;
+
+    case chip::DeviceLayer::DeviceEventType::kFabricUpdated:
+        ESP_LOGI(TAG, "Fabric is updated");
+        break;
+
+    case chip::DeviceLayer::DeviceEventType::kFabricCommitted:
+        ESP_LOGI(TAG, "Fabric is committed");
+        break;
+
+    case chip::DeviceLayer::DeviceEventType::kBLEDeinitialized:
+        ESP_LOGI(TAG, "BLE deinitialized and memory reclaimed");
+        break;
+
+    default:
+        break;
+    }
 }
 

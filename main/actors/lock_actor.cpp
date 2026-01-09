@@ -11,6 +11,10 @@ static const char* TAG = "LockActor";
 EventBus* LockActor::bus_ = nullptr;
 LockOutputSocket* LockActor::socket_ = nullptr;
 
+// ============================================================================
+// Public Methods
+// ============================================================================
+
 LockActor::LockActor(EventBus& bus, LockOutputSocket& socket) {
     bus_ = &bus;
     socket_ = &socket;
@@ -21,6 +25,10 @@ void LockActor::init() {
     bus_->unlocked.subscribe(&LockActor::onUnlocked);
     ESP_LOGI(TAG, "Subscribed to unlocked");
 }
+
+// ============================================================================
+// Private Methods
+// ============================================================================
 
 void LockActor::onUnlocked(const UnlockedEvent& e) {
     ESP_LOGI(TAG, "Unlocked received from %s (ts=%lld)",

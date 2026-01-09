@@ -12,6 +12,10 @@ EventBus* IntercomActor::bus_ = nullptr;
 uint32_t IntercomActor::buzzHoldMs_ = 4000;
 TimerHandle_t IntercomActor::buzzTimer_ = nullptr;
 
+// ============================================================================
+// Public Methods
+// ============================================================================
+
 IntercomActor::IntercomActor(EventBus& bus) {
     bus_ = &bus;
 }
@@ -39,18 +43,19 @@ void IntercomActor::init(uint32_t buzzHoldMs) {
     ESP_LOGI(TAG, "Subscribed to ringPressed, unlockPressed");
 }
 
+// ============================================================================
+// Private Methods
+// ============================================================================
+
 void IntercomActor::onRingPressed(const RingPressedEvent& e) {
     ESP_LOGI(TAG, "RingPressed received from %s (ts=%lld)",
              e.meta.source, (long long)e.meta.timestamp);
 
-    // Emit BuzzStarted
     if (bus_) {
         bus_->emitBuzzStarted("IntercomActor");
     }
 
-    // Start timer to emit BuzzEnded after timeout
     if (buzzTimer_) {
-        // Reset timer if already running
         xTimerStop(buzzTimer_, 0);
         xTimerChangePeriod(buzzTimer_, pdMS_TO_TICKS(buzzHoldMs_), 0);
         xTimerStart(buzzTimer_, 0);
@@ -61,7 +66,6 @@ void IntercomActor::onUnlockPressed(const UnlockPressedEvent& e) {
     ESP_LOGI(TAG, "UnlockPressed received from %s (ts=%lld)",
              e.meta.source, (long long)e.meta.timestamp);
 
-    // Emit Unlocked to trigger the actual hardware unlock
     if (bus_) {
         bus_->emitUnlocked("IntercomActor");
     }
