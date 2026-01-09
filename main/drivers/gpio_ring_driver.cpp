@@ -8,19 +8,26 @@
 #include <driver/gpio.h>
 #include <esp_log.h>
 #include <esp_timer.h>
-#include <freertos/FreeRTOS.h>
-#include <freertos/timers.h>
 
 static const char* TAG = "GpioRingDriver";
 
-// State tracking
-static volatile bool s_ring_pending = false;
-static volatile int64_t s_last_ring_time = 0;
-static TimerHandle_t s_debounce_timer = nullptr;
-static GpioRingConfig s_config;  // Copy of config for callback access
+// ============================================================================
+// ISR Handler (must be file-scope for IRAM_ATTR)
+// ============================================================================
 
-// Forward declarations
-static void IRAM_ATTR ring_isr_handler(void* arg);
+static void IRAM_ATTR ring_isr_handler(void* arg) {
+    auto* self = static_cast<GpioRingDriver*>(arg);
+    self->ringPending_ = true;
+
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    if (self->debounceTimer_) {
+        xTimerStartFromISR(self->debounceTimer_, &xHigherPriorityTaskWoken);
+    }
+
+    if (xHigherPriorityTaskWoken) {
+        portYIELD_FROM_ISR();
+    }
+}
 
 // ============================================================================
 // Public Methods
@@ -33,18 +40,19 @@ void GpioRingDriver::init(OnRingCallback onRing) {
     ESP_LOGI(TAG, "  Cooldown: %lu ms", (unsigned long)config_.cooldownMs);
 
     ringCallback_ = onRing;
-    s_config = config_;  // Copy for callback access
 
-    // Create debounce timer
-    s_debounce_timer =
-        xTimerCreate("debounce", pdMS_TO_TICKS(config_.debounceMs), pdFALSE, nullptr, [](TimerHandle_t timer) {
-            if (!s_ring_pending) {
+    // Create debounce timer (pass 'this' via timer ID)
+    debounceTimer_ =
+        xTimerCreate("debounce", pdMS_TO_TICKS(config_.debounceMs), pdFALSE, this, [](TimerHandle_t timer) {
+            auto* self = static_cast<GpioRingDriver*>(pvTimerGetTimerID(timer));
+
+            if (!self->ringPending_) {
                 return;
             }
-            s_ring_pending = false;
+            self->ringPending_ = false;
 
             // Check if signal is still LOW (active) after debounce
-            int level = gpio_get_level((gpio_num_t)s_config.gpioPin);
+            int level = gpio_get_level((gpio_num_t)self->config_.gpioPin);
             if (level != 0) {
                 ESP_LOGD(TAG, "Ring signal bounced");
                 return;
@@ -52,23 +60,21 @@ void GpioRingDriver::init(OnRingCallback onRing) {
 
             // Check cooldown
             int64_t now = esp_timer_get_time() / 1000;
-            if (s_last_ring_time > 0 && (now - s_last_ring_time) < s_config.cooldownMs) {
+            if (self->lastRingTime_ > 0 && (now - self->lastRingTime_) < self->config_.cooldownMs) {
                 ESP_LOGD(TAG, "Ring ignored (cooldown)");
                 return;
             }
 
             // Valid ring detected!
-            s_last_ring_time = now;
+            self->lastRingTime_ = now;
             ESP_LOGI(TAG, "=== RING DETECTED ===");
 
-            if (auto* driver = GpioRingDriver::instance()) {
-                if (driver->ringCallback_) {
-                    driver->ringCallback_();
-                }
+            if (self->ringCallback_) {
+                self->ringCallback_();
             }
         });
 
-    if (!s_debounce_timer) {
+    if (!debounceTimer_) {
         ESP_LOGE(TAG, "Failed to create debounce timer");
     }
 
@@ -91,28 +97,11 @@ void GpioRingDriver::init(OnRingCallback onRing) {
         ESP_LOGE(TAG, "Failed to install GPIO ISR service: %s", esp_err_to_name(ret));
     }
 
-    // Add ISR handler for ring detection
-    ret = gpio_isr_handler_add((gpio_num_t)config_.gpioPin, ring_isr_handler, nullptr);
+    // Add ISR handler for ring detection (pass 'this' via arg)
+    ret = gpio_isr_handler_add((gpio_num_t)config_.gpioPin, ring_isr_handler, this);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to add ISR handler: %s", esp_err_to_name(ret));
     }
 
     ESP_LOGI(TAG, "Ring detection initialized");
-}
-
-// ============================================================================
-// Static Helpers (file-scope)
-// ============================================================================
-
-static void IRAM_ATTR ring_isr_handler(void* arg) {
-    s_ring_pending = true;
-
-    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-    if (s_debounce_timer) {
-        xTimerStartFromISR(s_debounce_timer, &xHigherPriorityTaskWoken);
-    }
-
-    if (xHigherPriorityTaskWoken) {
-        portYIELD_FROM_ISR();
-    }
 }

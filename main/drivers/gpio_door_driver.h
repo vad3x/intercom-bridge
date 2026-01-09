@@ -8,6 +8,8 @@
 #pragma once
 
 #include <cstdint>
+#include <freertos/FreeRTOS.h>
+#include <freertos/timers.h>
 
 /**
  * @brief Configuration for GPIO door driver
@@ -27,14 +29,7 @@ class GpioDoorDriver {
     /**
      * @brief Construct with configuration
      */
-    explicit GpioDoorDriver(const GpioDoorConfig& config) : config_(config) {
-        instance_ = this;
-    }
-
-    // Singleton access for callbacks
-    static GpioDoorDriver* instance() {
-        return instance_;
-    }
+    explicit GpioDoorDriver(const GpioDoorConfig& config) : config_(config) {}
 
     /**
      * @brief Initialize the door unlock hardware
@@ -55,8 +50,7 @@ class GpioDoorDriver {
     void onUnlockComplete();
 
    private:
-    inline static GpioDoorDriver* instance_ = nullptr;
-
     GpioDoorConfig config_;
+    TimerHandle_t unlockTimer_ = nullptr;
     volatile bool unlockInProgress_ = false;
 };

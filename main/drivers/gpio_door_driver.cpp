@@ -12,8 +12,6 @@
 
 static const char* TAG = "GpioDoorDriver";
 
-// Timer for unlock pulse
-static TimerHandle_t s_unlock_timer = nullptr;
 static GpioDoorConfig s_config;  // Copy of config for timer callback
 
 // ============================================================================
@@ -27,16 +25,14 @@ void GpioDoorDriver::init() {
 
     s_config = config_;  // Copy for timer callback
 
-    // Create unlock pulse timer
-    s_unlock_timer =
-        xTimerCreate("unlock", pdMS_TO_TICKS(config_.unlockPulseMs), pdFALSE, nullptr, [](TimerHandle_t timer) {
-            gpio_set_level((gpio_num_t)s_config.gpioPin, 0);
-            if (auto* self = instance()) {
-                self->onUnlockComplete();
-            }
-        });
+    // Create unlock pulse timer (pass 'this' via timer ID)
+    unlockTimer_ = xTimerCreate("unlock", pdMS_TO_TICKS(config_.unlockPulseMs), pdFALSE, this, [](TimerHandle_t timer) {
+        auto* self = static_cast<GpioDoorDriver*>(pvTimerGetTimerID(timer));
+        gpio_set_level((gpio_num_t)s_config.gpioPin, 0);
+        self->onUnlockComplete();
+    });
 
-    if (!s_unlock_timer) {
+    if (!unlockTimer_) {
         ESP_LOGE(TAG, "Failed to create unlock timer");
     }
 
@@ -69,7 +65,7 @@ void GpioDoorDriver::triggerUnlock() {
     gpio_set_level((gpio_num_t)config_.gpioPin, 1);  // Activate relay
 
     // Start timer to end pulse
-    if (xTimerStart(s_unlock_timer, pdMS_TO_TICKS(100)) != pdPASS) {
+    if (xTimerStart(unlockTimer_, pdMS_TO_TICKS(100)) != pdPASS) {
         gpio_set_level((gpio_num_t)config_.gpioPin, 0);
         unlockInProgress_ = false;
         ESP_LOGE(TAG, "Failed to start unlock timer");

@@ -8,6 +8,8 @@
 #pragma once
 
 #include <cstdint>
+#include <freertos/FreeRTOS.h>
+#include <freertos/timers.h>
 #include <functional>
 
 /**
@@ -32,9 +34,7 @@ class GpioRingDriver {
     /**
      * @brief Construct with configuration
      */
-    explicit GpioRingDriver(const GpioRingConfig& config) : config_(config) {
-        instance_ = this;
-    }
+    explicit GpioRingDriver(const GpioRingConfig& config) : config_(config) {}
 
     /**
      * @brief Initialize the ring detection hardware
@@ -42,14 +42,12 @@ class GpioRingDriver {
      */
     void init(OnRingCallback onRing);
 
-    // Singleton access for callbacks
-    static GpioRingDriver* instance() {
-        return instance_;
-    }
+    // Public for ISR access
+    TimerHandle_t debounceTimer_ = nullptr;
+    volatile bool ringPending_ = false;
+    volatile int64_t lastRingTime_ = 0;
 
    private:
-    inline static GpioRingDriver* instance_ = nullptr;
-
     GpioRingConfig config_;
     OnRingCallback ringCallback_;
 };
