@@ -10,6 +10,8 @@
 #include "actors/matter_actor.h"
 #include <esp_log.h>
 #include <esp_matter.h>
+#include <esp_matter_console.h>
+#include <esp_matter_ota.h>
 #include <lib/core/DataModelTypes.h>
 #include <lib/core/Optional.h>
 #include <app/data-model/Nullable.h>
@@ -18,6 +20,13 @@
 #include <app/server/Server.h>
 
 #include <common_macros.h>
+
+#if CONFIG_ENABLE_ENCRYPTED_OTA
+extern const char decryption_key_start[] asm("_binary_esp_image_encryption_key_pem_start");
+extern const char decryption_key_end[] asm("_binary_esp_image_encryption_key_pem_end");
+static const char* s_decryption_key = decryption_key_start;
+static const uint16_t s_decryption_key_len = decryption_key_end - decryption_key_start;
+#endif
 
 static const char* TAG = "MatterActor";
 
@@ -56,7 +65,7 @@ esp_err_t MatterActor::onIdentification(identification::callback_type_t type, ui
     return ESP_OK;
 }
 
-void MatterActor::init(EventBus& bus) {
+esp_err_t MatterActor::init(EventBus& bus) {
     ESP_LOGI(TAG, "Initializing MatterActor");
 
     bus_ = &bus;
@@ -66,7 +75,7 @@ void MatterActor::init(EventBus& bus) {
     node_ = node::create(&node_config, &MatterActor::onAttributeUpdate, &MatterActor::onIdentification);
     if (!node_) {
         ESP_LOGE(TAG, "Failed to create Matter node");
-        return;
+        return ESP_FAIL;
     }
     ESP_LOGI(TAG, "Matter node created");
 
@@ -75,7 +84,7 @@ void MatterActor::init(EventBus& bus) {
     endpoint_t* lock_endpoint = door_lock::create(node_, &door_lock_config, ENDPOINT_FLAG_NONE, nullptr);
     if (!lock_endpoint) {
         ESP_LOGE(TAG, "Failed to create door lock endpoint");
-        return;
+        return ESP_FAIL;
     }
 
     // Set auto-relock to 1 second (door springs back automatically)
@@ -91,27 +100,44 @@ void MatterActor::init(EventBus& bus) {
     endpoint_t* motion_endpoint = occupancy_sensor::create(node_, &occupancy_config, ENDPOINT_FLAG_NONE, nullptr);
     if (!motion_endpoint) {
         ESP_LOGE(TAG, "Failed to create occupancy sensor endpoint");
-        return;
+        return ESP_FAIL;
     }
 
     buzzEndpointId_ = endpoint::get_id(motion_endpoint);
     ESP_LOGI(TAG, "Ring sensor (occupancy/motion) created with endpoint_id %d", buzzEndpointId_);
 
-    // Subscribe to events
-    bus_->buzzStarted.subscribe(&MatterActor::onBuzzStarted);
-    bus_->buzzEnded.subscribe(&MatterActor::onBuzzEnded);
-
-    ESP_LOGI(TAG, "Subscribed to buzzStarted, buzzEnded");
-}
-
-esp_err_t MatterActor::start() {
+    // Start Matter stack
     ESP_LOGI(TAG, "Starting Matter stack");
-
     esp_err_t err = esp_matter::start(&MatterActor::onDeviceEvent);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start Matter, err:%d", err);
+        return err;
     }
-    return err;
+
+    // Subscribe to events
+    bus_->buzzStarted.subscribe(&MatterActor::onBuzzStarted);
+    bus_->buzzEnded.subscribe(&MatterActor::onBuzzEnded);
+    ESP_LOGI(TAG, "Subscribed to buzzStarted, buzzEnded");
+
+#if CONFIG_ENABLE_ENCRYPTED_OTA
+    err = esp_matter_ota_requestor_encrypted_init(s_decryption_key, s_decryption_key_len);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize encrypted OTA, err:%d", err);
+        return err;
+    }
+#endif
+
+#if CONFIG_ENABLE_CHIP_SHELL
+    esp_matter::console::diagnostics_register_commands();
+    esp_matter::console::wifi_register_commands();
+    esp_matter::console::factoryreset_register_commands();
+#if CONFIG_OPENTHREAD_CLI
+    esp_matter::console::otcli_register_commands();
+#endif
+    esp_matter::console::init();
+#endif
+
+    return ESP_OK;
 }
 
 void MatterActor::onDeviceEvent(const chip::DeviceLayer::ChipDeviceEvent* event, intptr_t arg) {

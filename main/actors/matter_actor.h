@@ -21,19 +21,14 @@
 class MatterActor {
 public:
     /**
-     * @brief Initialize Matter actor - creates node, endpoints, subscribes to events
+     * @brief Initialize Matter actor - creates node, endpoints, starts Matter, subscribes to events
      * @param bus Reference to EventBus for subscribing and emitting
+     * @return ESP_OK on success
      *
      * Creates: Matter node, Door Lock endpoint, Occupancy Sensor endpoint
-     * Subscribes to: buzzStarted, buzzEnded
+     * Starts Matter stack, subscribes to: buzzStarted, buzzEnded
      */
-    void init(EventBus& bus);
-
-    /**
-     * @brief Start Matter stack - call after init()
-     * @return ESP_OK on success
-     */
-    esp_err_t start();
+    esp_err_t init(EventBus& bus);
 
     /**
      * @brief Called by Matter callbacks when user requests unlock

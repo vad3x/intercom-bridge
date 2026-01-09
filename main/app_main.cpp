@@ -11,9 +11,6 @@
 #include <esp_pm.h>
 #endif
 
-#include <esp_matter_console.h>
-#include <esp_matter_ota.h>
-
 #include <common_macros.h>
 #include "config/app_priv.h"
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD
@@ -39,16 +36,7 @@ static GpioAdapter s_gpioAdapter;
 static RingActor s_ringActor;
 static IntercomActor s_intercomActor;
 static LockActor s_lockActor;
-MatterActor g_matterActor;  // Non-static for matter_callbacks.cpp access
-
-#if CONFIG_ENABLE_ENCRYPTED_OTA
-extern const char decryption_key_start[] asm("_binary_esp_image_encryption_key_pem_start");
-extern const char decryption_key_end[] asm("_binary_esp_image_encryption_key_pem_end");
-
-static const char* s_decryption_key = decryption_key_start;
-static const uint16_t s_decryption_key_len = decryption_key_end - decryption_key_start;
-#endif  // CONFIG_ENABLE_ENCRYPTED_OTA
-
+MatterActor g_matterActor;  // Non-static for Matter SDK callbacks
 
 extern "C" void app_main() {
     esp_err_t err = ESP_OK;
@@ -70,9 +58,6 @@ extern "C" void app_main() {
     ESP_LOGI(TAG, "=== Smart Intercom Starting ===");
     ESP_LOGI(TAG, "Architecture: Event-driven Actor Model");
 
-    // MatterActor creates node + endpoints, then starts Matter
-    g_matterActor.init(s_eventBus);
-
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD
     /* Set OpenThread platform config */
     esp_openthread_platform_config_t config = {
@@ -83,16 +68,17 @@ extern "C" void app_main() {
     set_openthread_platform_config(&config);
 #endif
 
-    err = g_matterActor.start();
-    ABORT_APP_ON_FAILURE(err == ESP_OK, ESP_LOGE(TAG, "Failed to start Matter"));
+    ESP_LOGI(TAG, "Initializing MatterActor...");
+
+    // MatterActor creates node + endpoints and starts Matter
+    err = g_matterActor.init(s_eventBus);
+    ABORT_APP_ON_FAILURE(err == ESP_OK, ESP_LOGE(TAG, "Failed to initialize Matter"));
 
     // =========================================================================
     // Initialize Remaining Actors
     // Each actor subscribes to its own events in init()
     // (MatterActor already initialized above - creates endpoints before Matter starts)
     // =========================================================================
-
-    ESP_LOGI(TAG, "Initializing actors...");
 
     // IntercomActor: business logic (subscribes: ringPressed, unlockPressed)
     s_intercomActor.init(s_eventBus, BUZZ_HOLD_MS);
@@ -105,19 +91,4 @@ extern "C" void app_main() {
 
     ESP_LOGI(TAG, "All actors initialized");
     ESP_LOGI(TAG, "=== Smart Intercom Ready ===");
-
-#if CONFIG_ENABLE_ENCRYPTED_OTA
-    err = esp_matter_ota_requestor_encrypted_init(s_decryption_key, s_decryption_key_len);
-    ABORT_APP_ON_FAILURE(err == ESP_OK, ESP_LOGE(TAG, "Failed to initialized the encrypted OTA, err: %d", err));
-#endif
-
-#if CONFIG_ENABLE_CHIP_SHELL
-    esp_matter::console::diagnostics_register_commands();
-    esp_matter::console::wifi_register_commands();
-    esp_matter::console::factoryreset_register_commands();
-#if CONFIG_OPENTHREAD_CLI
-    esp_matter::console::otcli_register_commands();
-#endif
-    esp_matter::console::init();
-#endif
 }
