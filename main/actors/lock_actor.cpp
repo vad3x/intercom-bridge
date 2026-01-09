@@ -31,8 +31,7 @@ void LockActor::init() {
 // ============================================================================
 
 void LockActor::onUnlocked(const UnlockedEvent& e) {
-    ESP_LOGI(TAG, "Unlocked received from %s (ts=%lld)",
-             e.meta.source, (long long)e.meta.timestamp);
+    ESP_LOGI(TAG, "Unlocked received from %s (ts=%lld)", e.meta.source, (long long)e.meta.timestamp);
 
     if (socket_->isUnlocking()) {
         ESP_LOGW(TAG, "Unlock already in progress, ignoring");
@@ -42,4 +41,3 @@ void LockActor::onUnlocked(const UnlockedEvent& e) {
     ESP_LOGI(TAG, "Triggering hardware unlock");
     socket_->triggerUnlock();
 }
-

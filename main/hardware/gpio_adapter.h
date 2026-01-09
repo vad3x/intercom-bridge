@@ -16,7 +16,7 @@
  * - BuzzInputSocket: Optocoupler input for buzz detection
  */
 class GpioAdapter : public LockOutputSocket, public BuzzInputSocket {
-public:
+   public:
     // LockOutputSocket implementation
     void triggerUnlock() override;
     bool isUnlocking() const override;
@@ -33,8 +33,7 @@ public:
     // Static instance for ISR access
     static GpioAdapter* instance_;
 
-private:
+   private:
     Callback buzzCallback_;
     volatile bool unlockInProgress_ = false;
 };
-

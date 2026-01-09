@@ -7,9 +7,9 @@
 
 #pragma once
 
-template<typename TEvent, int MaxSubscribers = 4>
+template <typename TEvent, int MaxSubscribers = 4>
 class Listener {
-public:
+   public:
     using Handler = void (*)(const TEvent&);
 
     /**
@@ -39,10 +39,11 @@ public:
      * @brief Get subscriber count
      * @return Number of subscribed handlers
      */
-    int count() const { return count_; }
+    int count() const {
+        return count_;
+    }
 
-private:
+   private:
     Handler handlers_[MaxSubscribers] = {};
     int count_ = 0;
 };
-

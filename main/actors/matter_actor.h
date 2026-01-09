@@ -18,7 +18,7 @@
  * Creates Matter node/endpoints and bridges between event bus and Matter clusters.
  */
 class MatterActor {
-public:
+   public:
     explicit MatterActor(EventBus& bus);
 
     /**
@@ -30,7 +30,7 @@ public:
     void unlock();
     void lock();
 
-private:
+   private:
     static EventBus* bus_;
     static uint16_t lockEndpointId_;
     static uint16_t buzzEndpointId_;
@@ -43,4 +43,3 @@ private:
     static void updateLockState(bool unlocked);
     static void updateOccupancy(bool occupied);
 };
-

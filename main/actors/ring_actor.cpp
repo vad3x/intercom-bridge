@@ -35,4 +35,3 @@ void RingActor::onHardwareBuzz() {
     ESP_LOGI(TAG, "Hardware buzz detected - emitting RingPressed");
     bus_->emitRingPressed("RingActor");
 }
-

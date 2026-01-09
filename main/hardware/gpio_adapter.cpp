@@ -43,26 +43,18 @@ void GpioAdapter::init(Callback onBuzz) {
     buzzCallback_ = onBuzz;
 
     // Create unlock pulse timer
-    s_unlock_timer = xTimerCreate("unlock",
-                                  pdMS_TO_TICKS(UNLOCK_PULSE_MS),
-                                  pdFALSE,
-                                  this,
-                                  [](TimerHandle_t timer) {
-                                      GpioAdapter* self = static_cast<GpioAdapter*>(pvTimerGetTimerID(timer));
-                                      gpio_set_level((gpio_num_t)UNLOCK_GPIO, 0);
-                                      self->onUnlockComplete();
-                                  });
+    s_unlock_timer = xTimerCreate("unlock", pdMS_TO_TICKS(UNLOCK_PULSE_MS), pdFALSE, this, [](TimerHandle_t timer) {
+        GpioAdapter* self = static_cast<GpioAdapter*>(pvTimerGetTimerID(timer));
+        gpio_set_level((gpio_num_t)UNLOCK_GPIO, 0);
+        self->onUnlockComplete();
+    });
 
     if (!s_unlock_timer) {
         ESP_LOGE(TAG, "Failed to create unlock timer");
     }
 
     // Create debounce timer
-    s_debounce_timer = xTimerCreate("debounce",
-                                    pdMS_TO_TICKS(DEBOUNCE_MS),
-                                    pdFALSE,
-                                    nullptr,
-                                    debounce_timer_cb);
+    s_debounce_timer = xTimerCreate("debounce", pdMS_TO_TICKS(DEBOUNCE_MS), pdFALSE, nullptr, debounce_timer_cb);
 
     if (!s_debounce_timer) {
         ESP_LOGE(TAG, "Failed to create debounce timer");
@@ -191,4 +183,3 @@ static void IRAM_ATTR buzz_isr_handler(void* arg) {
         portYIELD_FROM_ISR();
     }
 }
-

@@ -20,11 +20,9 @@ IntercomActor::IntercomActor(EventBus& bus, uint32_t buzzHoldMs) {
     bus_ = &bus;
     buzzHoldMs_ = buzzHoldMs;
 
-    buzzTimer_ = xTimerCreate("buzz_hold",
-                              pdMS_TO_TICKS(buzzHoldMs_),
+    buzzTimer_ = xTimerCreate("buzz_hold", pdMS_TO_TICKS(buzzHoldMs_),
                               pdFALSE,  // One-shot
-                              nullptr,
-                              &IntercomActor::buzzTimerCallback);
+                              nullptr, &IntercomActor::buzzTimerCallback);
 
     if (!buzzTimer_) {
         ESP_LOGE(TAG, "Failed to create buzz timer");
@@ -45,8 +43,7 @@ void IntercomActor::init() {
 // ============================================================================
 
 void IntercomActor::onRingPressed(const RingPressedEvent& e) {
-    ESP_LOGI(TAG, "RingPressed received from %s (ts=%lld)",
-             e.meta.source, (long long)e.meta.timestamp);
+    ESP_LOGI(TAG, "RingPressed received from %s (ts=%lld)", e.meta.source, (long long)e.meta.timestamp);
 
     bus_->emitBuzzStarted("IntercomActor");
 
@@ -58,8 +55,7 @@ void IntercomActor::onRingPressed(const RingPressedEvent& e) {
 }
 
 void IntercomActor::onUnlockPressed(const UnlockPressedEvent& e) {
-    ESP_LOGI(TAG, "UnlockPressed received from %s (ts=%lld)",
-             e.meta.source, (long long)e.meta.timestamp);
+    ESP_LOGI(TAG, "UnlockPressed received from %s (ts=%lld)", e.meta.source, (long long)e.meta.timestamp);
 
     bus_->emitUnlocked("IntercomActor");
 }
@@ -68,4 +64,3 @@ void IntercomActor::buzzTimerCallback(TimerHandle_t timer) {
     ESP_LOGI(TAG, "Buzz hold timer expired - emitting BuzzEnded");
     bus_->emitBuzzEnded("IntercomActor");
 }
-

@@ -6,7 +6,7 @@ ENV LANG=C.UTF-8
 ENV ESP_MATTER_PATH=/opt/espressif/esp-matter
 ENV IDF_TARGET=esp32c6
 
-RUN apt-get update -y && apt-get install -y udev
+RUN apt-get update -y && apt-get install -y udev clang-format
 
 # Source both IDF and Matter exports in bashrc
 RUN echo "source /opt/espressif/esp-idf/export.sh > /dev/null 2>&1" >> ~/.bashrc && \

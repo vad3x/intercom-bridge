@@ -20,12 +20,12 @@
  * - Unlock request triggers actual unlock
  */
 class IntercomActor {
-public:
+   public:
     IntercomActor(EventBus& bus, uint32_t buzzHoldMs);
 
     void init();
 
-private:
+   private:
     static EventBus* bus_;
     static uint32_t buzzHoldMs_;
     static TimerHandle_t buzzTimer_;
@@ -37,4 +37,3 @@ private:
     // Timer callback for buzz timeout
     static void buzzTimerCallback(TimerHandle_t timer);
 };
-

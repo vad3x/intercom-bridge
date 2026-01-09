@@ -17,12 +17,12 @@ struct EventBus;  // Forward declaration
  * When hardware detects a buzz, emits RingPressed event.
  */
 class RingActor {
-public:
+   public:
     RingActor(EventBus& bus, BuzzInputSocket& socket);
 
     void init();
 
-private:
+   private:
     static EventBus* bus_;
     static BuzzInputSocket* socket_;
 
@@ -31,4 +31,3 @@ private:
      */
     static void onHardwareBuzz();
 };
-

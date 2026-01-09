@@ -15,7 +15,7 @@
  * Implemented by GpioAdapter to control the PhotoMOS relay.
  */
 class LockOutputSocket {
-public:
+   public:
     virtual ~LockOutputSocket() = default;
 
     /**
@@ -36,7 +36,7 @@ public:
  * Implemented by GpioAdapter to detect intercom ring signals.
  */
 class BuzzInputSocket {
-public:
+   public:
     using Callback = std::function<void()>;
 
     virtual ~BuzzInputSocket() = default;
@@ -47,4 +47,3 @@ public:
      */
     virtual void init(Callback onBuzz) = 0;
 };
-

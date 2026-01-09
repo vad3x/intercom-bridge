@@ -15,16 +15,15 @@
  * Connects Unlocked events to the LockOutputSocket hardware.
  */
 class LockActor {
-public:
+   public:
     LockActor(EventBus& bus, LockOutputSocket& socket);
 
     void init();
 
-private:
+   private:
     static EventBus* bus_;
     static LockOutputSocket* socket_;
 
     // Event handler (called by EventBus)
     static void onUnlocked(const UnlockedEvent& e);
 };
-

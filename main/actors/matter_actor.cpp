@@ -55,11 +55,10 @@ uint16_t MatterActor::buzzEndpointId_ = 0;
 #include "app.h"
 
 // Forward declarations of file-scope callbacks (implementations below)
-static esp_err_t onAttributeUpdate(attribute::callback_type_t type, uint16_t endpoint_id,
-                                   uint32_t cluster_id, uint32_t attribute_id,
-                                   esp_matter_attr_val_t* val, void* priv_data);
-static esp_err_t onIdentification(identification::callback_type_t type, uint16_t endpoint_id,
-                                  uint8_t effect_id, uint8_t effect_variant, void* priv_data);
+static esp_err_t onAttributeUpdate(attribute::callback_type_t type, uint16_t endpoint_id, uint32_t cluster_id,
+                                   uint32_t attribute_id, esp_matter_attr_val_t* val, void* priv_data);
+static esp_err_t onIdentification(identification::callback_type_t type, uint16_t endpoint_id, uint8_t effect_id,
+                                  uint8_t effect_variant, void* priv_data);
 static void onDeviceEvent(const chip::DeviceLayer::ChipDeviceEvent* event, intptr_t arg);
 
 // ============================================================================
@@ -161,15 +160,13 @@ void MatterActor::lock() {
 }
 
 void MatterActor::onBuzzStarted(const BuzzStartedEvent& e) {
-    ESP_LOGI(TAG, "BuzzStarted received from %s (ts=%lld)",
-             e.meta.source, (long long)e.meta.timestamp);
+    ESP_LOGI(TAG, "BuzzStarted received from %s (ts=%lld)", e.meta.source, (long long)e.meta.timestamp);
 
     updateOccupancy(true);  // Motion detected
 }
 
 void MatterActor::onBuzzEnded(const BuzzEndedEvent& e) {
-    ESP_LOGI(TAG, "BuzzEnded received from %s (ts=%lld)",
-             e.meta.source, (long long)e.meta.timestamp);
+    ESP_LOGI(TAG, "BuzzEnded received from %s (ts=%lld)", e.meta.source, (long long)e.meta.timestamp);
 
     updateOccupancy(false);  // Motion cleared
 }
@@ -180,12 +177,9 @@ void MatterActor::updateLockState(bool unlocked) {
         return;
     }
 
-    auto lockState = unlocked
-        ? DoorLock::DlLockState::kUnlocked
-        : DoorLock::DlLockState::kLocked;
+    auto lockState = unlocked ? DoorLock::DlLockState::kUnlocked : DoorLock::DlLockState::kLocked;
 
-    ESP_LOGI(TAG, "Updating Matter lock state to %s",
-             unlocked ? "Unlocked" : "Locked");
+    ESP_LOGI(TAG, "Updating Matter lock state to %s", unlocked ? "Unlocked" : "Locked");
 
     DoorLockServer::Instance().SetLockState(lockEndpointId_, lockState);
 }
@@ -201,10 +195,7 @@ void MatterActor::updateOccupancy(bool occupied) {
     ESP_LOGI(TAG, "Updating Matter occupancy to %s", occupied ? "Occupied" : "Unoccupied");
 
     esp_matter_attr_val_t val = esp_matter_uint8(occupancyBitmap);
-    attribute::update(buzzEndpointId_,
-                      OccupancySensing::Id,
-                      OccupancySensing::Attributes::Occupancy::Id,
-                      &val);
+    attribute::update(buzzEndpointId_, OccupancySensing::Id, OccupancySensing::Attributes::Occupancy::Id, &val);
 }
 
 // ============================================================================
@@ -224,10 +215,8 @@ __attribute__((used)) void emberAfDoorLockClusterInitCallback(chip::EndpointId e
  * @brief Handle Lock command from Matter
  * No-op for intercom - door is always locked by spring mechanism
  */
-bool emberAfPluginDoorLockOnDoorLockCommand(EndpointId endpointId,
-                                            const Nullable<FabricIndex>& fabricIdx,
-                                            const Nullable<NodeId>& nodeId,
-                                            const Optional<ByteSpan>& pinCode,
+bool emberAfPluginDoorLockOnDoorLockCommand(EndpointId endpointId, const Nullable<FabricIndex>& fabricIdx,
+                                            const Nullable<NodeId>& nodeId, const Optional<ByteSpan>& pinCode,
                                             OperationErrorEnum& err) {
     ESP_LOGI(TAG, "Lock command on endpoint %d", endpointId);
     getApp().matterActor().lock();
@@ -238,10 +227,8 @@ bool emberAfPluginDoorLockOnDoorLockCommand(EndpointId endpointId,
  * @brief Handle Unlock command from Matter
  * This triggers the relay pulse to release the door
  */
-bool emberAfPluginDoorLockOnDoorUnlockCommand(EndpointId endpointId,
-                                              const Nullable<FabricIndex>& fabricIdx,
-                                              const Nullable<NodeId>& nodeId,
-                                              const Optional<ByteSpan>& pinCode,
+bool emberAfPluginDoorLockOnDoorUnlockCommand(EndpointId endpointId, const Nullable<FabricIndex>& fabricIdx,
+                                              const Nullable<NodeId>& nodeId, const Optional<ByteSpan>& pinCode,
                                               OperationErrorEnum& err) {
     ESP_LOGI(TAG, "Unlock command on endpoint %d", endpointId);
     getApp().matterActor().unlock();
@@ -261,15 +248,14 @@ void emberAfPluginDoorLockOnAutoRelock(EndpointId endpointId) {
 // File-scope static callbacks (implementations)
 // ============================================================================
 
-static esp_err_t onAttributeUpdate(attribute::callback_type_t type, uint16_t endpoint_id,
-                                   uint32_t cluster_id, uint32_t attribute_id,
-                                   esp_matter_attr_val_t* val, void* priv_data) {
+static esp_err_t onAttributeUpdate(attribute::callback_type_t type, uint16_t endpoint_id, uint32_t cluster_id,
+                                   uint32_t attribute_id, esp_matter_attr_val_t* val, void* priv_data) {
     // Attribute updates handled by actors via events
     return ESP_OK;
 }
 
-static esp_err_t onIdentification(identification::callback_type_t type, uint16_t endpoint_id,
-                                  uint8_t effect_id, uint8_t effect_variant, void* priv_data) {
+static esp_err_t onIdentification(identification::callback_type_t type, uint16_t endpoint_id, uint8_t effect_id,
+                                  uint8_t effect_variant, void* priv_data) {
     ESP_LOGI(TAG, "Identification callback: type: %u, effect: %u, variant: %u", type, effect_id, effect_variant);
     return ESP_OK;
 }
@@ -341,4 +327,3 @@ static void onDeviceEvent(const chip::DeviceLayer::ChipDeviceEvent* event, intpt
         break;
     }
 }
-

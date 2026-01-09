@@ -100,4 +100,3 @@ struct EventBus {
 };
 
 // Note: EventBus instance is created in app_main.cpp and passed to actors via init()
-

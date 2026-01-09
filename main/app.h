@@ -15,15 +15,17 @@
 #include "actors/matter_actor.h"
 
 class App {
-public:
+   public:
     App();
 
     esp_err_t init();
 
     // Access to MatterActor for SDK callbacks
-    MatterActor& matterActor() { return matterActor_; }
+    MatterActor& matterActor() {
+        return matterActor_;
+    }
 
-private:
+   private:
     EventBus eventBus_;
     GpioAdapter gpioAdapter_;
     RingActor ringActor_;
@@ -34,4 +36,3 @@ private:
 
 // Get the singleton app instance
 App& getApp();
-
