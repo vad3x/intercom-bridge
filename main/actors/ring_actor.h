@@ -1,33 +1,59 @@
 /*
    Smart Intercom - Ring Actor
 
-   Listens to hardware buzz detection and emits RingPressed events.
+   Template actor that listens to hardware ring detection via RingDriver
+   and emits RingPressed events to the EventBus.
 */
 
 #pragma once
 
-#include "hardware/hardware_sockets.h"
+#include "events/events.h"
+#include <concepts>
+#include <esp_log.h>
+#include <functional>
 
-struct EventBus;  // Forward declaration
+// ============================================================================
+// RingDriver Concept
+// ============================================================================
+
+/**
+ * @brief Concept for ring detection drivers
+ *
+ * Driver must implement:
+ *   void init(std::function<void()> onRing)
+ */
+template <typename Driver>
+concept RingDriver = requires(Driver d, std::function<void()> onRing) { d.init(onRing); };
+
+// ============================================================================
+// RingActor Template
+// ============================================================================
 
 /**
  * @brief Ring detection actor
  *
- * Connects BuzzInputSocket to the event bus.
- * When hardware detects a buzz, emits RingPressed event.
+ * Connects a RingDriver to the EventBus.
+ * When hardware detects a ring, emits RingPressed event.
+ *
+ * @tparam Driver Type satisfying RingDriver concept
  */
+template <RingDriver Driver>
 class RingActor {
    public:
-    RingActor(EventBus& bus, BuzzInputSocket& socket);
+    RingActor(EventBus& bus, Driver& driver) : bus_(bus), driver_(driver) {}
 
-    void init();
+    void init() {
+        ESP_LOGI("RingActor", "Initializing RingActor");
+        driver_.init([this]() { onHardwareRing(); });
+        ESP_LOGI("RingActor", "Ring driver connected");
+    }
 
    private:
-    static EventBus* bus_;
-    static BuzzInputSocket* socket_;
+    EventBus& bus_;
+    Driver& driver_;
 
-    /**
-     * @brief Called by BuzzInputSocket when hardware buzz detected
-     */
-    static void onHardwareBuzz();
+    void onHardwareRing() {
+        ESP_LOGI("RingActor", "Hardware ring detected - emitting RingPressed");
+        bus_.emitRingPressed("RingActor");
+    }
 };

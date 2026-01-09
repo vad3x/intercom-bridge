@@ -27,37 +27,16 @@ struct EventMeta {
 // ============================================================================
 
 /**
- * @brief Emitted by RingActor when hardware buzz is detected
+ * @brief Emitted by RingActor when hardware ring is detected
  */
 struct RingPressedEvent {
     EventMeta meta;
 };
 
 /**
- * @brief Emitted by IntercomActor when buzz notification starts
- */
-struct BuzzStartedEvent {
-    EventMeta meta;
-};
-
-/**
- * @brief Emitted by IntercomActor when buzz notification ends (after timeout)
- */
-struct BuzzEndedEvent {
-    EventMeta meta;
-};
-
-/**
- * @brief Emitted by MatterActor when user requests unlock
+ * @brief Emitted by AccessControlActor when unlock is requested
  */
 struct UnlockPressedEvent {
-    EventMeta meta;
-};
-
-/**
- * @brief Emitted by IntercomActor to trigger the actual unlock
- */
-struct UnlockedEvent {
     EventMeta meta;
 };
 
@@ -72,31 +51,14 @@ struct UnlockedEvent {
  */
 struct EventBus {
     Listener<RingPressedEvent> ringPressed;
-    Listener<BuzzStartedEvent> buzzStarted;
-    Listener<BuzzEndedEvent> buzzEnded;
     Listener<UnlockPressedEvent> unlockPressed;
-    Listener<UnlockedEvent> unlocked;
 
     // Emit helpers with automatic metadata
     void emitRingPressed(const char* source) {
         ringPressed.emit({EventMeta::now(source)});
     }
 
-    void emitBuzzStarted(const char* source) {
-        buzzStarted.emit({EventMeta::now(source)});
-    }
-
-    void emitBuzzEnded(const char* source) {
-        buzzEnded.emit({EventMeta::now(source)});
-    }
-
     void emitUnlockPressed(const char* source) {
         unlockPressed.emit({EventMeta::now(source)});
     }
-
-    void emitUnlocked(const char* source) {
-        unlocked.emit({EventMeta::now(source)});
-    }
 };
-
-// Note: EventBus instance is created in app_main.cpp and passed to actors via init()

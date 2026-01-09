@@ -14,7 +14,8 @@
 			},
 			"extensions": [
 				"espressif.esp-idf-extension",
-				"ms-vscode.cpptools"
+				"ms-vscode.cpptools",
+				"ms-vscode.cmake-tools"
 			]
 		}
 	},

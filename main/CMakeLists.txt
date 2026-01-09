@@ -1,9 +1,9 @@
-idf_component_register(SRC_DIRS "." "./actors" "./hardware"
+idf_component_register(SRC_DIRS "." "./actors" "./drivers"
                        PRIV_INCLUDE_DIRS
-                         "." "./config" "./events" "./actors" "./hardware"
+                         "." "./config" "./events" "./actors" "./drivers"
                          "${ESP_MATTER_PATH}/examples/common/utils")
 
-target_compile_options(${COMPONENT_LIB} PRIVATE "-DCHIP_HAVE_CONFIG_H")
+target_compile_options(${COMPONENT_LIB} PRIVATE "-DCHIP_HAVE_CONFIG_H" "-std=gnu++23")
 
 # Force linker to pull in our emberAfDoorLockClusterInitCallback implementation
 # (overrides weak symbol in esp_matter library)

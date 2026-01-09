@@ -1,18 +1,21 @@
 /*
    Smart Intercom - Application Class
 
-   Encapsulates all actors and dependencies.
+   Encapsulates all actors, drivers, and dependencies.
 */
 
 #pragma once
 
 #include <esp_err.h>
+#include "drivers/gpio_door_driver.h"
+#include "drivers/gpio_ring_driver.h"
+#include "drivers/matter_access_control_driver.h"
 #include "events/events.h"
-#include "hardware/gpio_adapter.h"
+
+// Include actor headers (templates)
+#include "actors/access_control_actor.h"
+#include "actors/door_actor.h"
 #include "actors/ring_actor.h"
-#include "actors/intercom_actor.h"
-#include "actors/lock_actor.h"
-#include "actors/matter_actor.h"
 
 class App {
    public:
@@ -20,18 +23,19 @@ class App {
 
     esp_err_t init();
 
-    // Access to MatterActor for SDK callbacks
-    MatterActor& matterActor() {
-        return matterActor_;
-    }
-
    private:
+    // Event bus
     EventBus eventBus_;
-    GpioAdapter gpioAdapter_;
-    RingActor ringActor_;
-    IntercomActor intercomActor_;
-    LockActor lockActor_;
-    MatterActor matterActor_;
+
+    // Hardware drivers
+    GpioRingDriver ringDriver_;
+    GpioDoorDriver doorDriver_;
+    MatterAccessControlDriver accessControlDriver_;
+
+    // Actors (templates instantiated with concrete drivers)
+    RingActor<GpioRingDriver> ringActor_;
+    AccessControlActor<MatterAccessControlDriver> accessControlActor_;
+    DoorActor<GpioDoorDriver> doorActor_;
 };
 
 // Get the singleton app instance

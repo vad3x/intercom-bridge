@@ -1,31 +1,28 @@
 /*
-   Smart Intercom - GPIO Adapter Implementation
+   Smart Intercom - GPIO Ring Driver Implementation
 
-   Hardware interface for:
-   - Door unlock relay (PhotoMOS AQY212EHA)
-   - Buzz detection via optocoupler (HCPL-817)
+   Hardware interface for buzz/ring detection via optocoupler (HCPL-817).
 */
 
-#include "hardware/gpio_adapter.h"
+#include "drivers/gpio_ring_driver.h"
 #include "config/app_priv.h"
-#include <esp_log.h>
 #include <driver/gpio.h>
+#include <esp_log.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/timers.h>
 
-static const char* TAG = "GpioAdapter";
+static const char* TAG = "GpioRingDriver";
 
 // Static instance for ISR access
-GpioAdapter* GpioAdapter::instance_ = nullptr;
+GpioRingDriver* GpioRingDriver::instance_ = nullptr;
 
 // State tracking
 static volatile bool s_buzz_pending = false;
 static volatile int64_t s_last_buzz_time = 0;
-static TimerHandle_t s_unlock_timer = nullptr;
 static TimerHandle_t s_debounce_timer = nullptr;
 
-// Forward declarations of static helpers
+// Forward declarations
 static inline int64_t get_time_ms();
 static void debounce_timer_cb(TimerHandle_t timer);
 static void IRAM_ATTR buzz_isr_handler(void* arg);
@@ -34,24 +31,12 @@ static void IRAM_ATTR buzz_isr_handler(void* arg);
 // Public Methods
 // ============================================================================
 
-void GpioAdapter::init(Callback onBuzz) {
-    ESP_LOGI(TAG, "Initializing GpioAdapter");
-    ESP_LOGI(TAG, "  UNLOCK_GPIO: %d (output to PhotoMOS relay)", UNLOCK_GPIO);
+void GpioRingDriver::init(OnRingCallback onRing) {
+    ESP_LOGI(TAG, "Initializing GpioRingDriver");
     ESP_LOGI(TAG, "  BUZZ_GPIO: %d (input from optocoupler)", BUZZ_GPIO);
 
     instance_ = this;
-    buzzCallback_ = onBuzz;
-
-    // Create unlock pulse timer
-    s_unlock_timer = xTimerCreate("unlock", pdMS_TO_TICKS(UNLOCK_PULSE_MS), pdFALSE, this, [](TimerHandle_t timer) {
-        GpioAdapter* self = static_cast<GpioAdapter*>(pvTimerGetTimerID(timer));
-        gpio_set_level((gpio_num_t)UNLOCK_GPIO, 0);
-        self->onUnlockComplete();
-    });
-
-    if (!s_unlock_timer) {
-        ESP_LOGE(TAG, "Failed to create unlock timer");
-    }
+    ringCallback_ = onRing;
 
     // Create debounce timer
     s_debounce_timer = xTimerCreate("debounce", pdMS_TO_TICKS(DEBOUNCE_MS), pdFALSE, nullptr, debounce_timer_cb);
@@ -59,20 +44,6 @@ void GpioAdapter::init(Callback onBuzz) {
     if (!s_debounce_timer) {
         ESP_LOGE(TAG, "Failed to create debounce timer");
     }
-
-    // Configure UNLOCK_GPIO as output
-    gpio_config_t unlock_conf = {
-        .pin_bit_mask = (1ULL << UNLOCK_GPIO),
-        .mode = GPIO_MODE_OUTPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE,
-    };
-    esp_err_t ret = gpio_config(&unlock_conf);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to configure UNLOCK_GPIO: %s", esp_err_to_name(ret));
-    }
-    gpio_set_level((gpio_num_t)UNLOCK_GPIO, 0);  // Start LOW (relay off)
 
     // Configure BUZZ_GPIO as input with pull-up
     gpio_config_t buzz_conf = {
@@ -82,7 +53,7 @@ void GpioAdapter::init(Callback onBuzz) {
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
         .intr_type = GPIO_INTR_NEGEDGE,  // Falling edge (opto pulls LOW)
     };
-    ret = gpio_config(&buzz_conf);
+    esp_err_t ret = gpio_config(&buzz_conf);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to configure BUZZ_GPIO: %s", esp_err_to_name(ret));
     }
@@ -99,41 +70,13 @@ void GpioAdapter::init(Callback onBuzz) {
         ESP_LOGE(TAG, "Failed to add buzz ISR handler: %s", esp_err_to_name(ret));
     }
 
-    ESP_LOGI(TAG, "GPIO initialization complete");
+    ESP_LOGI(TAG, "Ring detection initialized");
 }
 
-void GpioAdapter::triggerUnlock() {
-    if (unlockInProgress_) {
-        ESP_LOGW(TAG, "Unlock already in progress");
-        return;
+void GpioRingDriver::onBuzzDetected() {
+    if (instance_ && instance_->ringCallback_) {
+        instance_->ringCallback_();
     }
-
-    ESP_LOGI(TAG, "Starting unlock pulse (%d ms)", UNLOCK_PULSE_MS);
-
-    unlockInProgress_ = true;
-    gpio_set_level((gpio_num_t)UNLOCK_GPIO, 1);  // Activate relay
-
-    // Start timer to end pulse
-    if (xTimerStart(s_unlock_timer, pdMS_TO_TICKS(100)) != pdPASS) {
-        gpio_set_level((gpio_num_t)UNLOCK_GPIO, 0);
-        unlockInProgress_ = false;
-        ESP_LOGE(TAG, "Failed to start unlock timer");
-    }
-}
-
-bool GpioAdapter::isUnlocking() const {
-    return unlockInProgress_;
-}
-
-void GpioAdapter::onBuzzDetected() {
-    if (instance_ && instance_->buzzCallback_) {
-        instance_->buzzCallback_();
-    }
-}
-
-void GpioAdapter::onUnlockComplete() {
-    unlockInProgress_ = false;
-    ESP_LOGI(TAG, "Unlock pulse ended");
 }
 
 // ============================================================================
@@ -166,9 +109,9 @@ static void debounce_timer_cb(TimerHandle_t timer) {
 
     // Valid buzz detected!
     s_last_buzz_time = now;
-    ESP_LOGI(TAG, "=== BUZZ/RING DETECTED ===");
+    ESP_LOGI(TAG, "=== RING DETECTED ===");
 
-    GpioAdapter::onBuzzDetected();
+    GpioRingDriver::onBuzzDetected();
 }
 
 static void IRAM_ATTR buzz_isr_handler(void* arg) {

@@ -107,6 +107,13 @@ idf.py build
 idf.py flash monitor
 ```
 
+### Dev Commands
+
+```bash
+# Format all C++ files
+find main \( -name "*.cpp" -o -name "*.h" \) -exec clang-format -i {} +
+```
+
 ## Commissioning
 
 1. Power on the device
@@ -183,11 +190,13 @@ The Lock command is a **no-op** - the intercom door is always locked by its spri
 ## Safety Notes
 
 ⚠️ **Electrical Safety**
+
 - Never connect intercom wires directly to ESP32
 - Always use optical isolation (optocoupler + PhotoMOS)
 - Power ESP32 from separate USB supply
 
 ⚠️ **Building Security**
+
 - This modification affects building access
 - Consult building management before installation
 - Keep manual intercom button functional

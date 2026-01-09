@@ -3,7 +3,6 @@
 */
 
 #include "app.h"
-#include "config/app_priv.h"
 #include <esp_log.h>
 
 static const char* TAG = "App";
@@ -13,22 +12,20 @@ static const char* TAG = "App";
 // ============================================================================
 
 App::App()
-    : ringActor_(eventBus_, gpioAdapter_),
-      intercomActor_(eventBus_, BUZZ_HOLD_MS),
-      lockActor_(eventBus_, gpioAdapter_),
-      matterActor_(eventBus_) {}
+    : ringActor_(eventBus_, ringDriver_),
+      accessControlActor_(eventBus_, accessControlDriver_),
+      doorActor_(eventBus_, doorDriver_) {}
 
 esp_err_t App::init() {
     ESP_LOGI(TAG, "Initializing application...");
 
-    esp_err_t err = matterActor_.init();
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to initialize MatterActor");
-        return err;
-    }
+    // Initialize access control first (creates Matter endpoints)
+    accessControlActor_.init();
 
-    intercomActor_.init();
-    lockActor_.init();
+    // Initialize door actor (hardware unlock)
+    doorActor_.init();
+
+    // Initialize ring actor last (starts listening for hardware events)
     ringActor_.init();
 
     ESP_LOGI(TAG, "All actors initialized");
