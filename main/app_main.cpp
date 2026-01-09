@@ -1,7 +1,5 @@
 /*
-   Smart Intercom - Main Application
-
-   Event-driven actor architecture with Matter/HomeKit integration.
+   Smart Intercom - Main Entry Point
 */
 
 #include <esp_err.h>
@@ -17,33 +15,16 @@
 #include <platform/ESP32/OpenthreadLauncher.h>
 #endif
 
-// Actor includes
-#include "events/events.h"
-#include "actors/ring_actor.h"
-#include "actors/intercom_actor.h"
-#include "actors/lock_actor.h"
-#include "actors/matter_actor.h"
-#include "hardware/gpio_adapter.h"
-
+#include "app.h"
 
 static const char* TAG = "app_main";
 
-// Event bus (shared by all actors)
-static EventBus s_eventBus;
-
-// Hardware adapter
-static GpioAdapter s_gpioAdapter;
-
-// Actors (dependencies injected via constructor)
-static RingActor s_ringActor(s_eventBus, s_gpioAdapter);
-static IntercomActor s_intercomActor(s_eventBus);
-static LockActor s_lockActor(s_eventBus, s_gpioAdapter);
-MatterActor g_matterActor(s_eventBus);  // Non-static for Matter SDK callbacks
+// Global app instance
+App g_app;
 
 extern "C" void app_main() {
     esp_err_t err = ESP_OK;
 
-    /* Initialize the ESP NVS layer */
     nvs_flash_init();
 
 #if CONFIG_PM_ENABLE
@@ -58,10 +39,8 @@ extern "C" void app_main() {
 #endif
 
     ESP_LOGI(TAG, "=== Smart Intercom Starting ===");
-    ESP_LOGI(TAG, "Architecture: Event-driven Actor Model");
 
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD
-    /* Set OpenThread platform config */
     esp_openthread_platform_config_t config = {
         .radio_config = ESP_OPENTHREAD_DEFAULT_RADIO_CONFIG(),
         .host_config = ESP_OPENTHREAD_DEFAULT_HOST_CONFIG(),
@@ -70,14 +49,8 @@ extern "C" void app_main() {
     set_openthread_platform_config(&config);
 #endif
 
-    // Initialize actors (dependencies already injected via constructors)
-    err = g_matterActor.init();
-    ABORT_APP_ON_FAILURE(err == ESP_OK, ESP_LOGE(TAG, "Failed to initialize Matter"));
+    err = g_app.init();
+    ABORT_APP_ON_FAILURE(err == ESP_OK, ESP_LOGE(TAG, "Failed to initialize app"));
 
-    s_intercomActor.init(BUZZ_HOLD_MS);
-    s_lockActor.init();
-    s_ringActor.init();
-
-    ESP_LOGI(TAG, "All actors initialized");
     ESP_LOGI(TAG, "=== Smart Intercom Ready ===");
 }

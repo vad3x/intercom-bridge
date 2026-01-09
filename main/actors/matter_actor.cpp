@@ -51,8 +51,8 @@ EventBus* MatterActor::bus_ = nullptr;
 uint16_t MatterActor::lockEndpointId_ = 0;
 uint16_t MatterActor::buzzEndpointId_ = 0;
 
-// Global instance (defined in app_main.cpp)
-extern MatterActor g_matterActor;
+// Include app.h for g_app access in Matter callbacks
+#include "app.h"
 
 // ============================================================================
 // Internal Matter callbacks (file-scope)
@@ -309,7 +309,7 @@ bool emberAfPluginDoorLockOnDoorLockCommand(EndpointId endpointId,
                                             const Optional<ByteSpan>& pinCode,
                                             OperationErrorEnum& err) {
     ESP_LOGI(TAG, "Lock command on endpoint %d", endpointId);
-    g_matterActor.lock();
+    g_app.matterActor().lock();
     return true;
 }
 
@@ -323,7 +323,7 @@ bool emberAfPluginDoorLockOnDoorUnlockCommand(EndpointId endpointId,
                                               const Optional<ByteSpan>& pinCode,
                                               OperationErrorEnum& err) {
     ESP_LOGI(TAG, "Unlock command on endpoint %d", endpointId);
-    g_matterActor.unlock();
+    g_app.matterActor().unlock();
     return true;
 }
 
