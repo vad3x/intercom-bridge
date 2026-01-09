@@ -47,9 +47,6 @@ public:
     // Called when unlock pulse ends (from timer callback)
     void onUnlockComplete();
 
-    // Static instance for timer callback access
-    static GpioDoorDriver* instance_;
-
 private:
     GpioDoorConfig config_;
     volatile bool unlockInProgress_ = false;

@@ -12,9 +12,6 @@
 
 static const char* TAG = "GpioDoorDriver";
 
-// Static instance for timer callback access
-GpioDoorDriver* GpioDoorDriver::instance_ = nullptr;
-
 // Timer for unlock pulse
 static TimerHandle_t s_unlock_timer = nullptr;
 static GpioDoorConfig s_config;  // Copy of config for timer callback
@@ -28,7 +25,6 @@ void GpioDoorDriver::init() {
     ESP_LOGI(TAG, "  GPIO pin: %d (output to PhotoMOS relay)", config_.gpioPin);
     ESP_LOGI(TAG, "  Unlock pulse: %lu ms", (unsigned long)config_.unlockPulseMs);
 
-    instance_ = this;
     s_config = config_;  // Copy for timer callback
 
     // Create unlock pulse timer
