@@ -43,104 +43,35 @@ using chip::app::DataModel::Nullable;
 
 constexpr auto k_timeout_seconds = 300;
 
+// File-scope state
+static node_t* s_node = nullptr;
+
 // Static member definitions
 EventBus* MatterActor::bus_ = nullptr;
-node_t* MatterActor::node_ = nullptr;
 uint16_t MatterActor::lockEndpointId_ = 0;
 uint16_t MatterActor::buzzEndpointId_ = 0;
 
 // Global instance (defined in app_main.cpp)
 extern MatterActor g_matterActor;
 
-esp_err_t MatterActor::onAttributeUpdate(attribute::callback_type_t type, uint16_t endpoint_id,
-                                         uint32_t cluster_id, uint32_t attribute_id,
-                                         esp_matter_attr_val_t* val, void* priv_data) {
+// ============================================================================
+// Internal Matter callbacks (file-scope)
+// ============================================================================
+
+static esp_err_t onAttributeUpdate(attribute::callback_type_t type, uint16_t endpoint_id,
+                                   uint32_t cluster_id, uint32_t attribute_id,
+                                   esp_matter_attr_val_t* val, void* priv_data) {
     // Attribute updates handled by actors via events
     return ESP_OK;
 }
 
-esp_err_t MatterActor::onIdentification(identification::callback_type_t type, uint16_t endpoint_id,
-                                        uint8_t effect_id, uint8_t effect_variant, void* priv_data) {
+static esp_err_t onIdentification(identification::callback_type_t type, uint16_t endpoint_id,
+                                  uint8_t effect_id, uint8_t effect_variant, void* priv_data) {
     ESP_LOGI(TAG, "Identification callback: type: %u, effect: %u, variant: %u", type, effect_id, effect_variant);
     return ESP_OK;
 }
 
-esp_err_t MatterActor::init(EventBus& bus) {
-    ESP_LOGI(TAG, "Initializing MatterActor");
-
-    bus_ = &bus;
-
-    // Create Matter node (root of device tree)
-    node::config_t node_config;
-    node_ = node::create(&node_config, &MatterActor::onAttributeUpdate, &MatterActor::onIdentification);
-    if (!node_) {
-        ESP_LOGE(TAG, "Failed to create Matter node");
-        return ESP_FAIL;
-    }
-    ESP_LOGI(TAG, "Matter node created");
-
-    // Create Door Lock endpoint
-    door_lock::config_t door_lock_config;
-    endpoint_t* lock_endpoint = door_lock::create(node_, &door_lock_config, ENDPOINT_FLAG_NONE, nullptr);
-    if (!lock_endpoint) {
-        ESP_LOGE(TAG, "Failed to create door lock endpoint");
-        return ESP_FAIL;
-    }
-
-    // Set auto-relock to 1 second (door springs back automatically)
-    cluster_t* door_lock_cluster = cluster::get(lock_endpoint, DoorLock::Id);
-    cluster::door_lock::attribute::create_auto_relock_time(door_lock_cluster, 1);
-
-    lockEndpointId_ = endpoint::get_id(lock_endpoint);
-    ESP_LOGI(TAG, "Door lock created with endpoint_id %d", lockEndpointId_);
-
-    // Create Occupancy Sensor endpoint (appears as Motion Sensor in HomeKit)
-    occupancy_sensor::config_t occupancy_config;
-    occupancy_config.occupancy_sensing.occupancy = 0;  // Initially no motion
-    endpoint_t* motion_endpoint = occupancy_sensor::create(node_, &occupancy_config, ENDPOINT_FLAG_NONE, nullptr);
-    if (!motion_endpoint) {
-        ESP_LOGE(TAG, "Failed to create occupancy sensor endpoint");
-        return ESP_FAIL;
-    }
-
-    buzzEndpointId_ = endpoint::get_id(motion_endpoint);
-    ESP_LOGI(TAG, "Ring sensor (occupancy/motion) created with endpoint_id %d", buzzEndpointId_);
-
-    // Start Matter stack
-    ESP_LOGI(TAG, "Starting Matter stack");
-    esp_err_t err = esp_matter::start(&MatterActor::onDeviceEvent);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to start Matter, err:%d", err);
-        return err;
-    }
-
-    // Subscribe to events
-    bus_->buzzStarted.subscribe(&MatterActor::onBuzzStarted);
-    bus_->buzzEnded.subscribe(&MatterActor::onBuzzEnded);
-    ESP_LOGI(TAG, "Subscribed to buzzStarted, buzzEnded");
-
-#if CONFIG_ENABLE_ENCRYPTED_OTA
-    err = esp_matter_ota_requestor_encrypted_init(s_decryption_key, s_decryption_key_len);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to initialize encrypted OTA, err:%d", err);
-        return err;
-    }
-#endif
-
-#if CONFIG_ENABLE_CHIP_SHELL
-    esp_matter::console::diagnostics_register_commands();
-    esp_matter::console::wifi_register_commands();
-    esp_matter::console::factoryreset_register_commands();
-#if CONFIG_OPENTHREAD_CLI
-    esp_matter::console::otcli_register_commands();
-#endif
-    esp_matter::console::init();
-#endif
-
-    return ESP_OK;
-}
-
-void MatterActor::onDeviceEvent(const chip::DeviceLayer::ChipDeviceEvent* event, intptr_t arg) {
+static void onDeviceEvent(const chip::DeviceLayer::ChipDeviceEvent* event, intptr_t arg) {
     switch (event->Type) {
     case chip::DeviceLayer::DeviceEventType::kInterfaceIpAddressChanged:
         ESP_LOGI(TAG, "Interface IP Address changed");
@@ -206,6 +137,85 @@ void MatterActor::onDeviceEvent(const chip::DeviceLayer::ChipDeviceEvent* event,
     default:
         break;
     }
+}
+
+// ============================================================================
+// MatterActor Implementation
+// ============================================================================
+
+esp_err_t MatterActor::init(EventBus& bus) {
+    ESP_LOGI(TAG, "Initializing MatterActor");
+
+    bus_ = &bus;
+
+    // Create Matter node (root of device tree)
+    node::config_t node_config;
+    s_node = node::create(&node_config, onAttributeUpdate, onIdentification);
+    if (!s_node) {
+        ESP_LOGE(TAG, "Failed to create Matter node");
+        return ESP_FAIL;
+    }
+    ESP_LOGI(TAG, "Matter node created");
+
+    // Create Door Lock endpoint
+    door_lock::config_t door_lock_config;
+    endpoint_t* lock_endpoint = door_lock::create(s_node, &door_lock_config, ENDPOINT_FLAG_NONE, nullptr);
+    if (!lock_endpoint) {
+        ESP_LOGE(TAG, "Failed to create door lock endpoint");
+        return ESP_FAIL;
+    }
+
+    // Set auto-relock to 1 second (door springs back automatically)
+    cluster_t* door_lock_cluster = cluster::get(lock_endpoint, DoorLock::Id);
+    cluster::door_lock::attribute::create_auto_relock_time(door_lock_cluster, 1);
+
+    lockEndpointId_ = endpoint::get_id(lock_endpoint);
+    ESP_LOGI(TAG, "Door lock created with endpoint_id %d", lockEndpointId_);
+
+    // Create Occupancy Sensor endpoint (appears as Motion Sensor in HomeKit)
+    occupancy_sensor::config_t occupancy_config;
+    occupancy_config.occupancy_sensing.occupancy = 0;  // Initially no motion
+    endpoint_t* motion_endpoint = occupancy_sensor::create(s_node, &occupancy_config, ENDPOINT_FLAG_NONE, nullptr);
+    if (!motion_endpoint) {
+        ESP_LOGE(TAG, "Failed to create occupancy sensor endpoint");
+        return ESP_FAIL;
+    }
+
+    buzzEndpointId_ = endpoint::get_id(motion_endpoint);
+    ESP_LOGI(TAG, "Ring sensor (occupancy/motion) created with endpoint_id %d", buzzEndpointId_);
+
+    // Start Matter stack
+    ESP_LOGI(TAG, "Starting Matter stack");
+    esp_err_t err = esp_matter::start(onDeviceEvent);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start Matter, err:%d", err);
+        return err;
+    }
+
+    // Subscribe to events
+    bus_->buzzStarted.subscribe(&MatterActor::onBuzzStarted);
+    bus_->buzzEnded.subscribe(&MatterActor::onBuzzEnded);
+    ESP_LOGI(TAG, "Subscribed to buzzStarted, buzzEnded");
+
+#if CONFIG_ENABLE_ENCRYPTED_OTA
+    err = esp_matter_ota_requestor_encrypted_init(s_decryption_key, s_decryption_key_len);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize encrypted OTA, err:%d", err);
+        return err;
+    }
+#endif
+
+#if CONFIG_ENABLE_CHIP_SHELL
+    esp_matter::console::diagnostics_register_commands();
+    esp_matter::console::wifi_register_commands();
+    esp_matter::console::factoryreset_register_commands();
+#if CONFIG_OPENTHREAD_CLI
+    esp_matter::console::otcli_register_commands();
+#endif
+    esp_matter::console::init();
+#endif
+
+    return ESP_OK;
 }
 
 void MatterActor::unlock() {
