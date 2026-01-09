@@ -150,9 +150,7 @@ void MatterActor::unlock() {
     updateLockState(true);
 
     // Emit event to trigger actual hardware unlock
-    if (bus_) {
-        bus_->emitUnlockPressed("MatterActor");
-    }
+    bus_->emitUnlockPressed("MatterActor");
 }
 
 void MatterActor::lock() {

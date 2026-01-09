@@ -51,9 +51,7 @@ void IntercomActor::onRingPressed(const RingPressedEvent& e) {
     ESP_LOGI(TAG, "RingPressed received from %s (ts=%lld)",
              e.meta.source, (long long)e.meta.timestamp);
 
-    if (bus_) {
-        bus_->emitBuzzStarted("IntercomActor");
-    }
+    bus_->emitBuzzStarted("IntercomActor");
 
     if (buzzTimer_) {
         xTimerStop(buzzTimer_, 0);
@@ -66,15 +64,11 @@ void IntercomActor::onUnlockPressed(const UnlockPressedEvent& e) {
     ESP_LOGI(TAG, "UnlockPressed received from %s (ts=%lld)",
              e.meta.source, (long long)e.meta.timestamp);
 
-    if (bus_) {
-        bus_->emitUnlocked("IntercomActor");
-    }
+    bus_->emitUnlocked("IntercomActor");
 }
 
 void IntercomActor::buzzTimerCallback(TimerHandle_t timer) {
     ESP_LOGI(TAG, "Buzz hold timer expired - emitting BuzzEnded");
-    if (bus_) {
-        bus_->emitBuzzEnded("IntercomActor");
-    }
+    bus_->emitBuzzEnded("IntercomActor");
 }
 
