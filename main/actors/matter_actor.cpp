@@ -121,13 +121,6 @@ void MatterActor::updateOccupancy(bool occupied) {
 // ============================================================================
 
 /**
- * @brief Initialize Matter callbacks (called from app_main to ensure linkage)
- */
-void matter_callbacks_init() {
-    ESP_LOGI(TAG, "Matter callbacks initialized");
-}
-
-/**
  * @brief Door Lock cluster initialization callback
  * Must match esp_matter declaration (C++ linkage, __attribute__((used)) to prevent stripping)
  */

@@ -32,8 +32,6 @@
 #include "actors/matter_actor.h"
 #include "hardware/gpio_adapter.h"
 
-// Forces linkage of Matter callbacks
-void matter_callbacks_init();
 
 static const char* TAG = "app_main";
 
@@ -166,9 +164,6 @@ extern "C" void app_main() {
 
     ESP_LOGI(TAG, "=== Smart Intercom Starting ===");
     ESP_LOGI(TAG, "Architecture: Event-driven Actor Model");
-
-    // Force linkage of Matter callbacks (must be before node creation)
-    matter_callbacks_init();
 
     /* Create a Matter node and add the mandatory Root Node device type on endpoint 0 */
     node::config_t node_config;
