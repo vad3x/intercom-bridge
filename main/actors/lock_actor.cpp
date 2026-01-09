@@ -11,18 +11,13 @@ static const char* TAG = "LockActor";
 EventBus* LockActor::bus_ = nullptr;
 LockOutputSocket* LockActor::socket_ = nullptr;
 
-LockActor::LockActor(EventBus& bus, LockOutputSocket* socket) {
+LockActor::LockActor(EventBus& bus, LockOutputSocket& socket) {
     bus_ = &bus;
-    socket_ = socket;
+    socket_ = &socket;
 }
 
 void LockActor::init() {
     ESP_LOGI(TAG, "Initializing LockActor");
-
-    if (!socket_) {
-        ESP_LOGW(TAG, "No LockOutputSocket provided");
-    }
-
     bus_->unlocked.subscribe(&LockActor::onUnlocked);
     ESP_LOGI(TAG, "Subscribed to unlocked");
 }
@@ -31,16 +26,12 @@ void LockActor::onUnlocked(const UnlockedEvent& e) {
     ESP_LOGI(TAG, "Unlocked received from %s (ts=%lld)",
              e.meta.source, (long long)e.meta.timestamp);
 
-    if (socket_) {
-        if (socket_->isUnlocking()) {
-            ESP_LOGW(TAG, "Unlock already in progress, ignoring");
-            return;
-        }
-
-        ESP_LOGI(TAG, "Triggering hardware unlock");
-        socket_->triggerUnlock();
-    } else {
-        ESP_LOGW(TAG, "No socket available, cannot unlock");
+    if (socket_->isUnlocking()) {
+        ESP_LOGW(TAG, "Unlock already in progress, ignoring");
+        return;
     }
+
+    ESP_LOGI(TAG, "Triggering hardware unlock");
+    socket_->triggerUnlock();
 }
 

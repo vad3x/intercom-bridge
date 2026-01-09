@@ -16,7 +16,7 @@
  */
 class LockActor {
 public:
-    LockActor(EventBus& bus, LockOutputSocket* socket);
+    LockActor(EventBus& bus, LockOutputSocket& socket);
 
     void init();
 

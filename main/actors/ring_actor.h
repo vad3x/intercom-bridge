@@ -18,7 +18,7 @@ struct EventBus;  // Forward declaration
  */
 class RingActor {
 public:
-    RingActor(EventBus& bus, BuzzInputSocket* socket);
+    RingActor(EventBus& bus, BuzzInputSocket& socket);
 
     void init();
 

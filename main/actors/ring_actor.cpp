@@ -12,20 +12,15 @@ static const char* TAG = "RingActor";
 EventBus* RingActor::bus_ = nullptr;
 BuzzInputSocket* RingActor::socket_ = nullptr;
 
-RingActor::RingActor(EventBus& bus, BuzzInputSocket* socket) {
+RingActor::RingActor(EventBus& bus, BuzzInputSocket& socket) {
     bus_ = &bus;
-    socket_ = socket;
+    socket_ = &socket;
 }
 
 void RingActor::init() {
     ESP_LOGI(TAG, "Initializing RingActor");
-
-    if (socket_) {
-        socket_->init(&RingActor::onHardwareBuzz);
-        ESP_LOGI(TAG, "BuzzInputSocket connected");
-    } else {
-        ESP_LOGW(TAG, "No BuzzInputSocket provided");
-    }
+    socket_->init(&RingActor::onHardwareBuzz);
+    ESP_LOGI(TAG, "BuzzInputSocket connected");
 }
 
 void RingActor::onHardwareBuzz() {

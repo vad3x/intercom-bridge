@@ -35,9 +35,9 @@ static EventBus s_eventBus;
 static GpioAdapter s_gpioAdapter;
 
 // Actors (dependencies injected via constructor)
-static RingActor s_ringActor(s_eventBus, &s_gpioAdapter);
+static RingActor s_ringActor(s_eventBus, s_gpioAdapter);
 static IntercomActor s_intercomActor(s_eventBus);
-static LockActor s_lockActor(s_eventBus, &s_gpioAdapter);
+static LockActor s_lockActor(s_eventBus, s_gpioAdapter);
 MatterActor g_matterActor(s_eventBus);  // Non-static for Matter SDK callbacks
 
 extern "C" void app_main() {
