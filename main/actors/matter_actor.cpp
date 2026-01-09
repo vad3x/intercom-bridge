@@ -143,10 +143,12 @@ static void onDeviceEvent(const chip::DeviceLayer::ChipDeviceEvent* event, intpt
 // MatterActor Implementation
 // ============================================================================
 
-esp_err_t MatterActor::init(EventBus& bus) {
-    ESP_LOGI(TAG, "Initializing MatterActor");
-
+MatterActor::MatterActor(EventBus& bus) {
     bus_ = &bus;
+}
+
+esp_err_t MatterActor::init() {
+    ESP_LOGI(TAG, "Initializing MatterActor");
 
     // Create Matter node (root of device tree)
     node::config_t node_config;

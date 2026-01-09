@@ -12,10 +12,13 @@ EventBus* IntercomActor::bus_ = nullptr;
 uint32_t IntercomActor::buzzHoldMs_ = 4000;
 TimerHandle_t IntercomActor::buzzTimer_ = nullptr;
 
-void IntercomActor::init(EventBus& bus, uint32_t buzzHoldMs) {
+IntercomActor::IntercomActor(EventBus& bus) {
+    bus_ = &bus;
+}
+
+void IntercomActor::init(uint32_t buzzHoldMs) {
     ESP_LOGI(TAG, "Initializing IntercomActor (buzzHoldMs=%lu)", (unsigned long)buzzHoldMs);
 
-    bus_ = &bus;
     buzzHoldMs_ = buzzHoldMs;
 
     // Create buzz hold timer (one-shot)

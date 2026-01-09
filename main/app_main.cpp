@@ -28,15 +28,17 @@
 
 static const char* TAG = "app_main";
 
-// Event bus (passed to actors via init)
+// Event bus (shared by all actors)
 static EventBus s_eventBus;
 
-// Actors (static lifetime)
+// Hardware adapter
 static GpioAdapter s_gpioAdapter;
-static RingActor s_ringActor;
-static IntercomActor s_intercomActor;
-static LockActor s_lockActor;
-MatterActor g_matterActor;  // Non-static for Matter SDK callbacks
+
+// Actors (all receive EventBus via constructor)
+static RingActor s_ringActor(s_eventBus);
+static IntercomActor s_intercomActor(s_eventBus);
+static LockActor s_lockActor(s_eventBus);
+MatterActor g_matterActor(s_eventBus);  // Non-static for Matter SDK callbacks
 
 extern "C" void app_main() {
     esp_err_t err = ESP_OK;
@@ -68,26 +70,13 @@ extern "C" void app_main() {
     set_openthread_platform_config(&config);
 #endif
 
-    ESP_LOGI(TAG, "Initializing MatterActor...");
-
-    // MatterActor creates node + endpoints and starts Matter
-    err = g_matterActor.init(s_eventBus);
+    // Initialize actors (EventBus already passed via constructors)
+    err = g_matterActor.init();
     ABORT_APP_ON_FAILURE(err == ESP_OK, ESP_LOGE(TAG, "Failed to initialize Matter"));
 
-    // =========================================================================
-    // Initialize Remaining Actors
-    // Each actor subscribes to its own events in init()
-    // (MatterActor already initialized above - creates endpoints before Matter starts)
-    // =========================================================================
-
-    // IntercomActor: business logic (subscribes: ringPressed, unlockPressed)
-    s_intercomActor.init(s_eventBus, BUZZ_HOLD_MS);
-
-    // LockActor: hardware unlock (subscribes: unlocked)
-    s_lockActor.init(s_eventBus, &s_gpioAdapter);
-
-    // RingActor: hardware buzz detection (no subscriptions, only emits)
-    s_ringActor.init(s_eventBus, &s_gpioAdapter);
+    s_intercomActor.init(BUZZ_HOLD_MS);
+    s_lockActor.init(&s_gpioAdapter);
+    s_ringActor.init(&s_gpioAdapter);
 
     ESP_LOGI(TAG, "All actors initialized");
     ESP_LOGI(TAG, "=== Smart Intercom Ready ===");
