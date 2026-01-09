@@ -18,16 +18,13 @@ struct EventBus;  // Forward declaration
  */
 class RingActor {
 public:
-    explicit RingActor(EventBus& bus);
+    RingActor(EventBus& bus, BuzzInputSocket* socket);
 
-    /**
-     * @brief Initialize ring actor with buzz input socket
-     * @param socket Pointer to BuzzInputSocket implementation
-     */
-    void init(BuzzInputSocket* socket);
+    void init();
 
 private:
     static EventBus* bus_;
+    static BuzzInputSocket* socket_;
 
     /**
      * @brief Called by BuzzInputSocket when hardware buzz detected

@@ -16,13 +16,9 @@
  */
 class LockActor {
 public:
-    explicit LockActor(EventBus& bus);
+    LockActor(EventBus& bus, LockOutputSocket* socket);
 
-    /**
-     * @brief Initialize lock actor with output socket
-     * @param socket Pointer to LockOutputSocket implementation
-     */
-    void init(LockOutputSocket* socket);
+    void init();
 
 private:
     static EventBus* bus_;

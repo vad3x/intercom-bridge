@@ -34,10 +34,10 @@ static EventBus s_eventBus;
 // Hardware adapter
 static GpioAdapter s_gpioAdapter;
 
-// Actors (all receive EventBus via constructor)
-static RingActor s_ringActor(s_eventBus);
+// Actors (dependencies injected via constructor)
+static RingActor s_ringActor(s_eventBus, &s_gpioAdapter);
 static IntercomActor s_intercomActor(s_eventBus);
-static LockActor s_lockActor(s_eventBus);
+static LockActor s_lockActor(s_eventBus, &s_gpioAdapter);
 MatterActor g_matterActor(s_eventBus);  // Non-static for Matter SDK callbacks
 
 extern "C" void app_main() {
@@ -70,13 +70,13 @@ extern "C" void app_main() {
     set_openthread_platform_config(&config);
 #endif
 
-    // Initialize actors (EventBus already passed via constructors)
+    // Initialize actors (dependencies already injected via constructors)
     err = g_matterActor.init();
     ABORT_APP_ON_FAILURE(err == ESP_OK, ESP_LOGE(TAG, "Failed to initialize Matter"));
 
     s_intercomActor.init(BUZZ_HOLD_MS);
-    s_lockActor.init(&s_gpioAdapter);
-    s_ringActor.init(&s_gpioAdapter);
+    s_lockActor.init();
+    s_ringActor.init();
 
     ESP_LOGI(TAG, "All actors initialized");
     ESP_LOGI(TAG, "=== Smart Intercom Ready ===");
