@@ -19,11 +19,13 @@
  * @brief Concept for door unlock drivers
  *
  * Driver must implement:
+ *   void init()
  *   void triggerUnlock()
  *   bool isUnlocking() const
  */
 template <typename Driver>
 concept DoorDriver = requires(Driver d) {
+    d.init();
     d.triggerUnlock();
     { d.isUnlocking() } -> std::same_as<bool>;
 };

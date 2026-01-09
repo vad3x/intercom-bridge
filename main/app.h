@@ -19,7 +19,7 @@
 
 class App {
    public:
-    App();
+    explicit App();
 
     esp_err_t init();
 
