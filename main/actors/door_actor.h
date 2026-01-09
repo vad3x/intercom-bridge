@@ -43,11 +43,13 @@ concept DoorDriver = requires(Driver d) {
  */
 template <DoorDriver Driver>
 class DoorActor {
+    static constexpr const char* TAG = "DoorActor";
+
    public:
     DoorActor(EventBus& bus, Driver& driver) : bus_(bus), driver_(driver) {}
 
     void init() {
-        ESP_LOGI("DoorActor", "Initializing DoorActor");
+        ESP_LOGI(TAG, "Initializing DoorActor");
 
         // Initialize the driver hardware
         driver_.init();
@@ -55,9 +57,9 @@ class DoorActor {
         // Subscribe to unlock events
         // Note: We need static callback, so we store instance pointer
         instance_ = this;
-        bus_.unlockPressed.subscribe(&DoorActor::onUnlockPressedStatic);
+        bus_.unlockDispatched.subscribe(&DoorActor::onUnlockDispatchedStatic);
 
-        ESP_LOGI("DoorActor", "Subscribed to unlockPressed");
+        ESP_LOGI(TAG, "Subscribed to unlockDispatched");
     }
 
    private:
@@ -65,21 +67,21 @@ class DoorActor {
     Driver& driver_;
     static DoorActor* instance_;
 
-    static void onUnlockPressedStatic(const UnlockPressedEvent& e) {
+    static void onUnlockDispatchedStatic(const UnlockDispatchedEvent& e) {
         if (instance_) {
-            instance_->onUnlockPressed(e);
+            instance_->onUnlockDispatched(e);
         }
     }
 
-    void onUnlockPressed(const UnlockPressedEvent& e) {
-        ESP_LOGI("DoorActor", "UnlockPressed received from %s (ts=%lld)", e.meta.source, (long long)e.meta.timestamp);
+    void onUnlockDispatched(const UnlockDispatchedEvent& e) {
+        ESP_LOGI(TAG, "UnlockDispatched received from %s (ts=%lld)", e.meta.source, (long long)e.meta.timestamp);
 
         if (driver_.isUnlocking()) {
-            ESP_LOGW("DoorActor", "Unlock already in progress, ignoring");
+            ESP_LOGW(TAG, "Unlock already in progress, ignoring");
             return;
         }
 
-        ESP_LOGI("DoorActor", "Triggering hardware unlock");
+        ESP_LOGI(TAG, "Triggering hardware unlock");
         driver_.triggerUnlock();
     }
 };

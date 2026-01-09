@@ -5,7 +5,6 @@
 */
 
 #include "drivers/gpio_ring_driver.h"
-#include "config/app_priv.h"
 #include <driver/gpio.h>
 #include <esp_log.h>
 #include <esp_timer.h>
@@ -21,6 +20,7 @@ GpioRingDriver* GpioRingDriver::instance_ = nullptr;
 static volatile bool s_buzz_pending = false;
 static volatile int64_t s_last_buzz_time = 0;
 static TimerHandle_t s_debounce_timer = nullptr;
+static GpioRingConfig s_config;  // Copy of config for ISR access
 
 // Forward declarations
 static inline int64_t get_time_ms();
@@ -33,21 +33,24 @@ static void IRAM_ATTR buzz_isr_handler(void* arg);
 
 void GpioRingDriver::init(OnRingCallback onRing) {
     ESP_LOGI(TAG, "Initializing GpioRingDriver");
-    ESP_LOGI(TAG, "  BUZZ_GPIO: %d (input from optocoupler)", BUZZ_GPIO);
+    ESP_LOGI(TAG, "  GPIO pin: %d (input from optocoupler)", config_.gpioPin);
+    ESP_LOGI(TAG, "  Debounce: %lu ms", (unsigned long)config_.debounceMs);
+    ESP_LOGI(TAG, "  Cooldown: %lu ms", (unsigned long)config_.cooldownMs);
 
     instance_ = this;
     ringCallback_ = onRing;
+    s_config = config_;  // Copy for ISR access
 
     // Create debounce timer
-    s_debounce_timer = xTimerCreate("debounce", pdMS_TO_TICKS(DEBOUNCE_MS), pdFALSE, nullptr, debounce_timer_cb);
+    s_debounce_timer = xTimerCreate("debounce", pdMS_TO_TICKS(config_.debounceMs), pdFALSE, nullptr, debounce_timer_cb);
 
     if (!s_debounce_timer) {
         ESP_LOGE(TAG, "Failed to create debounce timer");
     }
 
-    // Configure BUZZ_GPIO as input with pull-up
+    // Configure GPIO as input with pull-up
     gpio_config_t buzz_conf = {
-        .pin_bit_mask = (1ULL << BUZZ_GPIO),
+        .pin_bit_mask = (1ULL << config_.gpioPin),
         .mode = GPIO_MODE_INPUT,
         .pull_up_en = GPIO_PULLUP_ENABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
@@ -55,7 +58,7 @@ void GpioRingDriver::init(OnRingCallback onRing) {
     };
     esp_err_t ret = gpio_config(&buzz_conf);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to configure BUZZ_GPIO: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to configure GPIO: %s", esp_err_to_name(ret));
     }
 
     // Install GPIO ISR service
@@ -65,9 +68,9 @@ void GpioRingDriver::init(OnRingCallback onRing) {
     }
 
     // Add ISR handler for buzz detection
-    ret = gpio_isr_handler_add((gpio_num_t)BUZZ_GPIO, buzz_isr_handler, nullptr);
+    ret = gpio_isr_handler_add((gpio_num_t)config_.gpioPin, buzz_isr_handler, nullptr);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to add buzz ISR handler: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to add ISR handler: %s", esp_err_to_name(ret));
     }
 
     ESP_LOGI(TAG, "Ring detection initialized");
@@ -94,7 +97,7 @@ static void debounce_timer_cb(TimerHandle_t timer) {
     s_buzz_pending = false;
 
     // Check if signal is still LOW (active) after debounce
-    int level = gpio_get_level((gpio_num_t)BUZZ_GPIO);
+    int level = gpio_get_level((gpio_num_t)s_config.gpioPin);
     if (level != 0) {
         ESP_LOGD(TAG, "Buzz signal bounced");
         return;
@@ -102,7 +105,7 @@ static void debounce_timer_cb(TimerHandle_t timer) {
 
     // Check cooldown
     int64_t now = get_time_ms();
-    if (s_last_buzz_time > 0 && (now - s_last_buzz_time) < BUZZ_COOLDOWN_MS) {
+    if (s_last_buzz_time > 0 && (now - s_last_buzz_time) < s_config.cooldownMs) {
         ESP_LOGD(TAG, "Buzz ignored (cooldown)");
         return;
     }

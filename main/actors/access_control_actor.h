@@ -46,11 +46,13 @@ concept AccessControlDriver =
  */
 template <AccessControlDriver Driver>
 class AccessControlActor {
+    static constexpr const char* TAG = "AccessControlActor";
+
    public:
     AccessControlActor(EventBus& bus, Driver& driver) : bus_(bus), driver_(driver) {}
 
     void init() {
-        ESP_LOGI("AccessControlActor", "Initializing AccessControlActor");
+        ESP_LOGI(TAG, "Initializing AccessControlActor");
 
         // Store instance for static callbacks
         instance_ = this;
@@ -59,9 +61,9 @@ class AccessControlActor {
         driver_.init([this]() { onUnlockDispatched(); }, [this]() { onLockDispatched(); });
 
         // Subscribe to ring events
-        bus_.ringPressed.subscribe(&AccessControlActor::onRingPressedStatic);
+        bus_.ringing.subscribe(&AccessControlActor::onRingingStatic);
 
-        ESP_LOGI("AccessControlActor", "Subscribed to ringPressed");
+        ESP_LOGI(TAG, "Subscribed to ringing");
     }
 
    private:
@@ -70,24 +72,24 @@ class AccessControlActor {
     static AccessControlActor* instance_;
 
     // Static callback wrapper for event subscription
-    static void onRingPressedStatic(const RingPressedEvent& e) {
+    static void onRingingStatic(const RingingEvent& e) {
         if (instance_) {
-            instance_->onRingPressed(e);
+            instance_->onRinging(e);
         }
     }
 
-    void onRingPressed(const RingPressedEvent& e) {
-        ESP_LOGI("AccessControlActor", "RingPressed received from %s - calling driver.ringing()", e.meta.source);
+    void onRinging(const RingingEvent& e) {
+        ESP_LOGI(TAG, "Ringing received from %s - calling driver.ringing()", e.meta.source);
         driver_.ringing();
     }
 
     void onUnlockDispatched() {
-        ESP_LOGI("AccessControlActor", "Unlock dispatched from driver - emitting UnlockPressed");
-        bus_.emitUnlockPressed("AccessControlActor");
+        ESP_LOGI(TAG, "Unlock dispatched from driver - emitting UnlockDispatched");
+        bus_.emitUnlockDispatched(TAG);
     }
 
     void onLockDispatched() {
-        ESP_LOGI("AccessControlActor", "Lock dispatched from driver (no-op)");
+        ESP_LOGI(TAG, "Lock dispatched from driver (no-op)");
         // Lock is a no-op - door auto-locks
     }
 };

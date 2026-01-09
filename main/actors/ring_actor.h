@@ -39,13 +39,15 @@ concept RingDriver = requires(Driver d, std::function<void()> onRing) { d.init(o
  */
 template <RingDriver Driver>
 class RingActor {
+    static constexpr const char* TAG = "RingActor";
+
    public:
     RingActor(EventBus& bus, Driver& driver) : bus_(bus), driver_(driver) {}
 
     void init() {
-        ESP_LOGI("RingActor", "Initializing RingActor");
+        ESP_LOGI(TAG, "Initializing RingActor");
         driver_.init([this]() { onHardwareRing(); });
-        ESP_LOGI("RingActor", "Ring driver connected");
+        ESP_LOGI(TAG, "Ring driver connected");
     }
 
    private:
@@ -53,7 +55,7 @@ class RingActor {
     Driver& driver_;
 
     void onHardwareRing() {
-        ESP_LOGI("RingActor", "Hardware ring detected - emitting RingPressed");
-        bus_.emitRingPressed("RingActor");
+        ESP_LOGI(TAG, "Hardware ring detected - emitting Ringing");
+        bus_.emitRinging(TAG);
     }
 };

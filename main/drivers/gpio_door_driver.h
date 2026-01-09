@@ -7,13 +7,28 @@
 
 #pragma once
 
+#include <cstdint>
+
+/**
+ * @brief Configuration for GPIO door driver
+ */
+struct GpioDoorConfig {
+    int gpioPin;           // GPIO pin for relay control
+    uint32_t unlockPulseMs;  // Duration of unlock pulse in milliseconds
+};
+
 /**
  * @brief GPIO-based door unlock driver
  *
- * Controls PhotoMOS relay on UNLOCK_GPIO to release door latch.
+ * Controls PhotoMOS relay to release door latch.
  */
 class GpioDoorDriver {
-   public:
+public:
+    /**
+     * @brief Construct with configuration
+     */
+    explicit GpioDoorDriver(const GpioDoorConfig& config) : config_(config) {}
+
     /**
      * @brief Initialize the door unlock hardware
      */
@@ -35,6 +50,7 @@ class GpioDoorDriver {
     // Static instance for timer callback access
     static GpioDoorDriver* instance_;
 
-   private:
+private:
+    GpioDoorConfig config_;
     volatile bool unlockInProgress_ = false;
 };

@@ -3,6 +3,7 @@
 */
 
 #include "app.h"
+#include "config/app_priv.h"
 #include <esp_log.h>
 
 static const char* TAG = "App";
@@ -12,9 +13,11 @@ static const char* TAG = "App";
 // ============================================================================
 
 App::App()
-    : ringActor_(eventBus_, ringDriver_),
-      accessControlActor_(eventBus_, accessControlDriver_),
-      doorActor_(eventBus_, doorDriver_) {}
+    : ringDriver_({.gpioPin = BUZZ_GPIO, .debounceMs = DEBOUNCE_MS, .cooldownMs = BUZZ_COOLDOWN_MS})
+    , doorDriver_({.gpioPin = UNLOCK_GPIO, .unlockPulseMs = UNLOCK_PULSE_MS})
+    , ringActor_(eventBus_, ringDriver_)
+    , accessControlActor_(eventBus_, accessControlDriver_)
+    , doorActor_(eventBus_, doorDriver_) {}
 
 esp_err_t App::init() {
     ESP_LOGI(TAG, "Initializing application...");

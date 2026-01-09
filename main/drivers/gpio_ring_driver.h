@@ -7,17 +7,32 @@
 
 #pragma once
 
+#include <cstdint>
 #include <functional>
+
+/**
+ * @brief Configuration for GPIO ring driver
+ */
+struct GpioRingConfig {
+    int gpioPin;           // GPIO pin for ring detection
+    uint32_t debounceMs;   // Debounce time in milliseconds
+    uint32_t cooldownMs;   // Cooldown between ring events
+};
 
 /**
  * @brief GPIO-based ring detection driver
  *
- * Detects ring signals from optocoupler on BUZZ_GPIO.
+ * Detects ring signals from optocoupler.
  * Includes debouncing and cooldown logic.
  */
 class GpioRingDriver {
-   public:
+public:
     using OnRingCallback = std::function<void()>;
+
+    /**
+     * @brief Construct with configuration
+     */
+    explicit GpioRingDriver(const GpioRingConfig& config) : config_(config) {}
 
     /**
      * @brief Initialize the ring detection hardware
@@ -31,6 +46,7 @@ class GpioRingDriver {
     // Static instance for ISR access
     static GpioRingDriver* instance_;
 
-   private:
+private:
+    GpioRingConfig config_;
     OnRingCallback ringCallback_;
 };

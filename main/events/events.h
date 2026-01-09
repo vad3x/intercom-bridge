@@ -29,14 +29,14 @@ struct EventMeta {
 /**
  * @brief Emitted by RingActor when hardware ring is detected
  */
-struct RingPressedEvent {
+struct RingingEvent {
     EventMeta meta;
 };
 
 /**
- * @brief Emitted by AccessControlActor when unlock is requested
+ * @brief Emitted by AccessControlActor when unlock is dispatched
  */
-struct UnlockPressedEvent {
+struct UnlockDispatchedEvent {
     EventMeta meta;
 };
 
@@ -50,15 +50,15 @@ struct UnlockPressedEvent {
  * Actors subscribe to events in their init() and emit events via helpers.
  */
 struct EventBus {
-    Listener<RingPressedEvent> ringPressed;
-    Listener<UnlockPressedEvent> unlockPressed;
+    Listener<RingingEvent> ringing;
+    Listener<UnlockDispatchedEvent> unlockDispatched;
 
     // Emit helpers with automatic metadata
-    void emitRingPressed(const char* source) {
-        ringPressed.emit({EventMeta::now(source)});
+    void emitRinging(const char* source) {
+        ringing.emit({EventMeta::now(source)});
     }
 
-    void emitUnlockPressed(const char* source) {
-        unlockPressed.emit({EventMeta::now(source)});
+    void emitUnlockDispatched(const char* source) {
+        unlockDispatched.emit({EventMeta::now(source)});
     }
 };
