@@ -32,6 +32,6 @@ private:
     MatterActor matterActor_;
 };
 
-// Global app instance (for Matter SDK callbacks)
-extern App g_app;
+// Get the singleton app instance
+App& getApp();
 

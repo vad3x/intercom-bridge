@@ -19,9 +19,6 @@
 
 static const char* TAG = "app_main";
 
-// Global app instance
-App g_app;
-
 extern "C" void app_main() {
     esp_err_t err = ESP_OK;
 
@@ -49,7 +46,7 @@ extern "C" void app_main() {
     set_openthread_platform_config(&config);
 #endif
 
-    err = g_app.init();
+    err = getApp().init();
     ABORT_APP_ON_FAILURE(err == ESP_OK, ESP_LOGE(TAG, "Failed to initialize app"));
 
     ESP_LOGI(TAG, "=== Smart Intercom Ready ===");

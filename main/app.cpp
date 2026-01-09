@@ -32,3 +32,8 @@ esp_err_t App::init() {
     return ESP_OK;
 }
 
+App& getApp() {
+    static App instance;
+    return instance;
+}
+
