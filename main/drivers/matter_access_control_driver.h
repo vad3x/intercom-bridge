@@ -18,7 +18,8 @@
  * @brief Configuration for Matter access control driver
  */
 struct MatterAccessControlConfig {
-    uint32_t ringHoldMs;  // How long occupancy stays active after ring
+    uint32_t ringHoldMs;     // How long occupancy stays active after ring
+    uint32_t autoRelockSec;  // Auto-relock time in seconds (Matter state only)
 };
 
 /**

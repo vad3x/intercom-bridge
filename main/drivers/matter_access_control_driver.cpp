@@ -85,9 +85,9 @@ void MatterAccessControlDriver::init(DispatchCallback onUnlockDispatched, Dispat
         return;
     }
 
-    // Set auto-relock to 1 second (door springs back automatically)
+    // Set auto-relock time (door springs back automatically, this is Matter state only)
     cluster_t* door_lock_cluster = cluster::get(lock_endpoint, DoorLock::Id);
-    cluster::door_lock::attribute::create_auto_relock_time(door_lock_cluster, 1);
+    cluster::door_lock::attribute::create_auto_relock_time(door_lock_cluster, config_.autoRelockSec);
 
     lockEndpointId_ = endpoint::get_id(lock_endpoint);
     ESP_LOGI(TAG, "Door lock created with endpoint_id %d", lockEndpointId_);
