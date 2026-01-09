@@ -48,7 +48,7 @@ struct BuzzEndedEvent {
 };
 
 /**
- * @brief Emitted by HomekitActor when user requests unlock
+ * @brief Emitted by MatterActor when user requests unlock
  */
 struct UnlockPressedEvent {
     EventMeta meta;

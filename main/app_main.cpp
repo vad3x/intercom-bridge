@@ -29,7 +29,7 @@
 #include "actors/ring_actor.h"
 #include "actors/intercom_actor.h"
 #include "actors/lock_actor.h"
-#include "actors/homekit_actor.h"
+#include "actors/matter_actor.h"
 #include "hardware/gpio_adapter.h"
 
 // Forces linkage of Matter callbacks
@@ -49,7 +49,7 @@ static GpioAdapter s_gpioAdapter;
 static RingActor s_ringActor;
 static IntercomActor s_intercomActor;
 static LockActor s_lockActor;
-HomekitActor g_homekitActor;  // Non-static for matter_callbacks.cpp access
+MatterActor g_matterActor;  // Non-static for matter_callbacks.cpp access
 
 using namespace esp_matter;
 using namespace esp_matter::attribute;
@@ -223,8 +223,8 @@ extern "C" void app_main() {
     // LockActor: hardware unlock (subscribes: unlocked)
     s_lockActor.init(s_eventBus, &s_gpioAdapter);
 
-    // HomekitActor: Matter integration (subscribes: buzzStarted, buzzEnded)
-    g_homekitActor.init(s_eventBus, door_lock_endpoint_id, buzz_button_endpoint_id);
+    // MatterActor: Matter integration (subscribes: buzzStarted, buzzEnded)
+    g_matterActor.init(s_eventBus, door_lock_endpoint_id, buzz_button_endpoint_id);
 
     // RingActor: hardware buzz detection (no subscriptions, only emits)
     s_ringActor.init(s_eventBus, &s_gpioAdapter);

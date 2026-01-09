@@ -1,6 +1,6 @@
-idf_component_register(SRC_DIRS "." "./actors" "./hardware" "./matter"
+idf_component_register(SRC_DIRS "." "./actors" "./hardware"
                        PRIV_INCLUDE_DIRS
-                         "." "./config" "./events" "./actors" "./hardware" "./matter"
+                         "." "./config" "./events" "./actors" "./hardware"
                          "${ESP_MATTER_PATH}/examples/common/utils")
 
 target_compile_options(${COMPONENT_LIB} PRIVATE "-DCHIP_HAVE_CONFIG_H")

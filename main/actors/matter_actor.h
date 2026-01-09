@@ -1,5 +1,5 @@
 /*
-   Smart Intercom - HomeKit Actor
+   Smart Intercom - Matter Actor
 
    Handles Matter/HomeKit integration:
    - Listens to BuzzStarted/BuzzEnded → updates Occupancy Sensor (Motion in HomeKit)
@@ -12,14 +12,14 @@
 #include <cstdint>
 
 /**
- * @brief HomeKit/Matter integration actor
+ * @brief Matter/HomeKit integration actor
  *
  * Bridges between the event bus and Matter clusters.
  */
-class HomekitActor {
+class MatterActor {
 public:
     /**
-     * @brief Initialize HomeKit actor with endpoint IDs
+     * @brief Initialize Matter actor with endpoint IDs
      * @param bus Reference to EventBus for subscribing and emitting
      * @param lockEndpointId Matter endpoint ID for door lock
      * @param buzzEndpointId Matter endpoint ID for occupancy sensor (Motion in HomeKit)
