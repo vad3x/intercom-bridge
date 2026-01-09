@@ -20,12 +20,13 @@ class HomekitActor {
 public:
     /**
      * @brief Initialize HomeKit actor with endpoint IDs
+     * @param bus Reference to EventBus for subscribing and emitting
      * @param lockEndpointId Matter endpoint ID for door lock
      * @param buzzEndpointId Matter endpoint ID for occupancy sensor (Motion in HomeKit)
      *
      * Subscribes to: buzzStarted, buzzEnded
      */
-    void init(uint16_t lockEndpointId, uint16_t buzzEndpointId);
+    void init(EventBus& bus, uint16_t lockEndpointId, uint16_t buzzEndpointId);
 
     /**
      * @brief Called by Matter callbacks when user requests unlock
@@ -40,6 +41,7 @@ public:
     void lock();
 
 private:
+    static EventBus* bus_;
     static uint16_t lockEndpointId_;
     static uint16_t buzzEndpointId_;
 

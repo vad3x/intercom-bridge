@@ -18,11 +18,12 @@ class LockActor {
 public:
     /**
      * @brief Initialize lock actor with output socket
+     * @param bus Reference to EventBus for subscribing
      * @param socket Pointer to LockOutputSocket implementation
      *
      * Subscribes to: unlocked
      */
-    void init(LockOutputSocket* socket);
+    void init(EventBus& bus, LockOutputSocket* socket);
 
 private:
     static LockOutputSocket* socket_;

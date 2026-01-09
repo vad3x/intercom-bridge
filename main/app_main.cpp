@@ -41,14 +41,14 @@ static const char* TAG = "app_main";
 uint16_t door_lock_endpoint_id = 0;
 uint16_t buzz_button_endpoint_id = 0;
 
-// Global event bus
-EventBus g_eventBus;
+// Event bus (passed to actors via init)
+static EventBus s_eventBus;
 
 // Actors (static lifetime)
-static GpioAdapter g_gpioAdapter;
-static RingActor g_ringActor;
-static IntercomActor g_intercomActor;
-static LockActor g_lockActor;
+static GpioAdapter s_gpioAdapter;
+static RingActor s_ringActor;
+static IntercomActor s_intercomActor;
+static LockActor s_lockActor;
 HomekitActor g_homekitActor;  // Non-static for matter_callbacks.cpp access
 
 using namespace esp_matter;
@@ -218,16 +218,16 @@ extern "C" void app_main() {
     ESP_LOGI(TAG, "Initializing actors...");
 
     // IntercomActor: business logic (subscribes: ringPressed, unlockPressed)
-    g_intercomActor.init(BUZZ_HOLD_MS);
+    s_intercomActor.init(s_eventBus, BUZZ_HOLD_MS);
 
     // LockActor: hardware unlock (subscribes: unlocked)
-    g_lockActor.init(&g_gpioAdapter);
+    s_lockActor.init(s_eventBus, &s_gpioAdapter);
 
     // HomekitActor: Matter integration (subscribes: buzzStarted, buzzEnded)
-    g_homekitActor.init(door_lock_endpoint_id, buzz_button_endpoint_id);
+    g_homekitActor.init(s_eventBus, door_lock_endpoint_id, buzz_button_endpoint_id);
 
     // RingActor: hardware buzz detection (no subscriptions, only emits)
-    g_ringActor.init(&g_gpioAdapter);
+    s_ringActor.init(s_eventBus, &s_gpioAdapter);
 
     ESP_LOGI(TAG, "All actors initialized");
     ESP_LOGI(TAG, "=== Smart Intercom Ready ===");

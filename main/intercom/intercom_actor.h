@@ -23,13 +23,15 @@ class IntercomActor {
 public:
     /**
      * @brief Initialize intercom actor
+     * @param bus Reference to EventBus for subscribing and emitting
      * @param buzzHoldMs Duration to hold buzz notification (milliseconds)
      *
      * Subscribes to: ringPressed, unlockPressed
      */
-    void init(uint32_t buzzHoldMs);
+    void init(EventBus& bus, uint32_t buzzHoldMs);
 
 private:
+    static EventBus* bus_;
     static uint32_t buzzHoldMs_;
     static TimerHandle_t buzzTimer_;
 

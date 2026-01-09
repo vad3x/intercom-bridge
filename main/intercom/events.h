@@ -99,6 +99,5 @@ struct EventBus {
     }
 };
 
-// Global event bus instance (defined in app_main.cpp)
-extern EventBus g_eventBus;
+// Note: EventBus instance is created in app_main.cpp and passed to actors via init()
 

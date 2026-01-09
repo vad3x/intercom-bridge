@@ -13,19 +13,21 @@ using namespace esp_matter;
 using namespace chip::app::Clusters;
 
 // Static member definitions
+EventBus* HomekitActor::bus_ = nullptr;
 uint16_t HomekitActor::lockEndpointId_ = 0;
 uint16_t HomekitActor::buzzEndpointId_ = 0;
 
-void HomekitActor::init(uint16_t lockEndpointId, uint16_t buzzEndpointId) {
+void HomekitActor::init(EventBus& bus, uint16_t lockEndpointId, uint16_t buzzEndpointId) {
     ESP_LOGI(TAG, "Initializing HomekitActor (lockEp=%d, buzzEp=%d)",
              lockEndpointId, buzzEndpointId);
 
+    bus_ = &bus;
     lockEndpointId_ = lockEndpointId;
     buzzEndpointId_ = buzzEndpointId;
 
     // Subscribe to events
-    g_eventBus.buzzStarted.subscribe(&HomekitActor::onBuzzStarted);
-    g_eventBus.buzzEnded.subscribe(&HomekitActor::onBuzzEnded);
+    bus_->buzzStarted.subscribe(&HomekitActor::onBuzzStarted);
+    bus_->buzzEnded.subscribe(&HomekitActor::onBuzzEnded);
 
     ESP_LOGI(TAG, "Subscribed to buzzStarted, buzzEnded");
 }
@@ -37,7 +39,9 @@ void HomekitActor::unlock() {
     updateLockState(true);
 
     // Emit event to trigger actual hardware unlock
-    g_eventBus.emitUnlockPressed("HomekitActor");
+    if (bus_) {
+        bus_->emitUnlockPressed("HomekitActor");
+    }
 }
 
 void HomekitActor::lock() {

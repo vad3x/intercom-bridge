@@ -10,7 +10,7 @@ static const char* TAG = "LockActor";
 // Static member definition
 LockOutputSocket* LockActor::socket_ = nullptr;
 
-void LockActor::init(LockOutputSocket* socket) {
+void LockActor::init(EventBus& bus, LockOutputSocket* socket) {
     ESP_LOGI(TAG, "Initializing LockActor");
 
     socket_ = socket;
@@ -20,7 +20,7 @@ void LockActor::init(LockOutputSocket* socket) {
     }
 
     // Subscribe to events
-    g_eventBus.unlocked.subscribe(&LockActor::onUnlocked);
+    bus.unlocked.subscribe(&LockActor::onUnlocked);
 
     ESP_LOGI(TAG, "Subscribed to unlocked");
 }

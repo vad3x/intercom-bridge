@@ -8,12 +8,14 @@
 static const char* TAG = "IntercomActor";
 
 // Static member definitions
+EventBus* IntercomActor::bus_ = nullptr;
 uint32_t IntercomActor::buzzHoldMs_ = 4000;
 TimerHandle_t IntercomActor::buzzTimer_ = nullptr;
 
-void IntercomActor::init(uint32_t buzzHoldMs) {
+void IntercomActor::init(EventBus& bus, uint32_t buzzHoldMs) {
     ESP_LOGI(TAG, "Initializing IntercomActor (buzzHoldMs=%lu)", (unsigned long)buzzHoldMs);
 
+    bus_ = &bus;
     buzzHoldMs_ = buzzHoldMs;
 
     // Create buzz hold timer (one-shot)
@@ -28,8 +30,8 @@ void IntercomActor::init(uint32_t buzzHoldMs) {
     }
 
     // Subscribe to events
-    g_eventBus.ringPressed.subscribe(&IntercomActor::onRingPressed);
-    g_eventBus.unlockPressed.subscribe(&IntercomActor::onUnlockPressed);
+    bus_->ringPressed.subscribe(&IntercomActor::onRingPressed);
+    bus_->unlockPressed.subscribe(&IntercomActor::onUnlockPressed);
 
     ESP_LOGI(TAG, "Subscribed to ringPressed, unlockPressed");
 }
@@ -39,7 +41,9 @@ void IntercomActor::onRingPressed(const RingPressedEvent& e) {
              e.meta.source, (long long)e.meta.timestamp);
 
     // Emit BuzzStarted
-    g_eventBus.emitBuzzStarted("IntercomActor");
+    if (bus_) {
+        bus_->emitBuzzStarted("IntercomActor");
+    }
 
     // Start timer to emit BuzzEnded after timeout
     if (buzzTimer_) {
@@ -55,11 +59,15 @@ void IntercomActor::onUnlockPressed(const UnlockPressedEvent& e) {
              e.meta.source, (long long)e.meta.timestamp);
 
     // Emit Unlocked to trigger the actual hardware unlock
-    g_eventBus.emitUnlocked("IntercomActor");
+    if (bus_) {
+        bus_->emitUnlocked("IntercomActor");
+    }
 }
 
 void IntercomActor::buzzTimerCallback(TimerHandle_t timer) {
     ESP_LOGI(TAG, "Buzz hold timer expired - emitting BuzzEnded");
-    g_eventBus.emitBuzzEnded("IntercomActor");
+    if (bus_) {
+        bus_->emitBuzzEnded("IntercomActor");
+    }
 }
 

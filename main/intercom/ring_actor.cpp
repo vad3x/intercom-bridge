@@ -8,8 +8,13 @@
 
 static const char* TAG = "RingActor";
 
-void RingActor::init(BuzzInputSocket* socket) {
+// Static member definition
+EventBus* RingActor::bus_ = nullptr;
+
+void RingActor::init(EventBus& bus, BuzzInputSocket* socket) {
     ESP_LOGI(TAG, "Initializing RingActor");
+
+    bus_ = &bus;
 
     if (socket) {
         socket->init(&RingActor::onHardwareBuzz);
@@ -21,6 +26,8 @@ void RingActor::init(BuzzInputSocket* socket) {
 
 void RingActor::onHardwareBuzz() {
     ESP_LOGI(TAG, "Hardware buzz detected - emitting RingPressed");
-    g_eventBus.emitRingPressed("RingActor");
+    if (bus_) {
+        bus_->emitRingPressed("RingActor");
+    }
 }
 
