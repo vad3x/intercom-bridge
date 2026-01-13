@@ -1,7 +1,9 @@
 idf_component_register(SRC_DIRS "." "./actors" "./drivers"
                        PRIV_INCLUDE_DIRS
                          "." "./config" "./events" "./actors" "./drivers"
-                         "${ESP_MATTER_PATH}/examples/common/utils")
+                         "${ESP_MATTER_PATH}/examples/common/utils"
+                       REQUIRES esp_matter
+                       PRIV_REQUIRES led_strip esp_timer nvs_flash driver)
 
 target_compile_options(${COMPONENT_LIB} PRIVATE "-DCHIP_HAVE_CONFIG_H" "-std=gnu++23")
 

@@ -19,7 +19,7 @@
   "idf.openOcdConfigs": [
     "board/esp32c6-builtin.cfg"
   ],
-  "idf.port": "detect",
+  "idf.port": "rfc2217://host.docker.internal:4000?ign_set_control",
   "idf.toolsPath": "/opt/espressif/tools",
   "idf.customExtraVars": {
     "IDF_TARGET": "esp32c6",
@@ -28,5 +28,6 @@
   "files.watcherExclude": {
     "**/target": true,
     "**/build": true
-  }
+  },
+  "idf.flashType": "UART"
 }

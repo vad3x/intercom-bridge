@@ -41,7 +41,7 @@ template <RingDriver Driver>
 class RingActor {
     static constexpr const char* TAG = "RingActor";
 
-   public:
+public:
     RingActor(EventBus& bus, Driver& driver) : bus_(bus), driver_(driver) {}
 
     void init() {
@@ -50,7 +50,7 @@ class RingActor {
         ESP_LOGI(TAG, "Ring driver connected");
     }
 
-   private:
+private:
     EventBus& bus_;
     Driver& driver_;
 

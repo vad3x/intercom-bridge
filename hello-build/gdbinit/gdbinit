@@ -1,0 +1,2 @@
+source /opt/espressif/esp-idf/examples/get-started/hello_world/build/gdbinit/symbols
+source /opt/espressif/esp-idf/examples/get-started/hello_world/build/gdbinit/connect

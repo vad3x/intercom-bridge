@@ -70,6 +70,10 @@ void MatterAccessControlDriver::init(DispatchCallback onUnlockDispatched, Dispat
 
     // Create Matter node (root of device tree)
     node::config_t node_config;
+    // Set device name that appears in Apple Home
+    snprintf(node_config.root_node.basic_information.node_label, 
+             sizeof(node_config.root_node.basic_information.node_label),
+             "Smart Intercom");
     s_node = node::create(&node_config, onAttributeUpdate, onIdentification);
     if (!s_node) {
         ESP_LOGE(TAG, "Failed to create Matter node");
@@ -95,6 +99,14 @@ void MatterAccessControlDriver::init(DispatchCallback onUnlockDispatched, Dispat
     // Create Occupancy Sensor endpoint (appears as Motion Sensor in HomeKit)
     occupancy_sensor::config_t occupancy_config;
     occupancy_config.occupancy_sensing.occupancy = 0;  // Initially no motion
+    // Set occupancy sensor type to PIR (Passive Infrared)
+    occupancy_config.occupancy_sensing.occupancy_sensor_type = 
+        static_cast<uint8_t>(chip::app::Clusters::OccupancySensing::OccupancySensorTypeEnum::kPir);
+    occupancy_config.occupancy_sensing.occupancy_sensor_type_bitmap = 
+        static_cast<uint8_t>(chip::app::Clusters::OccupancySensing::OccupancySensorTypeBitmap::kPir);
+    // Feature flag for PIR (Passive Infrared) - REQUIRED or cluster creation will fail
+    occupancy_config.occupancy_sensing.feature_flags = 
+        static_cast<uint32_t>(chip::app::Clusters::OccupancySensing::Feature::kPassiveInfrared);
     endpoint_t* motion_endpoint = occupancy_sensor::create(s_node, &occupancy_config, ENDPOINT_FLAG_NONE, nullptr);
     if (!motion_endpoint) {
         ESP_LOGE(TAG, "Failed to create occupancy sensor endpoint");

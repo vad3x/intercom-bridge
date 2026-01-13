@@ -18,8 +18,8 @@ CONFIG_PARTITION_TABLE_OFFSET=0xC000
 # Enable chip shell
 CONFIG_ENABLE_CHIP_SHELL=y
 
-# This example only use 2 dynamic endpoints
-CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT=2
+# Dynamic endpoints: door lock + occupancy sensor (+ root node)
+CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT=3
 
 #enable lwIP route hooks
 CONFIG_LWIP_HOOK_IP6_ROUTE_DEFAULT=y
@@ -63,6 +63,10 @@ CONFIG_CHIP_ENABLE_BDX_LOG_TRANSFER=y
 CONFIG_ESP32_ENABLE_COREDUMP_TO_FLASH=y
 CONFIG_ESP32_COREDUMP_DATA_FORMAT_ELF=y
 
+# Use UART for console (more reliable than USB for debugging)
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+CONFIG_ESP_CONSOLE_UART_BAUDRATE=115200
 
-
-
+# Disable ICD (Intermittently Connected Device) mode
+# Door intercom needs to be always responsive, not sleep-optimized
+CONFIG_ENABLE_ICD_SERVER=n

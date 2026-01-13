@@ -1,0 +1,1 @@
+info: Trying to set symbol ESP_CONSOLE_UART_DEFAULT to n, but it is currently selected by choice ESP_CONSOLE_UART. For setting it to n, set another choice symbol to y instead.
