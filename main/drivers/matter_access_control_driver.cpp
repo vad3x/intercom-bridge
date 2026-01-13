@@ -96,25 +96,9 @@ void MatterAccessControlDriver::init(DispatchCallback onUnlockDispatched, Dispat
     lockEndpointId_ = endpoint::get_id(lock_endpoint);
     ESP_LOGI(TAG, "Door lock created with endpoint_id %d", lockEndpointId_);
 
-    // Create Occupancy Sensor endpoint (appears as Motion Sensor in HomeKit)
-    occupancy_sensor::config_t occupancy_config;
-    occupancy_config.occupancy_sensing.occupancy = 0;  // Initially no motion
-    // Set occupancy sensor type to PIR (Passive Infrared)
-    occupancy_config.occupancy_sensing.occupancy_sensor_type = 
-        static_cast<uint8_t>(chip::app::Clusters::OccupancySensing::OccupancySensorTypeEnum::kPir);
-    occupancy_config.occupancy_sensing.occupancy_sensor_type_bitmap = 
-        static_cast<uint8_t>(chip::app::Clusters::OccupancySensing::OccupancySensorTypeBitmap::kPir);
-    // Feature flag for PIR (Passive Infrared) - REQUIRED or cluster creation will fail
-    occupancy_config.occupancy_sensing.feature_flags = 
-        static_cast<uint32_t>(chip::app::Clusters::OccupancySensing::Feature::kPassiveInfrared);
-    endpoint_t* motion_endpoint = occupancy_sensor::create(s_node, &occupancy_config, ENDPOINT_FLAG_NONE, nullptr);
-    if (!motion_endpoint) {
-        ESP_LOGE(TAG, "Failed to create occupancy sensor endpoint");
-        return;
-    }
-
-    occupancyEndpointId_ = endpoint::get_id(motion_endpoint);
-    ESP_LOGI(TAG, "Ring sensor (occupancy/motion) created with endpoint_id %d", occupancyEndpointId_);
+    // TODO: Re-enable occupancy sensor after commissioning works
+    // Temporarily disabled to test if Apple accepts simple door lock
+    ESP_LOGI(TAG, "Occupancy sensor disabled for commissioning test");
 
     // Start Matter stack
     ESP_LOGI(TAG, "Starting Matter stack");
@@ -145,16 +129,9 @@ void MatterAccessControlDriver::init(DispatchCallback onUnlockDispatched, Dispat
 }
 
 void MatterAccessControlDriver::ringing() {
-    ESP_LOGI(TAG, "Ring detected - activating occupancy sensor");
-
-    updateOccupancy(true);
-
-    // Reset/start timer for auto-clear
-    if (ringTimer_) {
-        xTimerStop(ringTimer_, 0);
-        xTimerChangePeriod(ringTimer_, pdMS_TO_TICKS(config_.ringHoldMs), 0);
-        xTimerStart(ringTimer_, 0);
-    }
+    ESP_LOGI(TAG, "Ring detected (occupancy sensor disabled for testing)");
+    // TODO: Re-enable when occupancy sensor is back
+    // updateOccupancy(true);
 }
 
 void MatterAccessControlDriver::unlock() {

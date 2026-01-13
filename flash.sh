@@ -3,5 +3,4 @@ esptool --chip esp32c6 -p /dev/cu.usbserial-210 -b 460800 \
   --flash-mode dio --flash-freq 80m --flash-size 4MB \
   0x0 build/bootloader/bootloader.bin \
   0x20000 build/intercom-matter.bin \
-  0xc000 build/partition_table/partition-table.bin \
-  0x1d000 build/ota_data_initial.bin
+  0xc000 build/partition_table/partition-table.bin

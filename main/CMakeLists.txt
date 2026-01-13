@@ -1,6 +1,6 @@
-idf_component_register(SRC_DIRS "." "./actors" "./drivers"
+idf_component_register(SRC_DIRS "." "./actors" "./drivers" "./services"
                        PRIV_INCLUDE_DIRS
-                         "." "./config" "./events" "./actors" "./drivers"
+                         "." "./config" "./events" "./actors" "./drivers" "./services"
                          "${ESP_MATTER_PATH}/examples/common/utils"
                        REQUIRES esp_matter
                        PRIV_REQUIRES led_strip esp_timer nvs_flash driver)

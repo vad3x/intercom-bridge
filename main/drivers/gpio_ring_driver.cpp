@@ -8,6 +8,7 @@
 #include <driver/gpio.h>
 #include <esp_log.h>
 #include <esp_timer.h>
+#include "services/led_service.h"
 
 static const char* TAG = "GpioRingDriver";
 
@@ -68,6 +69,9 @@ void GpioRingDriver::init(OnRingCallback onRing) {
             // Valid ring detected!
             self->lastRingTime_ = now;
             ESP_LOGI(TAG, "=== RING DETECTED ===");
+
+            // Blink red twice for visual feedback
+            getLedService().blinkRed(2);
 
             if (self->ringCallback_) {
                 self->ringCallback_();
