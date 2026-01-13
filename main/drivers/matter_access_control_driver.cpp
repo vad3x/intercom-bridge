@@ -20,7 +20,16 @@
 #include <lib/core/DataModelTypes.h>
 #include <lib/core/Optional.h>
 
+// Matter setup code generation
+#include <setup_payload/QRCodeSetupPayloadGenerator.h>
+#include <setup_payload/SetupPayload.h>
+#include <cstring>
+#include <inttypes.h>
+
 static const char* TAG = "MatterDriver";
+
+// Endpoint IDs
+static constexpr uint16_t ENDPOINT_ID_OCCUPANCY_SENSOR = 2;
 
 using namespace esp_matter;
 using namespace esp_matter::endpoint;
@@ -71,9 +80,8 @@ void MatterAccessControlDriver::init(DispatchCallback onUnlockDispatched, Dispat
     // Create Matter node (root of device tree)
     node::config_t node_config;
     // Set device name that appears in Apple Home
-    snprintf(node_config.root_node.basic_information.node_label, 
-             sizeof(node_config.root_node.basic_information.node_label),
-             "Smart Intercom");
+    snprintf(node_config.root_node.basic_information.node_label,
+             sizeof(node_config.root_node.basic_information.node_label), "Smart Intercom");
     s_node = node::create(&node_config, onAttributeUpdate, onIdentification);
     if (!s_node) {
         ESP_LOGE(TAG, "Failed to create Matter node");
@@ -96,9 +104,31 @@ void MatterAccessControlDriver::init(DispatchCallback onUnlockDispatched, Dispat
     lockEndpointId_ = endpoint::get_id(lock_endpoint);
     ESP_LOGI(TAG, "Door lock created with endpoint_id %d", lockEndpointId_);
 
-    // TODO: Re-enable occupancy sensor after commissioning works
-    // Temporarily disabled to test if Apple accepts simple door lock
-    ESP_LOGI(TAG, "Occupancy sensor disabled for commissioning test");
+    // Create Occupancy Sensor endpoint (appears as Motion Sensor in HomeKit)
+    occupancy_sensor::config_t occupancy_config;
+    occupancy_config.occupancy_sensing.occupancy = 0;  // Initially no motion
+    // Set occupancy sensor type to PIR (Passive Infrared)
+    occupancy_config.occupancy_sensing.occupancy_sensor_type =
+        static_cast<uint8_t>(chip::app::Clusters::OccupancySensing::OccupancySensorTypeEnum::kPir);
+    occupancy_config.occupancy_sensing.occupancy_sensor_type_bitmap =
+        static_cast<uint8_t>(chip::app::Clusters::OccupancySensing::OccupancySensorTypeBitmap::kPir);
+    // Feature flag for PIR (Passive Infrared) - REQUIRED or cluster creation will fail
+    occupancy_config.occupancy_sensing.feature_flags =
+        static_cast<uint32_t>(chip::app::Clusters::OccupancySensing::Feature::kPassiveInfrared);
+    endpoint_t* motion_endpoint =
+        occupancy_sensor::create(s_node, &occupancy_config, ENDPOINT_ID_OCCUPANCY_SENSOR, nullptr);
+    if (!motion_endpoint) {
+        ESP_LOGE(TAG, "Failed to create occupancy sensor endpoint");
+        return;
+    }
+
+    occupancyEndpointId_ = endpoint::get_id(motion_endpoint);
+    ESP_LOGI(TAG, "Occupancy sensor created with endpoint_id %d", occupancyEndpointId_);
+
+    // Set node label for Apple Home
+    const char* nodeLabel = "Smart Intercom";
+    cluster::basic_information::attribute::create_node_label(endpoint::get(s_node, 0), (char*)nodeLabel,
+                                                             strlen(nodeLabel));
 
     // Start Matter stack
     ESP_LOGI(TAG, "Starting Matter stack");
@@ -107,6 +137,9 @@ void MatterAccessControlDriver::init(DispatchCallback onUnlockDispatched, Dispat
         ESP_LOGE(TAG, "Failed to start Matter, err:%d", err);
         return;
     }
+
+    // Log setup codes for easy commissioning
+    logSetupCodes();
 
 #if CONFIG_ENABLE_ENCRYPTED_OTA
     err = esp_matter_ota_requestor_encrypted_init(s_decryption_key, s_decryption_key_len);
@@ -129,9 +162,16 @@ void MatterAccessControlDriver::init(DispatchCallback onUnlockDispatched, Dispat
 }
 
 void MatterAccessControlDriver::ringing() {
-    ESP_LOGI(TAG, "Ring detected (occupancy sensor disabled for testing)");
-    // TODO: Re-enable when occupancy sensor is back
-    // updateOccupancy(true);
+    ESP_LOGI(TAG, "Ring detected - activating occupancy sensor");
+
+    updateOccupancy(true);
+
+    // Reset/start timer for auto-clear
+    if (ringTimer_) {
+        xTimerStop(ringTimer_, 0);
+        xTimerChangePeriod(ringTimer_, pdMS_TO_TICKS(config_.ringHoldMs), 0);
+        xTimerStart(ringTimer_, 0);
+    }
 }
 
 void MatterAccessControlDriver::unlock() {
@@ -187,6 +227,51 @@ void MatterAccessControlDriver::ringTimerCallback(TimerHandle_t timer) {
     if (auto* self = instance()) {
         self->updateOccupancy(false);
     }
+}
+
+void MatterAccessControlDriver::logSetupCodes() {
+    // Get default values from configuration
+    // These should match the values in sdkconfig.defaults
+    uint16_t discriminator = 3840;     // CONFIG_DISCRIMINATOR
+    uint32_t setupPinCode = 20202021;  // CONFIG_SETUP_PIN_CODE
+
+    chip::SetupDiscriminator setupDisc;
+    setupDisc.SetLongValue(discriminator);
+    chip::SetupPayload payload;
+    payload.version = 0;
+    payload.vendorID = 0xFFF1;   // CONFIG_DEVICE_VENDOR_ID
+    payload.productID = 0x8001;  // CONFIG_DEVICE_PRODUCT_ID
+    payload.discriminator = setupDisc;
+    payload.setUpPINCode = setupPinCode;
+
+    // Generate QR code (Base38 format)
+    std::string qrCode;
+    chip::QRCodeSetupPayloadGenerator generator(payload);
+    CHIP_ERROR err = generator.payloadBase38Representation(qrCode);
+    if (err != CHIP_NO_ERROR) {
+        ESP_LOGE(TAG, "Failed to generate QR code: %" CHIP_ERROR_FORMAT, err.Format());
+        return;
+    }
+
+    // Generate manual pairing code (also Base38 format)
+    std::string manualCode;
+    err = generator.payloadBase38Representation(manualCode);
+    if (err != CHIP_NO_ERROR) {
+        ESP_LOGE(TAG, "Failed to generate manual code: %" CHIP_ERROR_FORMAT, err.Format());
+        return;
+    }
+
+    // Log the codes
+    ESP_LOGI(TAG, "==================================================");
+    ESP_LOGI(TAG, "🎉 COMMISSIONING CODES - Ready to Add Device!");
+    ESP_LOGI(TAG, "==================================================");
+    ESP_LOGI(TAG, "📱 Manual Setup Code: %s", manualCode.c_str());
+    ESP_LOGI(TAG, "📷 QR Code URL: https://project-chip.github.io/connectedhomeip/qrcode.html?data=%s", qrCode.c_str());
+    ESP_LOGI(TAG, "🔢 Setup PIN Code: %" PRIu32, setupPinCode);
+    ESP_LOGI(TAG, "🎯 Discriminator: %u", discriminator);
+    ESP_LOGI(TAG, "==================================================");
+    ESP_LOGI(TAG, "💡 Add this device to your Matter controller app!");
+    ESP_LOGI(TAG, "==================================================");
 }
 
 // ============================================================================

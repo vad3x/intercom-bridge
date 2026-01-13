@@ -9,6 +9,7 @@
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/timers.h>
+#include "services/led_service.h"
 
 static const char* TAG = "GpioDoorDriver";
 
@@ -70,6 +71,8 @@ void GpioDoorDriver::triggerUnlock() {
         unlockInProgress_ = false;
         ESP_LOGE(TAG, "Failed to start unlock timer");
     }
+
+    getLedService().blinkRed(2);
 }
 
 bool GpioDoorDriver::isUnlocking() const {

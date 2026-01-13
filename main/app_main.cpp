@@ -19,6 +19,7 @@
 #include "app.h"
 #include "services/led_service.h"
 
+
 static const char* TAG = "app_main";
 
 extern "C" void app_main() {
@@ -41,7 +42,6 @@ extern "C" void app_main() {
 #endif
 
     ESP_LOGI(TAG, "=== Smart Intercom Starting ===");
-    ESP_LOGI(TAG, "Build: %s %s (endpoints=%d)", __DATE__, __TIME__, CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT);
 
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD
     esp_openthread_platform_config_t config = {

@@ -79,6 +79,9 @@ class MatterAccessControlDriver {
     void updateLockState(bool unlocked);
     void updateOccupancy(bool occupied);
 
+    // Setup code logging
+    void logSetupCodes();
+
     // Timer callback
     static void ringTimerCallback(TimerHandle_t timer);
 };

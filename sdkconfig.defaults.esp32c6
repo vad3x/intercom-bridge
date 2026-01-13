@@ -48,7 +48,5 @@ CONFIG_MBEDTLS_HARDWARE_ECC=n
 CONFIG_MBEDTLS_HARDWARE_ECDSA_VERIFY=n
 CONFIG_MBEDTLS_SSL_PROTO_DTLS=y
 
-# Thread disabled (using WiFi)
-
 # ICD configurations - disabled for door intercom (needs to be always responsive)
 CONFIG_ENABLE_ICD_SERVER=n
