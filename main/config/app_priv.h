@@ -18,12 +18,12 @@
  * GPIO Configuration
  */
 #define RING_GPIO 2    // Input: Optocoupler output (active LOW when ringing)
-#define UNLOCK_GPIO 3  // Output: PhotoMOS relay control (active HIGH)
+#define UNLOCK_GPIO 22  // Output: PhotoMOS relay control (active HIGH)
 
 /*
  * Timing Constants
  */
-#define UNLOCK_PULSE_MS 700    // Duration of relay activation (ms)
+#define UNLOCK_PULSE_MS 5000    // Duration of relay activation (ms)
 #define RING_DEBOUNCE_MS 30    // Ring signal debounce time (ms)
 #define RING_COOLDOWN_MS 2500  // Minimum time between ring events (ms)
 #define RING_HOLD_MS 15000     // How long occupancy stays active in HomeKit (ms)

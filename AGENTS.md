@@ -7,6 +7,7 @@ Guidelines for AI agents working on the Smart Intercom codebase.
 ESP32-C6 Matter controller for IR204E analog intercom. Provides door lock control and ring detection via Apple Home (HomeKit) using the Matter protocol.
 
 **Tech Stack:**
+
 - **Hardware:** ESP32-C6 (DFRobot Beetle)
 - **Framework:** ESP-IDF v5.x with ESP-Matter SDK
 - **Protocol:** Matter over WiFi (BLE for commissioning)
@@ -15,6 +16,24 @@ ESP32-C6 Matter controller for IR204E analog intercom. Provides door lock contro
 ## Build Environment
 
 ⚠️ **CRITICAL:** This project must be built inside a Docker container. The ESP-Matter SDK is installed at `/opt/espressif/esp-matter/` inside the container.
+
+### Matter SDK Source Locations
+
+Inside the Docker container:
+
+```bash
+# List running containers and pick the intercom one
+docker ps
+
+# Open a shell in the container
+docker exec -it <container_name_or_id> bash
+```
+
+Key paths:
+
+- `/opt/espressif/esp-matter/` — ESP-Matter SDK root
+- `/opt/espressif/esp-matter/connectedhomeip/` — upstream Matter (CHIP) source
+- `/opt/espressif/esp-matter/components/esp_matter/` — ESP-Matter wrappers (clusters, attributes, endpoints)
 
 ### Build Commands
 
@@ -92,11 +111,14 @@ intercom-matter/
 ## Architecture Patterns
 
 ### Actor Model
+
 Components communicate via typed events through an EventBus:
+
 - `RingingEvent` - Someone pressed the intercom button
 - `UnlockDispatchedEvent` - Unlock command received from HomeKit
 
 ### Driver Pattern
+
 Hardware drivers receive configuration at construction:
 
 ```cpp
@@ -108,6 +130,7 @@ GpioRingDriver ringDriver_({
 ```
 
 ### Matter Endpoints
+
 - **Endpoint 1:** Door Lock Cluster (unlock command)
 - **Endpoint 2:** Occupancy Sensor (ring detection, appears as Motion Sensor in HomeKit)
 
@@ -123,6 +146,7 @@ GpioRingDriver ringDriver_({
 ### Modifying Matter Clusters
 
 Edit `main/drivers/matter_access_control_driver.cpp`:
+
 - Node configuration in `init()` method
 - Attribute changes via `esp_matter::attribute::update()`
 - Command handlers via callbacks
@@ -222,14 +246,14 @@ If native USB stops working:
 ## Dependencies
 
 Managed components in `managed_components/`:
+
 - `espressif__led_strip` - WS2812 LED control
 - `espressif__button` - Button handling
 - `espressif__mdns` - mDNS for Matter discovery
 
 ESP-Matter provides:
+
 - Matter protocol stack
 - Door Lock cluster implementation
 - Occupancy Sensing cluster implementation
 - BLE/WiFi commissioning
-
-

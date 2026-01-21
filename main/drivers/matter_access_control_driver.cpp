@@ -129,6 +129,29 @@ void MatterAccessControlDriver::init(DispatchCallback onUnlockDispatched, Dispat
         return;
     }
 
+    // Update Basic Information strings (Home uses these for the default name)
+    static char kProductName[] = "Smart Intercom";
+    static char kVendorName[] = "Smart Intercom";
+    static char kNodeLabel[] = "Smart Intercom";
+    esp_matter_attr_val_t product_name = esp_matter_char_str(kProductName, strlen(kProductName));
+    esp_matter_attr_val_t vendor_name = esp_matter_char_str(kVendorName, strlen(kVendorName));
+    esp_matter_attr_val_t node_label = esp_matter_char_str(kNodeLabel, strlen(kNodeLabel));
+    err = attribute::update(0, BasicInformation::Id,
+                            BasicInformation::Attributes::ProductName::Id, &product_name);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to set product name, err:%d", err);
+    }
+    err = attribute::update(0, BasicInformation::Id,
+                            BasicInformation::Attributes::VendorName::Id, &vendor_name);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to set vendor name, err:%d", err);
+    }
+    err = attribute::update(0, BasicInformation::Id,
+                            BasicInformation::Attributes::NodeLabel::Id, &node_label);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to set node label, err:%d", err);
+    }
+
     // Set initial occupancy state to Unoccupied AFTER Matter stack is running
     ESP_LOGI(TAG, "Setting initial occupancy state to Unoccupied");
     esp_matter_attr_val_t initial_state = esp_matter_bitmap8(0); // 0 = Unoccupied
