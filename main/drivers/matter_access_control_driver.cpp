@@ -22,6 +22,7 @@
 
 // Matter setup code generation
 #include <setup_payload/QRCodeSetupPayloadGenerator.h>
+#include <setup_payload/ManualSetupPayloadGenerator.h>
 #include <setup_payload/SetupPayload.h>
 #include <cstring>
 #include <inttypes.h>
@@ -79,9 +80,7 @@ void MatterAccessControlDriver::init(DispatchCallback onUnlockDispatched, Dispat
 
     // Create Matter node (root of device tree)
     node::config_t node_config;
-    // Set device name that appears in Apple Home
-    snprintf(node_config.root_node.basic_information.node_label,
-             sizeof(node_config.root_node.basic_information.node_label), "Smart Intercom");
+    strcpy(node_config.root_node.basic_information.node_label, "Smart Intercom");
     s_node = node::create(&node_config, onAttributeUpdate, onIdentification);
     if (!s_node) {
         ESP_LOGE(TAG, "Failed to create Matter node");
@@ -91,6 +90,8 @@ void MatterAccessControlDriver::init(DispatchCallback onUnlockDispatched, Dispat
 
     // Create Door Lock endpoint
     door_lock::config_t door_lock_config;
+    // Set initial state to locked (door is always locked by spring mechanism)
+    door_lock_config.door_lock.lock_state = static_cast<uint8_t>(DoorLock::DlLockState::kLocked);
     endpoint_t* lock_endpoint = door_lock::create(s_node, &door_lock_config, ENDPOINT_FLAG_NONE, nullptr);
     if (!lock_endpoint) {
         ESP_LOGE(TAG, "Failed to create door lock endpoint");
@@ -106,29 +107,19 @@ void MatterAccessControlDriver::init(DispatchCallback onUnlockDispatched, Dispat
 
     // Create Occupancy Sensor endpoint (appears as Motion Sensor in HomeKit)
     occupancy_sensor::config_t occupancy_config;
-    occupancy_config.occupancy_sensing.occupancy = 0;  // Initially no motion
-    // Set occupancy sensor type to PIR (Passive Infrared)
-    occupancy_config.occupancy_sensing.occupancy_sensor_type =
-        static_cast<uint8_t>(chip::app::Clusters::OccupancySensing::OccupancySensorTypeEnum::kPir);
-    occupancy_config.occupancy_sensing.occupancy_sensor_type_bitmap =
-        static_cast<uint8_t>(chip::app::Clusters::OccupancySensing::OccupancySensorTypeBitmap::kPir);
-    // Feature flag for PIR (Passive Infrared) - REQUIRED or cluster creation will fail
-    occupancy_config.occupancy_sensing.feature_flags =
-        static_cast<uint32_t>(chip::app::Clusters::OccupancySensing::Feature::kPassiveInfrared);
-    endpoint_t* motion_endpoint =
-        occupancy_sensor::create(s_node, &occupancy_config, ENDPOINT_ID_OCCUPANCY_SENSOR, nullptr);
-    if (!motion_endpoint) {
+    // Set feature flags to PIR (HomeKit expects this for motion)
+    occupancy_config.occupancy_sensing.feature_flags = 0x01; // kPir
+    occupancy_config.occupancy_sensing.occupancy = 0;        // Initially unoccupied
+    
+    endpoint_t* occupancy_endpoint =
+        occupancy_sensor::create(s_node, &occupancy_config, ENDPOINT_FLAG_NONE, nullptr);
+    if (!occupancy_endpoint) {
         ESP_LOGE(TAG, "Failed to create occupancy sensor endpoint");
         return;
     }
 
-    occupancyEndpointId_ = endpoint::get_id(motion_endpoint);
+    occupancyEndpointId_ = endpoint::get_id(occupancy_endpoint);
     ESP_LOGI(TAG, "Occupancy sensor created with endpoint_id %d", occupancyEndpointId_);
-
-    // Set node label for Apple Home
-    const char* nodeLabel = "Smart Intercom";
-    cluster::basic_information::attribute::create_node_label(endpoint::get(s_node, 0), (char*)nodeLabel,
-                                                             strlen(nodeLabel));
 
     // Start Matter stack
     ESP_LOGI(TAG, "Starting Matter stack");
@@ -136,6 +127,17 @@ void MatterAccessControlDriver::init(DispatchCallback onUnlockDispatched, Dispat
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start Matter, err:%d", err);
         return;
+    }
+
+    // Set initial occupancy state to Unoccupied AFTER Matter stack is running
+    ESP_LOGI(TAG, "Setting initial occupancy state to Unoccupied");
+    esp_matter_attr_val_t initial_state = esp_matter_bitmap8(0); // 0 = Unoccupied
+    err = attribute::update(occupancyEndpointId_, OccupancySensing::Id, 
+                            OccupancySensing::Attributes::Occupancy::Id, &initial_state);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to set initial occupancy state, err:%d", err);
+    } else {
+        ESP_LOGI(TAG, "Occupancy sensor initial state set successfully");
     }
 
     // Log setup codes for easy commissioning
@@ -211,15 +213,18 @@ void MatterAccessControlDriver::updateLockState(bool unlocked) {
 
 void MatterAccessControlDriver::updateOccupancy(bool occupied) {
     if (occupancyEndpointId_ == 0) {
-        ESP_LOGW(TAG, "Occupancy endpoint not initialized");
+        ESP_LOGW(TAG, "Occupancy sensor endpoint not initialized");
         return;
     }
 
-    uint8_t occupancyBitmap = occupied ? 1 : 0;
     ESP_LOGI(TAG, "Updating Matter occupancy to %s", occupied ? "Occupied" : "Unoccupied");
 
-    esp_matter_attr_val_t val = esp_matter_uint8(occupancyBitmap);
-    attribute::update(occupancyEndpointId_, OccupancySensing::Id, OccupancySensing::Attributes::Occupancy::Id, &val);
+    esp_matter_attr_val_t val = esp_matter_bitmap8(occupied ? 1 : 0);
+    esp_err_t err = attribute::update(occupancyEndpointId_, OccupancySensing::Id, 
+                                       OccupancySensing::Attributes::Occupancy::Id, &val);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to update occupancy attribute: %d", err);
+    }
 }
 
 void MatterAccessControlDriver::ringTimerCallback(TimerHandle_t timer) {
@@ -243,21 +248,28 @@ void MatterAccessControlDriver::logSetupCodes() {
     payload.productID = 0x8001;  // CONFIG_DEVICE_PRODUCT_ID
     payload.discriminator = setupDisc;
     payload.setUpPINCode = setupPinCode;
+    payload.commissioningFlow = chip::CommissioningFlow::kStandard;
+    
+    // Set rendezvous information to BLE
+    chip::BitFlags<chip::RendezvousInformationFlag, uint8_t> rendezvousFlags;
+    rendezvousFlags.Set(chip::RendezvousInformationFlag::kBLE);
+    payload.rendezvousInformation.SetValue(rendezvousFlags);
 
     // Generate QR code (Base38 format)
     std::string qrCode;
-    chip::QRCodeSetupPayloadGenerator generator(payload);
-    CHIP_ERROR err = generator.payloadBase38Representation(qrCode);
+    chip::QRCodeSetupPayloadGenerator qrGenerator(payload);
+    CHIP_ERROR err = qrGenerator.payloadBase38Representation(qrCode);
     if (err != CHIP_NO_ERROR) {
         ESP_LOGE(TAG, "Failed to generate QR code: %" CHIP_ERROR_FORMAT, err.Format());
         return;
     }
 
-    // Generate manual pairing code (also Base38 format)
+    // Generate manual pairing code (Short decimal format)
     std::string manualCode;
-    err = generator.payloadBase38Representation(manualCode);
-    if (err != CHIP_NO_ERROR) {
-        ESP_LOGE(TAG, "Failed to generate manual code: %" CHIP_ERROR_FORMAT, err.Format());
+    chip::ManualSetupPayloadGenerator manualGenerator(payload);
+    CHIP_ERROR manualErr = manualGenerator.payloadDecimalStringRepresentation(manualCode);
+    if (manualErr != CHIP_NO_ERROR) {
+        ESP_LOGE(TAG, "Failed to generate manual code: %" CHIP_ERROR_FORMAT, manualErr.Format());
         return;
     }
 

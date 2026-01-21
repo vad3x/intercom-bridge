@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include <freertos/timers.h>
 #include <functional>
 
@@ -26,6 +27,7 @@ struct GpioRingConfig {
  *
  * Detects ring signals from optocoupler.
  * Includes debouncing and cooldown logic.
+ * Uses a dedicated task to handle ring events (avoids timer stack overflow).
  */
 class GpioRingDriver {
    public:
@@ -42,12 +44,13 @@ class GpioRingDriver {
      */
     void init(OnRingCallback onRing);
 
-    // Public for ISR access
+    // Public for ISR/timer access
     TimerHandle_t debounceTimer_ = nullptr;
+    TaskHandle_t ringTask_ = nullptr;
     volatile bool ringPending_ = false;
     volatile int64_t lastRingTime_ = 0;
+    volatile bool ringValidated_ = false;  // Set by timer, cleared by task
 
-   private:
     GpioRingConfig config_;
     OnRingCallback ringCallback_;
 };

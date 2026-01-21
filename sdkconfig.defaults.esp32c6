@@ -31,6 +31,8 @@ CONFIG_PM_ENABLE=n
 
 # FreeRTOS config
 CONFIG_FREERTOS_HZ=1000
+# Increase timer task stack for LED strip operations (default 2048 is too small)
+CONFIG_FREERTOS_TIMER_TASK_STACK_DEPTH=4096
 
 # IEEE 802.15.4 disabled (WiFi mode)
 CONFIG_IEEE802154_SLEEP_ENABLE=n

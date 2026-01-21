@@ -26,7 +26,7 @@
 #define UNLOCK_PULSE_MS 700    // Duration of relay activation (ms)
 #define RING_DEBOUNCE_MS 30    // Ring signal debounce time (ms)
 #define RING_COOLDOWN_MS 2500  // Minimum time between ring events (ms)
-#define RING_HOLD_MS 4000      // How long occupancy stays active in HomeKit (ms)
+#define RING_HOLD_MS 15000     // How long occupancy stays active in HomeKit (ms)
 #define AUTO_RELOCK_SEC 4      // Auto-relock time in Matter state (seconds)
 
 /*
