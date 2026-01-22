@@ -317,8 +317,12 @@ void MatterAccessControlDriver::logSetupCodes() {
  * @brief Door Lock cluster initialization callback
  */
 __attribute__((used)) void emberAfDoorLockClusterInitCallback(chip::EndpointId endpoint) {
-    ESP_LOGI(TAG, "Door Lock cluster init on endpoint %d", endpoint);
+    matESP_LOGI(TAG, "Door Lock cluster init on endpoint %d", endpoint);
     DoorLockServer::Instance().InitServer(endpoint);
+    
+    // Force initial state to Locked (door is mechanically locked by spring)
+    ESP_LOGI(TAG, "Setting initial lock state to Locked on endpoint %d", endpoint);
+    DoorLockServer::Instance().SetLockState(endpoint, DoorLock::DlLockState::kLocked);
 }
 
 /**
