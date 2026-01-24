@@ -15,19 +15,19 @@
 #endif
 
 /*
- * GPIO Configuration
+ * GPIO Configuration (from Kconfig / sdkconfig)
  */
-#define RING_GPIO 2    // Input: Optocoupler output (active LOW when ringing)
-#define UNLOCK_GPIO 22  // Output: PhotoMOS relay control (active HIGH)
+#define RING_GPIO CONFIG_INTERCOM_RING_GPIO
+#define UNLOCK_GPIO CONFIG_INTERCOM_UNLOCK_GPIO
 
 /*
- * Timing Constants
+ * Timing Constants (from Kconfig / sdkconfig)
  */
-#define UNLOCK_PULSE_MS 5000    // Duration of relay activation (ms)
-#define RING_DEBOUNCE_MS 30    // Ring signal debounce time (ms)
-#define RING_COOLDOWN_MS 2500  // Minimum time between ring events (ms)
-#define RING_HOLD_MS 15000     // How long occupancy stays active in HomeKit (ms)
-#define AUTO_RELOCK_SEC 4      // Auto-relock time in Matter state (seconds)
+#define UNLOCK_PULSE_MS CONFIG_INTERCOM_UNLOCK_PULSE_MS
+#define RING_DEBOUNCE_MS CONFIG_INTERCOM_RING_DEBOUNCE_MS
+#define RING_COOLDOWN_MS CONFIG_INTERCOM_RING_COOLDOWN_MS
+#define RING_HOLD_MS CONFIG_INTERCOM_RING_HOLD_MS
+#define AUTO_RELOCK_SEC CONFIG_INTERCOM_AUTO_RELOCK_SEC
 
 /*
  * Legacy driver interface (for compatibility)

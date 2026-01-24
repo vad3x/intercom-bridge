@@ -1,0 +1,50 @@
+menu "Smart Intercom Configuration"
+
+    menu "GPIO Configuration"
+        config INTERCOM_RING_GPIO
+            int "Ring detection GPIO"
+            default 2
+            help
+                GPIO pin connected to optocoupler output (active LOW when ringing).
+
+        config INTERCOM_UNLOCK_GPIO
+            int "Unlock relay GPIO"
+            default 22
+            help
+                GPIO pin connected to PhotoMOS relay control (active HIGH).
+    endmenu
+
+    menu "Timing Configuration"
+        config INTERCOM_UNLOCK_PULSE_MS
+            int "Unlock pulse duration (ms)"
+            default 5000
+            help
+                How long to activate the door unlock relay.
+
+        config INTERCOM_RING_DEBOUNCE_MS
+            int "Ring debounce time (ms)"
+            default 30
+            help
+                Debounce time for ring signal detection.
+
+        config INTERCOM_RING_COOLDOWN_MS
+            int "Ring cooldown time (ms)"
+            default 2500
+            help
+                Minimum time between ring events.
+
+        config INTERCOM_RING_HOLD_MS
+            int "Ring hold time in HomeKit (ms)"
+            default 15000
+            help
+                How long occupancy stays active in HomeKit after a ring.
+
+        config INTERCOM_AUTO_RELOCK_SEC
+            int "Auto-relock time (seconds)"
+            default 4
+            help
+                Time after which Matter lock state returns to Locked.
+    endmenu
+
+endmenu
+

@@ -1,4 +1,4 @@
-esptool --chip esp32c6 -p /dev/cu.usbserial-210 -b 460800 \
+esptool --chip esp32c6 -p /dev/cu.usbmodem2101 -b 460800 \
   --before default-reset --after hard-reset write-flash \
   --flash-mode dio --flash-freq 80m --flash-size 4MB \
   0x0 build/bootloader/bootloader.bin \
