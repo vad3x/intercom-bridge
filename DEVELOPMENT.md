@@ -32,7 +32,7 @@ ESP32-C6 Matter controller for IR204E analog intercom, providing:
 
 ## Timing Constants
 
-Defined in `main/app_priv.h`:
+Defined in `main/config/app_config.h`:
 
 | Constant | Value | Purpose |
 |----------|-------|---------|
@@ -94,7 +94,7 @@ idf.py fullclean
 |------|---------|
 | `main/app_main.cpp` | Creates Matter node with lock + contact sensor endpoints |
 | `main/app_driver.cpp` | GPIO control, unlock pulse, buzz detection interrupt |
-| `main/app_priv.h` | Pin definitions, timing constants |
+| `main/config/app_config.h` | Pin definitions, timing constants |
 | `main/lock/door_lock_manager.cpp` | Simplified lock/unlock logic |
 | `main/lock/door_lock_callbacks.cpp` | Matter Door Lock cluster callbacks |
 

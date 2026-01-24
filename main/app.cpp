@@ -3,7 +3,7 @@
 */
 
 #include "app.h"
-#include "config/app_priv.h"
+#include "config/app_config.h"
 #include <esp_log.h>
 
 static const char* TAG = "App";

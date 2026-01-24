@@ -81,7 +81,7 @@ intercom-matter/
 │   ├── app_main.cpp          # Entry point
 │   ├── app.cpp/h             # Application class, wires components
 │   ├── config/
-│   │   └── app_priv.h        # GPIO pins, timing constants
+│   │   └── app_config.h      # GPIO pins, timing constants
 │   ├── drivers/
 │   │   ├── gpio_ring_driver.cpp/h       # Ring detection (optocoupler input)
 │   │   ├── gpio_door_driver.cpp/h       # Door unlock (PhotoMOS relay output)
@@ -104,7 +104,7 @@ intercom-matter/
 | File | Purpose |
 |------|---------|
 | `main/drivers/matter_access_control_driver.cpp` | Matter integration, endpoints, commissioning |
-| `main/config/app_priv.h` | Hardware constants (GPIO pins, timing) |
+| `main/config/app_config.h` | Hardware constants (GPIO pins, timing) |
 | `main/services/led_service.cpp` | Status LED control |
 | `sdkconfig.defaults.esp32c6` | Chip-specific configuration |
 
@@ -153,7 +153,7 @@ Edit `main/drivers/matter_access_control_driver.cpp`:
 
 ### Changing GPIO Pins
 
-Edit `main/config/app_priv.h`:
+Edit `main/config/app_config.h`:
 
 ```cpp
 #define RING_GPIO 2    // Input: optocoupler

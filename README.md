@@ -81,7 +81,7 @@ See [HARDWARE.md](HARDWARE.md) for wiring diagrams.
 
 ## Configuration
 
-All hardware settings are in `main/config/app_priv.h`:
+All hardware settings are in `main/config/app_config.h`:
 
 ```cpp
 // GPIO Configuration
@@ -149,7 +149,7 @@ intercom-matter/
 │   ├── app.cpp/h                 # Application class, wires actors
 │   │
 │   ├── config/
-│   │   └── app_priv.h            # GPIO pins, timing constants
+│   │   └── app_config.h          # GPIO pins, timing constants
 │   │
 │   ├── events/
 │   │   ├── events.h              # RingingEvent, UnlockDispatchedEvent

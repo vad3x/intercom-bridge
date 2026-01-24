@@ -11,7 +11,7 @@
 #endif
 
 #include <common_macros.h>
-#include "config/app_priv.h"
+#include "config/app_config.h"
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD
 #include <platform/ESP32/OpenthreadLauncher.h>
 #endif
