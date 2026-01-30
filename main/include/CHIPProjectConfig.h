@@ -70,3 +70,24 @@
 #undef CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION
 #endif
 #define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION 1
+
+/**
+ * CHIP_DEVICE_CONFIG_ENABLE_COMMISSIONABLE_DEVICE_NAME
+ *
+ * Enable advertising a device name during commissioning.
+ * This is what Apple Home uses for the initial device name.
+ */
+#ifdef CHIP_DEVICE_CONFIG_ENABLE_COMMISSIONABLE_DEVICE_NAME
+#undef CHIP_DEVICE_CONFIG_ENABLE_COMMISSIONABLE_DEVICE_NAME
+#endif
+#define CHIP_DEVICE_CONFIG_ENABLE_COMMISSIONABLE_DEVICE_NAME 1
+
+/**
+ * CHIP_DEVICE_CONFIG_DEVICE_NAME
+ *
+ * The name advertised during commissioning.
+ */
+#ifdef CHIP_DEVICE_CONFIG_DEVICE_NAME
+#undef CHIP_DEVICE_CONFIG_DEVICE_NAME
+#endif
+#define CHIP_DEVICE_CONFIG_DEVICE_NAME "Smart Intercom"
