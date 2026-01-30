@@ -9,7 +9,6 @@
 #include <driver/gpio.h>
 #include <esp_log.h>
 #include <esp_timer.h>
-#include "services/led_service.h"
 
 static const char* TAG = "GpioRingDriver";
 
@@ -51,10 +50,8 @@ static void ring_handler_task(void* arg) {
 
             ESP_LOGI(TAG, "=== RING DETECTED ===");
 
-            // Blink red twice for visual feedback (now safe - in task context)
-            getLedService().blinkRed(2);
-
             // Call the ring callback (Matter update happens here)
+            // LED feedback is handled by LedActor observing the RingingEvent
             if (self->ringCallback_) {
                 self->ringCallback_();
             }

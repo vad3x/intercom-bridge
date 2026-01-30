@@ -14,6 +14,29 @@ menu "Smart Intercom Configuration"
                 GPIO pin connected to PhotoMOS relay control (active HIGH).
     endmenu
 
+    menu "LED Configuration"
+        config INTERCOM_LED_ENABLED
+            bool "Enable status LED"
+            default y
+            help
+                Enable the RGB status LED. Disable for boards without an LED.
+
+        config INTERCOM_LED_GPIO
+            int "LED GPIO pin"
+            default 8
+            depends on INTERCOM_LED_ENABLED
+            help
+                GPIO pin for WS2812 RGB LED data line.
+
+        config INTERCOM_LED_BRIGHTNESS
+            int "LED brightness (0-255)"
+            default 25
+            range 1 255
+            depends on INTERCOM_LED_ENABLED
+            help
+                LED brightness level. Lower values save power and reduce glare.
+    endmenu
+
     menu "Timing Configuration"
         config INTERCOM_UNLOCK_PULSE_MS
             int "Unlock pulse duration (ms)"

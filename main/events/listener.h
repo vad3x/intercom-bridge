@@ -2,24 +2,26 @@
    Smart Intercom - Event Listener Template
 
    Generic event listener with multiple subscribers.
-   Fixed-size array to avoid heap allocation (embedded-friendly).
+   Uses std::function for flexible subscription (lambdas, member functions).
 */
 
 #pragma once
 
+#include <functional>
+
 template <typename TEvent, int MaxSubscribers = 4>
 class Listener {
    public:
-    using Handler = void (*)(const TEvent&);
+    using Handler = std::function<void(const TEvent&)>;
 
     /**
      * @brief Subscribe a handler to this event
-     * @param handler Function pointer to call when event is emitted
+     * @param handler Callable to invoke when event is emitted
      * @return true if subscribed, false if full or null handler
      */
     bool subscribe(Handler handler) {
         if (count_ < MaxSubscribers && handler) {
-            handlers_[count_++] = handler;
+            handlers_[count_++] = std::move(handler);
             return true;
         }
         return false;

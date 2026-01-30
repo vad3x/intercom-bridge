@@ -13,9 +13,15 @@ static const char* TAG = "App";
 // ============================================================================
 
 App::App()
-    : ringDriver_({.gpioPin = RING_GPIO, .debounceMs = RING_DEBOUNCE_MS, .cooldownMs = RING_COOLDOWN_MS}),
+#if LED_ENABLED
+    : indicatorDriver_({.gpioPin = LED_GPIO, .brightness = LED_BRIGHTNESS}),
+#else
+    : indicatorDriver_(),
+#endif
+      ringDriver_({.gpioPin = RING_GPIO, .debounceMs = RING_DEBOUNCE_MS, .cooldownMs = RING_COOLDOWN_MS}),
       doorDriver_({.gpioPin = UNLOCK_GPIO, .unlockPulseMs = UNLOCK_PULSE_MS}),
       accessControlDriver_({.ringHoldMs = RING_HOLD_MS, .autoRelockSec = AUTO_RELOCK_SEC}),
+      indicatorActor_(eventBus_, indicatorDriver_),
       ringActor_(eventBus_, ringDriver_),
       accessControlActor_(eventBus_, accessControlDriver_),
       doorActor_(eventBus_, doorDriver_) {}
@@ -23,7 +29,13 @@ App::App()
 esp_err_t App::init() {
     ESP_LOGI(TAG, "Initializing application...");
 
-    // Initialize access control first (creates Matter endpoints)
+    // Initialize indicator actor first (subscribes to events)
+    indicatorActor_.init();
+
+    // Signal: initializing
+    eventBus_.emitSystemState(TAG, SystemState::Initializing);
+
+    // Initialize access control (creates Matter endpoints)
     accessControlActor_.init();
 
     // Initialize door actor (hardware unlock)

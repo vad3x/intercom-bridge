@@ -17,17 +17,12 @@
 #endif
 
 #include "app.h"
-#include "services/led_service.h"
 
 
 static const char* TAG = "app_main";
 
 extern "C" void app_main() {
     esp_err_t err = ESP_OK;
-
-    // Initialize LED first for status indication
-    getLedService().init();
-    getLedService().yellow();  // Yellow = initializing
 
     nvs_flash_init();
 
@@ -52,13 +47,14 @@ extern "C" void app_main() {
     set_openthread_platform_config(&config);
 #endif
 
-    err = getApp().init();
+    auto& app = getApp();
+    err = app.init();
     if (err != ESP_OK) {
-        getLedService().red();  // Red = initialization failed
+        app.eventBus().emitSystemState(TAG, SystemState::Error);
         ESP_LOGE(TAG, "Failed to initialize app");
         return;
     }
 
-    getLedService().green();  // Green = ready
+    app.eventBus().emitSystemState(TAG, SystemState::Ready);
     ESP_LOGI(TAG, "=== Smart Intercom Ready ===");
 }

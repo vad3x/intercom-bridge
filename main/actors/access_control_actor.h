@@ -54,14 +54,9 @@ class AccessControlActor {
     void init() {
         ESP_LOGI(TAG, "Initializing AccessControlActor");
 
-        // Store instance for static callbacks
-        instance_ = this;
-
-        // Initialize driver with dispatch callbacks
         driver_.init([this]() { onUnlockDispatched(); }, [this]() { onLockDispatched(); });
 
-        // Subscribe to ring events
-        bus_.ringing.subscribe(&AccessControlActor::onRingingStatic);
+        bus_.ringing.subscribe([this](const RingingEvent& e) { onRinging(e); });
 
         ESP_LOGI(TAG, "Subscribed to ringing");
     }
@@ -69,14 +64,6 @@ class AccessControlActor {
    private:
     EventBus& bus_;
     Driver& driver_;
-    static AccessControlActor* instance_;
-
-    // Static callback wrapper for event subscription
-    static void onRingingStatic(const RingingEvent& e) {
-        if (instance_) {
-            instance_->onRinging(e);
-        }
-    }
 
     void onRinging(const RingingEvent& e) {
         ESP_LOGI(TAG, "Ringing received from %s - calling driver.ringing()", e.meta.source);
@@ -93,7 +80,3 @@ class AccessControlActor {
         // Lock is a no-op - door auto-locks
     }
 };
-
-// Static member definition (must be in header for template)
-template <AccessControlDriver Driver>
-AccessControlActor<Driver>* AccessControlActor<Driver>::instance_ = nullptr;

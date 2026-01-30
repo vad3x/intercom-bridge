@@ -51,13 +51,9 @@ class DoorActor {
     void init() {
         ESP_LOGI(TAG, "Initializing DoorActor");
 
-        // Initialize the driver hardware
         driver_.init();
 
-        // Subscribe to unlock events
-        // Note: We need static callback, so we store instance pointer
-        instance_ = this;
-        bus_.unlockDispatched.subscribe(&DoorActor::onUnlockDispatchedStatic);
+        bus_.unlockDispatched.subscribe([this](const UnlockDispatchedEvent& e) { onUnlockDispatched(e); });
 
         ESP_LOGI(TAG, "Subscribed to unlockDispatched");
     }
@@ -65,13 +61,6 @@ class DoorActor {
    private:
     EventBus& bus_;
     Driver& driver_;
-    static DoorActor* instance_;
-
-    static void onUnlockDispatchedStatic(const UnlockDispatchedEvent& e) {
-        if (instance_) {
-            instance_->onUnlockDispatched(e);
-        }
-    }
 
     void onUnlockDispatched(const UnlockDispatchedEvent& e) {
         ESP_LOGI(TAG, "UnlockDispatched received from %s (ts=%lld)", e.meta.source, (long long)e.meta.timestamp);
@@ -85,7 +74,3 @@ class DoorActor {
         driver_.triggerUnlock();
     }
 };
-
-// Static member definition (must be in header for template)
-template <DoorDriver Driver>
-DoorActor<Driver>* DoorActor<Driver>::instance_ = nullptr;
