@@ -1,1 +1,1 @@
-python -m esp_idf_monitor -p /dev/cu.usbmodem101 build/intercom-matter.elf
+python -m esp_idf_monitor -p /dev/cu.usbmodem2101 build/intercom-matter.elf

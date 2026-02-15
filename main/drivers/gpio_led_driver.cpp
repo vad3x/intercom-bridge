@@ -1,5 +1,7 @@
 /*
    Smart Intercom - GPIO LED Driver Implementation
+
+   Simple active-low red LED on GPIO.
 */
 
 #include "gpio_led_driver.h"
@@ -8,26 +10,22 @@
 static const char* TAG = "GpioLedDriver";
 
 GpioLedDriver::GpioLedDriver(const GpioLedConfig& config)
-    : config_(config) {}
+    : config_(config), gpioNum_(static_cast<gpio_num_t>(config.gpioPin)) {}
 
 void GpioLedDriver::init() {
-    ESP_LOGI(TAG, "Initializing GPIO LED (pin %d, brightness %d)", 
-             config_.gpioPin, config_.brightness);
+    ESP_LOGI(TAG, "Initializing GPIO LED (pin %d, active-low)", config_.gpioPin);
 
-    led_strip_config_t strip_config = {
-        .strip_gpio_num = config_.gpioPin,
-        .max_leds = 1,
-        .led_pixel_format = LED_PIXEL_FORMAT_GRB,
-        .led_model = LED_MODEL_WS2812,
-        .flags = {.invert_out = false},
+    gpio_config_t io_conf = {
+        .pin_bit_mask = (1ULL << gpioNum_),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
     };
-    led_strip_rmt_config_t rmt_config = {
-        .clk_src = RMT_CLK_SRC_DEFAULT,
-        .resolution_hz = 10 * 1000 * 1000,
-        .mem_block_symbols = 64,
-        .flags = {.with_dma = false},
-    };
-    ESP_ERROR_CHECK(led_strip_new_rmt_device(&strip_config, &rmt_config, &ledStrip_));
+    ESP_ERROR_CHECK(gpio_config(&io_conf));
+
+    // Start with LED off (HIGH for active-low)
+    gpio_set_level(gpioNum_, 1);
 
     blinkTimer_ = xTimerCreate("led_blink", pdMS_TO_TICKS(100), pdFALSE, this, blinkTimerCallback);
     if (!blinkTimer_) {
@@ -37,34 +35,32 @@ void GpioLedDriver::init() {
     ESP_LOGI(TAG, "GPIO LED initialized");
 }
 
-void GpioLedDriver::setRawColor(uint8_t r, uint8_t g, uint8_t b) {
-    if (ledStrip_) {
-        led_strip_set_pixel(ledStrip_, 0, r, g, b);
-        led_strip_refresh(ledStrip_);
-    }
+void GpioLedDriver::setLed(bool on) {
+    // Active-low: LOW = on, HIGH = off
+    gpio_set_level(gpioNum_, on ? 0 : 1);
 }
 
 void GpioLedDriver::setColor(uint8_t r, uint8_t g, uint8_t b) {
-    uint8_t scaledR = (r * config_.brightness) / 255;
-    uint8_t scaledG = (g * config_.brightness) / 255;
-    uint8_t scaledB = (b * config_.brightness) / 255;
-    setRawColor(scaledR, scaledG, scaledB);
+    // Any non-zero color component turns LED on
+    setLed(r > 0 || g > 0 || b > 0);
 }
 
 void GpioLedDriver::yellow() {
-    setRawColor(config_.brightness, config_.brightness * 180 / 255, 0);
+    // Red-only LED: just turn on
+    setLed(true);
 }
 
 void GpioLedDriver::green() {
-    setRawColor(0, config_.brightness, 0);
+    // Red-only LED: just turn on
+    setLed(true);
 }
 
 void GpioLedDriver::red() {
-    setRawColor(config_.brightness, 0, 0);
+    setLed(true);
 }
 
 void GpioLedDriver::off() {
-    setRawColor(0, 0, 0);
+    setLed(false);
 }
 
 void GpioLedDriver::blinkRed(uint8_t count, uint32_t onMs, uint32_t offMs) {
@@ -88,22 +84,28 @@ void GpioLedDriver::blinkTimerCallback(TimerHandle_t timer) {
     auto* self = static_cast<GpioLedDriver*>(pvTimerGetTimerID(timer));
 
     if (self->blinkPhase_) {
+        // End of ON phase
         self->off();
         self->blinkPhase_ = false;
         self->blinkRemaining_--;
 
         if (self->blinkRemaining_ > 0) {
+            // More blinks to go - schedule OFF period
             xTimerChangePeriod(timer, pdMS_TO_TICKS(self->blinkOffMs_), 0);
             xTimerStart(timer, 0);
         } else {
+            // Done blinking - return to steady on after final off period
             xTimerChangePeriod(timer, pdMS_TO_TICKS(self->blinkOffMs_), 0);
             xTimerStart(timer, 0);
-            self->blinkRemaining_ = 255;
+            self->blinkRemaining_ = 255;  // Marker for "return to on"
         }
     } else {
+        // End of OFF phase
         if (self->blinkRemaining_ == 255) {
-            self->green();
+            // Final off period done - return to steady on
+            self->red();
         } else {
+            // Start next ON phase
             self->red();
             self->blinkPhase_ = true;
             xTimerChangePeriod(timer, pdMS_TO_TICKS(self->blinkOnMs_), 0);

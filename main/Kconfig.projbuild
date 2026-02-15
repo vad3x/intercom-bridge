@@ -19,22 +19,22 @@ menu "Smart Intercom Configuration"
             bool "Enable status LED"
             default y
             help
-                Enable the RGB status LED. Disable for boards without an LED.
+                Enable the status LED. Disable for boards without an LED.
 
         config INTERCOM_LED_GPIO
             int "LED GPIO pin"
-            default 8
+            default 19
             depends on INTERCOM_LED_ENABLED
             help
-                GPIO pin for WS2812 RGB LED data line.
+                GPIO pin for status LED (active-low, red LED).
 
         config INTERCOM_LED_BRIGHTNESS
-            int "LED brightness (0-255)"
-            default 25
+            int "LED brightness (unused, for API compatibility)"
+            default 255
             range 1 255
             depends on INTERCOM_LED_ENABLED
             help
-                LED brightness level. Lower values save power and reduce glare.
+                Unused for simple GPIO LED. Kept for API compatibility.
     endmenu
 
     menu "Timing Configuration"
