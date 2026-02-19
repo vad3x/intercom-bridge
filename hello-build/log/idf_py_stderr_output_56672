@@ -1,2 +1,0 @@
-info: Trying to set symbol ESPTOOLPY_FLASHSIZE_2MB to n, but it is currently selected by choice ESPTOOLPY_FLASHSIZE. For setting it to n, set another choice symbol to y instead.
-info: Trying to set symbol ESP_CONSOLE_UART_DEFAULT to n, but it is currently selected by choice ESP_CONSOLE_UART. For setting it to n, set another choice symbol to y instead.

@@ -1,0 +1,59 @@
+[package]
+name = "intercom-matter"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "ESP32-C6 Matter controller for IR204E analog intercom"
+
+[[bin]]
+name = "intercom-matter"
+path = "src/main.rs"
+harness = false
+
+[patch.crates-io]
+rs-matter = { git = "https://github.com/sysgrok/rs-matter", branch = "next" }
+rs-matter-stack = { git = "https://github.com/sysgrok/rs-matter-stack.git", branch = "next" }
+openthread = { git = "https://github.com/sysgrok/openthread.git" }
+
+[profile.dev]
+opt-level = "z"
+
+[profile.release]
+codegen-units = 1
+debug = 2
+debug-assertions = false
+opt-level = "s"
+overflow-checks = false
+
+[features]
+default = ["esp32c6"]
+esp32c6 = [
+    "esp-rtos/esp32c6",
+    "esp-hal/esp32c6",
+    "esp-backtrace/esp32c6",
+    "esp-println/esp32c6",
+    "esp-radio/esp32c6",
+    "esp-bootloader-esp-idf/esp32c6",
+    "esp-metadata-generated/esp32c6",
+    "portable-atomic/critical-section",
+]
+
+[dependencies]
+log = "0.4"
+embassy-executor = "0.9"
+embassy-futures = "0.1"
+embassy-time = "0.5"
+embassy-sync = "0.7"
+rs-matter = { version = "0.1", default-features = false }
+esp-backtrace = { version = "0.18.1", features = ["panic-handler", "println", "custom-halt"] }
+esp-hal = { version = "1", features = ["log-04", "unstable", "exception-handler"] }
+esp-rtos = { version = "0.2", features = ["esp-radio", "embassy"] }
+esp-alloc = { version = "0.9" }
+esp-println = { version = "0.16", features = ["log-04"] }
+esp-radio = { version = "0.17", features = ["ble", "log-04", "unstable"] }
+esp-bootloader-esp-idf = { version = "0.4", features = ["log-04"] }
+esp-metadata-generated = "0.3"
+rs-matter-embassy = { git = "https://github.com/sysgrok/rs-matter-embassy.git", features = ["esp", "embassy-net", "log"] }
+tinyrlibc = { version = "0.5", default-features = false, features = ["utoa", "strtoul"] }
+static_cell = "2"
+portable-atomic = "1"

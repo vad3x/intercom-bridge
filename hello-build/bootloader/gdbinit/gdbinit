@@ -1,2 +1,0 @@
-source /opt/espressif/esp-idf/examples/get-started/hello_world/build/bootloader/gdbinit/symbols
-source /opt/espressif/esp-idf/examples/get-started/hello_world/build/bootloader/gdbinit/connect
