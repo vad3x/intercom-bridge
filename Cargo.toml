@@ -44,6 +44,8 @@ embassy-executor = "0.9"
 embassy-futures = "0.1"
 embassy-time = "0.5"
 embassy-sync = "0.7"
+embedded-storage = "0.3"
+embedded-storage-async = "0.4"
 rs-matter = { version = "0.1", default-features = false }
 esp-backtrace = { version = "0.18.1", features = ["panic-handler", "println", "custom-halt"] }
 esp-hal = { version = "1", features = ["log-04", "unstable", "exception-handler"] }
@@ -53,7 +55,7 @@ esp-println = { version = "0.16", features = ["log-04"] }
 esp-radio = { version = "0.17", features = ["ble", "log-04", "unstable"] }
 esp-bootloader-esp-idf = { version = "0.4", features = ["log-04"] }
 esp-metadata-generated = "0.3"
-rs-matter-embassy = { git = "https://github.com/sysgrok/rs-matter-embassy.git", features = ["esp", "embassy-net", "log"] }
+rs-matter-embassy = { git = "https://github.com/sysgrok/rs-matter-embassy.git", features = ["esp", "embassy-net", "log", "kv-blob-store-8192"] }
 tinyrlibc = { version = "0.5", default-features = false, features = ["utoa", "strtoul"] }
 static_cell = "2"
 portable-atomic = "1"

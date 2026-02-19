@@ -5,6 +5,8 @@
 //!
 //! C++ equivalent: `IndicatorActor<Driver>`
 
+use embassy_futures::select::{select, Either};
+use embassy_time::{Duration, Timer};
 use log::info;
 
 use crate::events::{Event, EventBus, SystemState};
@@ -40,6 +42,9 @@ pub struct IndicatorActor<I: IndicatorDriver> {
     driver: I,
 }
 
+/// Duration of each half of the connecting blink cycle (500ms on, 500ms off = 1s total).
+const CONNECTING_BLINK_MS: u64 = 500;
+
 impl<I: IndicatorDriver> IndicatorActor<I> {
     pub fn new(driver: I) -> Self {
         Self { driver }
@@ -48,6 +53,8 @@ impl<I: IndicatorDriver> IndicatorActor<I> {
     /// Run the indicator loop (never returns).
     ///
     /// Sets `Initializing` state immediately, then reacts to every event.
+    /// When in `Connecting` state, blinks the LED (500ms on / 500ms off)
+    /// until another event arrives.
     pub async fn run(&mut self, bus: &EventBus) {
         info!("IndicatorActor: started");
 
@@ -56,10 +63,45 @@ impl<I: IndicatorDriver> IndicatorActor<I> {
         // Set initial state before entering event loop
         self.driver.set_state(SystemState::Initializing).await;
 
+        let mut connecting = false;
+
         loop {
-            match subscriber.next_message_pure().await {
+            let event = if connecting {
+                // Blink loop: LED on → 500ms → LED off → 500ms → repeat
+                // Interrupted immediately when a new event arrives.
+                loop {
+                    // ON phase
+                    self.driver.set_state(SystemState::Connecting).await;
+                    match select(
+                        Timer::after(Duration::from_millis(CONNECTING_BLINK_MS)),
+                        subscriber.next_message_pure(),
+                    )
+                    .await
+                    {
+                        Either::First(()) => {}
+                        Either::Second(event) => break event,
+                    }
+
+                    // OFF phase
+                    self.driver.off().await;
+                    match select(
+                        Timer::after(Duration::from_millis(CONNECTING_BLINK_MS)),
+                        subscriber.next_message_pure(),
+                    )
+                    .await
+                    {
+                        Either::First(()) => continue, // loop back to ON phase
+                        Either::Second(event) => break event,
+                    }
+                }
+            } else {
+                subscriber.next_message_pure().await
+            };
+
+            match event {
                 Event::SystemState(state) => {
                     info!("IndicatorActor: system state → {:?}", state);
+                    connecting = state == SystemState::Connecting;
                     self.driver.set_state(state).await;
                 }
                 Event::Ringing => {

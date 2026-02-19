@@ -41,10 +41,13 @@ The `.cargo/config.toml` configures the RISC-V target, `build-std`, and the espf
 ```
 intercom-matter/
 ├── src/
-│   ├── main.rs                     # Entry point, statics, hardware init
+│   ├── main.rs                     # Entry point, hardware init, callback wiring
 │   ├── app.rs                      # App struct, wires actors + runs them
 │   ├── config.rs                   # Timing constants, endpoint IDs
 │   ├── events.rs                   # Event enum + PubSubChannel event bus
+│   ├── utils/
+│   │   ├── mod.rs
+│   │   └── uptime_logger.rs        # Custom HH:MM:SS.mmm logger
 │   ├── actors/
 │   │   ├── mod.rs
 │   │   ├── ring.rs                 # Publishes Ringing events from hardware
@@ -54,7 +57,7 @@ intercom-matter/
 │   └── drivers/
 │       ├── mod.rs                  # Re-exports driver traits from gpio/
 │       ├── gpio/
-│       │   ├── mod.rs              # Driver traits (RingDriver, DoorDriver, IndicatorDriver)
+│       │   ├── mod.rs              # Re-exports GPIO drivers
 │       │   ├── ring.rs             # GpioRingDriver (optocoupler, debounce)
 │       │   ├── door.rs             # GpioDoorDriver (PhotoMOS relay, timed pulse)
 │       │   └── led.rs              # GpioLedDriver (active-low LED, blink patterns)
@@ -62,7 +65,8 @@ intercom-matter/
 │           ├── mod.rs              # MatterCluster trait, cluster codegen, re-exports
 │           ├── door_lock.rs        # IntercomDoorLock (DoorLock cluster handler)
 │           ├── occupancy.rs        # IntercomOccupancy (OccupancySensing cluster handler)
-│           └── wifi_node.rs        # MatterWifiNode builder+runner (WiFi stack)
+│           ├── access_control.rs   # MatterAccessControlDriver (bridges actors ↔ clusters)
+│           └── controller.rs       # MatterController builder+runner (WiFi stack)
 ├── main/                           # Legacy C++ codebase (ESP-IDF)
 ├── Cargo.toml                      # Dependencies, features, patch overrides
 ├── rust-toolchain.toml             # Nightly toolchain + riscv32imac target
@@ -75,14 +79,15 @@ intercom-matter/
 
 | File | Purpose |
 |------|---------|
-| `src/main.rs` | Entry point: statics (`EVENT_BUS`, `LOCK_STATE`, `OCCUPANCY`), hardware init, wires `App` + `MatterWifiNode`, runs both via `join` |
-| `src/app.rs` | `App<R, D, I>` generic over driver traits, owns actors, runs them via `join4` |
-| `src/events.rs` | `Event` enum (`Ringing`, `UnlockDispatched`, `SystemState`), `EventBus` (Embassy `PubSubChannel`) |
-| `src/config.rs` | Timing constants, Matter endpoint IDs, `LOCK_STATE_INITIAL` |
-| `src/drivers/matter/wifi_node.rs` | `MatterWifiNode` — builder pattern for registering clusters + running the Matter stack |
-| `src/drivers/matter/door_lock.rs` | `IntercomDoorLock` — Matter DoorLock cluster, publishes `UnlockDispatched` to event bus |
-| `src/drivers/matter/occupancy.rs` | `IntercomOccupancy` — Matter OccupancySensing cluster, reads `AtomicBool` |
-| `src/drivers/gpio/mod.rs` | Async driver traits: `RingDriver`, `DoorDriver`, `IndicatorDriver` |
+| `src/main.rs` | Entry point: hardware init, creates `EventBus` locally, wires driver callbacks to bus, runs `App` + `MatterController` via `join` |
+| `src/app.rs` | `App<R, D, I, A>` generic over driver traits, owns actors, runs them via `join4` |
+| `src/events.rs` | `Event` enum (`Ringing`, `UnlockDispatched`, `SystemState`), `SystemState` enum, `EventBus` (Embassy `PubSubChannel`) |
+| `src/config.rs` | Timing constants, Matter endpoint IDs |
+| `src/drivers/matter/controller.rs` | `MatterController` — builder pattern for registering clusters + running the Matter stack; accepts `on_connecting`/`on_connected` callbacks at construction |
+| `src/drivers/matter/door_lock.rs` | `IntercomDoorLock` — Matter DoorLock cluster, calls `on_unlock` callback |
+| `src/drivers/matter/occupancy.rs` | `IntercomOccupancy` — Matter OccupancySensing cluster |
+| `src/drivers/matter/access_control.rs` | `MatterAccessControlDriver` — bridges actors ↔ Matter cluster state |
+| `src/actors/indicator.rs` | `IndicatorActor` + `IndicatorDriver` trait — handles LED blink patterns including connecting blink |
 
 ## Architecture Patterns
 
@@ -102,7 +107,25 @@ Events:
 
 - `Event::Ringing` — Someone pressed the intercom button
 - `Event::UnlockDispatched` — Unlock command received from Matter/HomeKit
-- `Event::SystemState(state)` — Lifecycle state change
+- `Event::SystemState(state)` — Lifecycle state change (Initializing, Ready, Connecting, Connected, Error)
+
+### Callback Pattern for Drivers
+
+**Drivers MUST NOT depend on `EventBus`.** Instead, drivers accept sync callbacks (`&dyn Fn()`) for outbound notifications. `main.rs` wires callbacks to the event bus. This keeps drivers decoupled and testable:
+
+```rust
+// Driver accepts a callback (no EventBus dependency):
+let on_unlock = || {
+    event_bus.immediate_publisher()
+        .publish_immediate(Event::UnlockDispatched);
+};
+let door_lock = IntercomDoorLock::new(&on_unlock);
+
+// MatterController accepts connection state callbacks at construction:
+let matter = MatterController::new(options, &on_connecting, &on_connected);
+```
+
+All event bus wiring happens exclusively in `main.rs`.
 
 ### Trait-Based Drivers
 
@@ -125,29 +148,26 @@ pub trait IndicatorDriver {
 }
 ```
 
-`App<R: RingDriver, D: DoorDriver, I: IndicatorDriver>` is generic over these traits.
+`App<R: RingDriver, D: DoorDriver, I: IndicatorDriver, A: AccessControlDriver>` is generic over these traits.
 
 ### Matter Cluster Handlers
 
-Cluster handlers implement `rs_matter::dm::AsyncHandler` and the `MatterCluster` trait. They are registered with `MatterWifiNode` via a builder pattern:
+Cluster handlers implement `rs_matter::dm::AsyncHandler` and the `MatterCluster` trait. They are registered with `MatterController` via a builder pattern:
 
 ```rust
-let door_lock = IntercomDoorLock::new(&LOCK_STATE, &EVENT_BUS);
-let occupancy = IntercomOccupancy::new(&OCCUPANCY);
+let door_lock = IntercomDoorLock::new(&on_unlock);
+let occupancy = IntercomOccupancy::new();
 
-let matter = MatterWifiNode::new()
-    .register(DOOR_LOCK_ENDPOINT_ID, &door_lock)
-    .register(OCCUPANCY_SENSOR_ENDPOINT_ID, &occupancy);
+let matter = MatterController::new(
+    MatterControllerOptions { wifi, bt, rng, adc1 },
+    &on_connecting,
+    &on_connected,
+)
+.register(DOOR_LOCK_ENDPOINT_ID, &door_lock)
+.register(OCCUPANCY_SENSOR_ENDPOINT_ID, &occupancy);
 
-matter.run(WifiPeripherals { wifi, bt, rng, adc1 }).await;
+matter.run().await;
 ```
-
-### Shared State via Atomics
-
-Matter handlers (sync context) and actors (async context) share state through `&'static` atomics:
-
-- `LOCK_STATE: AtomicU8` — written by Matter DoorLock handler + AccessControlActor, read by Matter
-- `OCCUPANCY: AtomicBool` — written by AccessControlActor, read by Matter OccupancySensing handler
 
 ### Matter Endpoints
 
@@ -159,7 +179,7 @@ Matter handlers (sync context) and actors (async context) share state through `&
 
 ### Adding a New GPIO Driver
 
-1. Define an async trait in `src/drivers/gpio/mod.rs`
+1. Define an async trait in `src/actors/<name>.rs` (trait lives with the actor)
 2. Create implementation in `src/drivers/gpio/<name>.rs`
 3. Add the new actor in `src/actors/<name>.rs`
 4. Wire into `App` struct in `src/app.rs`
@@ -169,8 +189,9 @@ Matter handlers (sync context) and actors (async context) share state through `&
 
 1. Add the cluster to `rs_matter::import!()` in `src/drivers/matter/mod.rs`
 2. Create a handler struct in `src/drivers/matter/<name>.rs` implementing `AsyncHandler` + `MatterCluster`
-3. Add the endpoint to `NODE` in `src/drivers/matter/wifi_node.rs`
-4. Register with `MatterWifiNode::register()` in `src/main.rs`
+3. Use callbacks (`&dyn Fn()`) for outbound events — **never import EventBus in drivers**
+4. Register with `MatterController::register()` in `src/main.rs`
+5. Wire callbacks to event bus in `src/main.rs`
 
 ### Changing GPIO Pins
 
@@ -199,9 +220,10 @@ pub const AUTO_RELOCK_SEC: u64 = 4;
 - `no_std` + `alloc` — no standard library
 - Use `log::info!`, `log::warn!`, `log::error!` for logging (via `esp-println`)
 - All drivers and actors are async (Embassy)
-- Prefer `&'static` injection over global statics access
+- **Drivers use callbacks (`&dyn Fn()`) for outbound events — never `EventBus`**
+- **Only `main.rs` wires callbacks to the event bus**
 - Traits for hardware abstraction, generics for composition
-- Actors receive `EventPublisher` / `EventSubscriber` handles as `run()` parameters
+- Actors receive `&EventBus` as `run()` parameter
 
 ## Debugging
 
@@ -224,6 +246,7 @@ screen /dev/cu.usbserial-210 115200
 | Device not enumerating on USB | Use UART port, enter download mode (BOOT+RESET) |
 | Apple Home "Unable to add" | Try Aqara Home, check QR code matches logs |
 | Stack overflow / alloc failure | Increase `HEAP_SIZE` in `src/main.rs` |
+| Commissioning unreliable | Increase `BUMP_SIZE` in `src/drivers/matter/mod.rs` |
 
 ## ESP32-C6 Recovery
 

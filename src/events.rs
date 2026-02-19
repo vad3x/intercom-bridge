@@ -11,10 +11,14 @@ use embassy_sync::pubsub::PubSubChannel;
 /// System lifecycle states
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SystemState {
-    /// Starting up, not yet commissioned
+    /// Starting up, hardware init in progress
     Initializing,
-    /// Operational
+    /// App actors running, ready to operate
     Ready,
+    /// Matter stack is connecting to the hub (WiFi + CASE)
+    Connecting,
+    /// Connected to Matter hub, fully operational
+    Connected,
     /// Something went wrong
     Error,
 }

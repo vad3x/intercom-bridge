@@ -33,3 +33,17 @@ pub const DOOR_LOCK_ENDPOINT_ID: u16 = 1;
 
 /// Matter endpoint ID for the occupancy sensor cluster
 pub const OCCUPANCY_SENSOR_ENDPOINT_ID: u16 = 2;
+
+// ============================================================================
+// Flash persistence (Matter commissioning data)
+// ============================================================================
+
+/// Start offset of the `matter_kvs` partition in flash (from partitions.csv).
+pub const MATTER_KVS_OFFSET: u32 = 0x310000;
+
+/// Size of the `matter_kvs` partition (24 KiB = 6 sectors × 4 KiB).
+pub const MATTER_KVS_SIZE: u32 = 0x6000;
+
+/// Flash range for the Matter KV blob store.
+pub const MATTER_KVS_RANGE: core::ops::Range<u32> =
+    MATTER_KVS_OFFSET..MATTER_KVS_OFFSET + MATTER_KVS_SIZE;

@@ -31,8 +31,9 @@ use rs_matter_embassy::epoch::epoch;
 use rs_matter_embassy::matter::crypto::{default_crypto, Crypto};
 use rs_matter_embassy::matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM};
 use rs_matter_embassy::matter::utils::init::InitMaybeUninit;
-use rs_matter_embassy::stack::persist::DummyKvBlobStore;
+use rs_matter_embassy::persist::EmbassyKvBlobStore;
 use rs_matter_embassy::stack::rand::reseeding_csprng;
+use rs_matter_embassy::stack::UserTask;
 use rs_matter_embassy::wireless::esp::EspWifiDriver;
 use rs_matter_embassy::wireless::{EmbassyWifi, EmbassyWifiMatterStack};
 
@@ -93,49 +94,48 @@ struct EndpointMeta {
 /// Starts above the cluster handler datavers (which use 1, 2, …).
 static DESC_DATAVER_COUNTER: portable_atomic::AtomicU32 = portable_atomic::AtomicU32::new(100);
 
-/// Builder+runner for the Matter protocol stack over WiFi.
-///
-/// Create with [`new()`](Self::new), register cluster handlers with
-/// [`register()`](MatterController::register), then launch the stack with
-/// [`run()`](MatterController::run).
-///
-/// ```ignore
-/// let matter = MatterController::new(MatterControllerOptions { /* ... */ })
-///     .register(DOOR_LOCK_ENDPOINT_ID, &door_lock)
-///     .register(OCCUPANCY_SENSOR_ENDPOINT_ID, &occupancy);
-///
-/// matter.run().await;
-/// ```
-pub struct MatterController<H = EmptyHandler> {
+pub struct MatterController<'a, H = EmptyHandler> {
     handler: H,
     endpoint_metas: Vec<EndpointMeta>,
     options: MatterControllerOptions,
+    on_connecting: &'a dyn Fn(),
+    on_connected: &'a dyn Fn(),
 }
 
-impl MatterController {
+impl<'a> MatterController<'a> {
     /// Start building a new Matter WiFi node with an empty handler chain.
-    pub fn new(options: MatterControllerOptions) -> Self {
+    ///
+    /// `on_connecting` is called when the WiFi/CASE handshake starts.
+    /// `on_connected` is called each time the operational network comes up.
+    pub fn new(
+        options: MatterControllerOptions,
+        on_connecting: &'a dyn Fn(),
+        on_connected: &'a dyn Fn(),
+    ) -> Self {
         Self {
             handler: EmptyHandler,
             endpoint_metas: Vec::new(),
             options,
+            on_connecting,
+            on_connected,
         }
     }
 }
 
-impl<H: AsyncHandler> MatterController<H> {
+impl<'a, H: AsyncHandler> MatterController<'a, H> {
     /// Register a cluster handler for the given endpoint.
     ///
     /// Chains the cluster handler **and** a descriptor handler for that
     /// endpoint into the handler chain, and records the endpoint metadata
     /// so `run()` can build the `Node` descriptor automatically.
-    pub fn register<'a, C: MatterCluster>(
+    pub fn register<'b, C: MatterCluster>(
         mut self,
         endpoint_id: u16,
-        cluster: &'a C,
-    ) -> MatterController<impl AsyncHandler + 'a>
+        cluster: &'b C,
+    ) -> MatterController<'a, impl AsyncHandler + 'b>
     where
-        H: 'a,
+        H: 'b,
+        'a: 'b,
     {
         // Record endpoint metadata for the Node descriptor
         self.endpoint_metas.push(EndpointMeta {
@@ -161,6 +161,8 @@ impl<H: AsyncHandler> MatterController<H> {
             handler: new_handler,
             endpoint_metas: self.endpoint_metas,
             options: self.options,
+            on_connecting: self.on_connecting,
+            on_connected: self.on_connected,
         }
     }
 
@@ -223,15 +225,23 @@ impl<H: AsyncHandler> MatterController<H> {
         );
         let weak_rand = crypto.weak_rand().unwrap();
 
-        // Persistence (commissioning data)
+        // Persistence (commissioning data → NVS flash partition)
+        let flash = crate::drivers::flash::EspFlash::new(crate::config::MATTER_KVS_RANGE);
+        let kvs = EmbassyKvBlobStore::new(flash, crate::config::MATTER_KVS_RANGE);
         let persist = stack
-            .create_persist_with_comm_window(&crypto, DummyKvBlobStore)
+            .create_persist_with_comm_window(&crypto, kvs)
             .await
             .unwrap();
 
         info!("Matter stack initialized, starting run_coex");
 
+        // Signal that WiFi/CASE negotiation is starting
+        (self.on_connecting)();
+
         // Run the Matter stack forever (WiFi coexistence mode)
+        let mut monitor = ConnectionMonitor {
+            on_connected: self.on_connected,
+        };
         stack
             .run_coex(
                 EmbassyWifi::new(
@@ -243,9 +253,35 @@ impl<H: AsyncHandler> MatterController<H> {
                 &persist,
                 &crypto,
                 (node, self.handler),
-                (),
+                &mut monitor,
             )
             .await
             .expect("Matter stack fatal error");
+    }
+}
+
+// ============================================================================
+// ConnectionMonitor — UserTask that signals when WiFi is up
+// ============================================================================
+
+/// Calls `on_connected` once the operational WiFi network comes up.
+///
+/// Implements `UserTask`: `rs-matter-embassy` calls `run()` when the
+/// network interface is up, and drops the future if it goes down.
+struct ConnectionMonitor<'a> {
+    on_connected: &'a dyn Fn(),
+}
+
+impl UserTask for ConnectionMonitor<'_> {
+    async fn run<S, N>(&mut self, _net_stack: S, _netif: N) -> Result<(), rs_matter::error::Error>
+    where
+        S: rs_matter_embassy::stack::nal::NetStack,
+        N: rs_matter::dm::clusters::gen_diag::NetifDiag + rs_matter::dm::networks::NetChangeNotif,
+    {
+        info!("ConnectionMonitor: network up → connected");
+        (self.on_connected)();
+
+        // Stay alive as long as the network is up
+        core::future::pending().await
     }
 }

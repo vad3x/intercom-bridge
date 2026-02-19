@@ -39,7 +39,7 @@ use crate::drivers::matter::{
     IntercomDoorLock, IntercomOccupancy, MatterAccessControlDriver, MatterController,
     MatterControllerOptions,
 };
-use crate::events::{Event, EventBus};
+use crate::events::{Event, EventBus, SystemState};
 
 // ============================================================================
 // Memory configuration
@@ -111,12 +111,27 @@ async fn main(_spawner: Spawner) {
     // Matter controller — register cluster handlers via builder
     // ========================================================================
 
-    let matter = MatterController::new(MatterControllerOptions {
-        wifi: peripherals.WIFI,
-        bt: peripherals.BT,
-        rng: peripherals.RNG,
-        adc1: peripherals.ADC1,
-    })
+    let on_connecting = || {
+        event_bus
+            .immediate_publisher()
+            .publish_immediate(Event::SystemState(SystemState::Connecting));
+    };
+    let on_connected = || {
+        event_bus
+            .immediate_publisher()
+            .publish_immediate(Event::SystemState(SystemState::Connected));
+    };
+
+    let matter = MatterController::new(
+        MatterControllerOptions {
+            wifi: peripherals.WIFI,
+            bt: peripherals.BT,
+            rng: peripherals.RNG,
+            adc1: peripherals.ADC1,
+        },
+        &on_connecting,
+        &on_connected,
+    )
     .register(config::DOOR_LOCK_ENDPOINT_ID, &door_lock)
     .register(config::OCCUPANCY_SENSOR_ENDPOINT_ID, &occupancy);
 

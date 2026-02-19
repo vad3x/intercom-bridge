@@ -1,9 +1,6 @@
 # Name,   Type, SubType, Offset,  Size, Flags
-# Note: Single app partition (no OTA) to fit WiFi+Thread+BLE
-esp_secure_cert,  0x3F, ,0xd000,    0x2000, encrypted
-nvs,      data, nvs,     0x10000,   0xC000,
-nvs_keys, data, nvs_keys,,          0x1000, encrypted
-phy_init, data, phy,     ,          0x1000,
-factory,  app,  factory, 0x20000,   0x300000,
-fctry,    data, nvs,     0x320000,  0x6000
-coredump, data, coredump,,          64K
+# Partition layout for Rust firmware (no ESP-IDF NVS, uses raw flash for Matter persistence)
+nvs,      data, nvs,     0x9000,  0x6000,
+phy_init, data, phy,     0xF000,  0x1000,
+factory,  app,  factory, 0x10000, 0x300000,
+matter_kvs, data, nvs,   0x310000, 0x6000,

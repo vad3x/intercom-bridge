@@ -89,6 +89,14 @@ impl IndicatorDriver for GpioLedDriver {
                 info!("LED: initializing");
                 self.led_on();
             }
+            SystemState::Connecting => {
+                // LED on (blink timing is managed by IndicatorActor)
+                self.led_on();
+            }
+            SystemState::Connected => {
+                info!("LED: connected (solid)");
+                self.led_on();
+            }
             SystemState::Ready => {
                 info!("LED: ready");
                 self.led_on();
