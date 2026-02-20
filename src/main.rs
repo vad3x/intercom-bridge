@@ -37,7 +37,7 @@ use crate::drivers::gpio::led::{GpioLedConfig, GpioLedDriver};
 use crate::drivers::gpio::ring::{GpioRingConfig, GpioRingDriver};
 use crate::drivers::matter::{
     IntercomDoorLock, IntercomOccupancy, MatterAccessControlDriver, MatterController,
-    MatterControllerOptions,
+    MatterControllerConfig,
 };
 use crate::events::{Event, EventBus, SystemState};
 
@@ -123,7 +123,7 @@ async fn main(_spawner: Spawner) {
     };
 
     let matter = MatterController::new(
-        MatterControllerOptions {
+        MatterControllerConfig {
             wifi: peripherals.WIFI,
             bt: peripherals.BT,
             rng: peripherals.RNG,
@@ -132,8 +132,8 @@ async fn main(_spawner: Spawner) {
         &on_connecting,
         &on_connected,
     )
-    .register(config::DOOR_LOCK_ENDPOINT_ID, &door_lock)
-    .register(config::OCCUPANCY_SENSOR_ENDPOINT_ID, &occupancy);
+    .register(&door_lock)
+    .register(&occupancy);
 
     // ========================================================================
     // Create GPIO + access control drivers → wire into App

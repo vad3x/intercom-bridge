@@ -56,7 +56,7 @@ impl<I: IndicatorDriver> IndicatorActor<I> {
     /// When in `Connecting` state, blinks the LED (500ms on / 500ms off)
     /// until another event arrives.
     pub async fn run(&mut self, bus: &EventBus) {
-        info!("IndicatorActor: started");
+        info!("started");
 
         let mut subscriber = bus.subscriber().unwrap();
 
@@ -100,16 +100,16 @@ impl<I: IndicatorDriver> IndicatorActor<I> {
 
             match event {
                 Event::SystemState(state) => {
-                    info!("IndicatorActor: system state → {:?}", state);
+                    info!("system state → {:?}", state);
                     connecting = state == SystemState::Connecting;
                     self.driver.set_state(state).await;
                 }
                 Event::Ringing => {
-                    info!("IndicatorActor: ring → blink");
+                    info!("ring → blink");
                     self.driver.indicate_ring().await;
                 }
                 Event::UnlockDispatched => {
-                    info!("IndicatorActor: unlock → blink");
+                    info!("unlock → blink");
                     self.driver.indicate_unlock().await;
                 }
             }

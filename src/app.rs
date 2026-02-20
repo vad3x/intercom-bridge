@@ -54,7 +54,7 @@ where
     ///
     /// Each actor creates its own publisher/subscriber from the bus.
     pub async fn run(mut self, bus: &EventBus) {
-        info!("App: publishing Ready state");
+        info!("publishing Ready state");
 
         // Publish Ready state before actors start their loops
         let state_pub = bus.publisher().unwrap();
@@ -62,7 +62,7 @@ where
             .publish(Event::SystemState(SystemState::Ready))
             .await;
 
-        info!("App: starting actors");
+        info!("starting actors");
 
         // Run all actors concurrently — each creates its own bus handle
         embassy_futures::join::join4(

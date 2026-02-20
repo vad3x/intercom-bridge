@@ -38,15 +38,26 @@ impl<D: DoorDriver> DoorActor<D> {
     ///
     /// Subscribes to all events, acts only on `UnlockDispatched`.
     pub async fn run(&mut self, bus: &EventBus) {
-        info!("DoorActor: started");
+        info!("started");
 
         let mut subscriber = bus.subscriber().unwrap();
 
         loop {
             if let Event::UnlockDispatched = subscriber.next_message_pure().await {
-                info!("DoorActor: unlock event → triggering hardware");
+                info!("unlock event → triggering hardware");
                 self.driver.trigger_unlock().await;
-                info!("DoorActor: unlock pulse complete");
+                info!("unlock pulse complete");
+
+                // Drain any unlock events that queued up during the pulse.
+                // Without this, rapid-fire commands (e.g. double-tap) would
+                // chain back-to-back pulses instead of being deduplicated.
+                let mut drained = 0;
+                while let Some(Event::UnlockDispatched) = subscriber.try_next_message_pure() {
+                    drained += 1;
+                }
+                if drained > 0 {
+                    info!("drained {} queued unlock events", drained);
+                }
             }
         }
     }

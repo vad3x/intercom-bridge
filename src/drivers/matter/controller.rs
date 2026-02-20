@@ -5,9 +5,9 @@
 //! the stack is launched with `.run()`.
 //!
 //! ```ignore
-//! let matter = MatterController::new(MatterControllerOptions { /* ... */ })
-//!     .register(DOOR_LOCK_ENDPOINT_ID, &door_lock)
-//!     .register(OCCUPANCY_SENSOR_ENDPOINT_ID, &occupancy);
+//! let matter = MatterController::new(MatterControllerConfig { /* ... */ })
+//!     .register(&door_lock)
+//!     .register(&occupancy);
 //!
 //! matter.run().await;
 //! ```
@@ -68,7 +68,7 @@ const DEV_DET: BasicInfoConfig = BasicInfoConfig {
 // ============================================================================
 
 /// Peripherals required by the WiFi+BLE Matter stack.
-pub struct MatterControllerOptions {
+pub struct MatterControllerConfig {
     pub wifi: esp_hal::peripherals::WIFI<'static>,
     pub bt: esp_hal::peripherals::BT<'static>,
     pub rng: esp_hal::peripherals::RNG<'static>,
@@ -97,7 +97,7 @@ static DESC_DATAVER_COUNTER: portable_atomic::AtomicU32 = portable_atomic::Atomi
 pub struct MatterController<'a, H = EmptyHandler> {
     handler: H,
     endpoint_metas: Vec<EndpointMeta>,
-    options: MatterControllerOptions,
+    options: MatterControllerConfig,
     on_connecting: &'a dyn Fn(),
     on_connected: &'a dyn Fn(),
 }
@@ -108,7 +108,7 @@ impl<'a> MatterController<'a> {
     /// `on_connecting` is called when the WiFi/CASE handshake starts.
     /// `on_connected` is called each time the operational network comes up.
     pub fn new(
-        options: MatterControllerOptions,
+        options: MatterControllerConfig,
         on_connecting: &'a dyn Fn(),
         on_connected: &'a dyn Fn(),
     ) -> Self {
@@ -123,20 +123,22 @@ impl<'a> MatterController<'a> {
 }
 
 impl<'a, H: AsyncHandler> MatterController<'a, H> {
-    /// Register a cluster handler for the given endpoint.
+    /// Register a cluster handler.
     ///
+    /// The endpoint ID is obtained from `C::ENDPOINT_ID` (the [`MatterCluster`] trait).
     /// Chains the cluster handler **and** a descriptor handler for that
     /// endpoint into the handler chain, and records the endpoint metadata
     /// so `run()` can build the `Node` descriptor automatically.
     pub fn register<'b, C: MatterCluster>(
         mut self,
-        endpoint_id: u16,
         cluster: &'b C,
     ) -> MatterController<'a, impl AsyncHandler + 'b>
     where
         H: 'b,
         'a: 'b,
     {
+        let endpoint_id = C::ENDPOINT_ID;
+
         // Record endpoint metadata for the Node descriptor
         self.endpoint_metas.push(EndpointMeta {
             id: endpoint_id,
@@ -240,6 +242,7 @@ impl<'a, H: AsyncHandler> MatterController<'a, H> {
 
         // Run the Matter stack forever (WiFi coexistence mode)
         let mut monitor = ConnectionMonitor {
+            on_connecting: self.on_connecting,
             on_connected: self.on_connected,
         };
         stack
@@ -261,27 +264,51 @@ impl<'a, H: AsyncHandler> MatterController<'a, H> {
 }
 
 // ============================================================================
-// ConnectionMonitor — UserTask that signals when WiFi is up
+// ConnectionMonitor — watches netif state and signals connect/disconnect
 // ============================================================================
 
-/// Calls `on_connected` once the operational WiFi network comes up.
+/// Watches the network interface and signals connectivity changes.
 ///
-/// Implements `UserTask`: `rs-matter-embassy` calls `run()` when the
-/// network interface is up, and drops the future if it goes down.
+/// Implements `UserTask`: runs alongside the Matter stack from startup.
+/// Uses `NetifDiag` to check if any interface is operational, and
+/// `NetChangeNotif` to wait for state changes. Signals `on_connected`
+/// when WiFi becomes operational and `on_connecting` when it drops.
 struct ConnectionMonitor<'a> {
+    on_connecting: &'a dyn Fn(),
     on_connected: &'a dyn Fn(),
 }
 
 impl UserTask for ConnectionMonitor<'_> {
-    async fn run<S, N>(&mut self, _net_stack: S, _netif: N) -> Result<(), rs_matter::error::Error>
+    async fn run<S, N>(&mut self, _net_stack: S, netif: N) -> Result<(), rs_matter::error::Error>
     where
         S: rs_matter_embassy::stack::nal::NetStack,
         N: rs_matter::dm::clusters::gen_diag::NetifDiag + rs_matter::dm::networks::NetChangeNotif,
     {
-        info!("ConnectionMonitor: network up → connected");
-        (self.on_connected)();
+        let mut was_operational = false;
 
-        // Stay alive as long as the network is up
-        core::future::pending().await
+        loop {
+            // Check if any network interface is operational
+            let mut is_operational = false;
+            netif.netifs(&mut |ni| {
+                if ni.operational {
+                    is_operational = true;
+                }
+                Ok(())
+            })?;
+
+            // Signal state transitions
+            if is_operational && !was_operational {
+                info!("network up → connected");
+                (self.on_connected)();
+            } else if !is_operational && was_operational {
+                info!("network down → reconnecting");
+                (self.on_connecting)();
+            }
+
+            was_operational = is_operational;
+
+            // Wait for next network state change
+            netif.wait_changed().await;
+        }
     }
 }

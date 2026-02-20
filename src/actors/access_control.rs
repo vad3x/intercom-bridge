@@ -58,7 +58,7 @@ impl<D: AccessControlDriver> AccessControlActor<D> {
     ///
     /// Uses `select` to multiplex event reception with timer deadlines.
     pub async fn run(&mut self, bus: &EventBus) {
-        info!("AccessControlActor: started");
+        info!("started");
 
         let mut subscriber = bus.subscriber().unwrap();
 
@@ -82,13 +82,13 @@ impl<D: AccessControlDriver> AccessControlActor<D> {
                 // ============================================================
                 Either::First(event) => match event {
                     Event::Ringing => {
-                        info!("AccessControlActor: ring → occupancy ON");
+                        info!("ring → occupancy ON");
                         self.driver.set_occupancy(true);
                         occupancy_deadline =
                             Instant::now() + Duration::from_millis(config::RING_HOLD_MS);
                     }
                     Event::UnlockDispatched => {
-                        info!("AccessControlActor: unlock → auto-relock timer started");
+                        info!("unlock → auto-relock timer started");
                         relock_deadline =
                             Instant::now() + Duration::from_secs(config::AUTO_RELOCK_SEC);
                     }
@@ -102,13 +102,13 @@ impl<D: AccessControlDriver> AccessControlActor<D> {
                     let now = Instant::now();
 
                     if now >= occupancy_deadline {
-                        info!("AccessControlActor: occupancy hold expired → OFF");
+                        info!("occupancy hold expired → OFF");
                         self.driver.set_occupancy(false);
                         occupancy_deadline = Instant::MAX;
                     }
 
                     if now >= relock_deadline {
-                        info!("AccessControlActor: auto-relock");
+                        info!("auto-relock");
                         self.driver.lock();
                         relock_deadline = Instant::MAX;
                     }

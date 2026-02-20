@@ -38,13 +38,13 @@ impl<R: RingDriver> RingActor<R> {
     ///
     /// Waits for the driver to report a ring, then publishes to the event bus.
     pub async fn run(&mut self, bus: &EventBus) {
-        info!("RingActor: started");
+        info!("started");
 
         let publisher = bus.publisher().unwrap();
 
         loop {
             self.driver.wait_for_ring().await;
-            info!("RingActor: ring detected → publishing");
+            info!("ring detected → publishing");
             publisher.publish(Event::Ringing).await;
         }
     }

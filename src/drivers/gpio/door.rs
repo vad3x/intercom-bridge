@@ -37,7 +37,7 @@ pub struct GpioDoorDriver {
 impl GpioDoorDriver {
     /// Create a new door driver with the given output pin and configuration.
     pub fn new(pin: impl esp_hal::gpio::OutputPin + 'static, config: GpioDoorConfig) -> Self {
-        info!("GpioDoorDriver: pulse={}ms", config.unlock_pulse_ms);
+        info!("pulse={}ms", config.unlock_pulse_ms);
 
         Self {
             pin: Output::new(pin, Level::Low, OutputConfig::default()),

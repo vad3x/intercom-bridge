@@ -4,8 +4,8 @@
 //! device uptime in a human-readable format.
 //!
 //! ```text
-//! 00:00:00.012 INFO - === Smart Intercom Starting ===
-//! 00:20:34.567 INFO - DoorActor: unlock event
+//! 00:00:00.012 INFO  intercom_matter - === Smart Intercom Starting ===
+//! 00:20:34.567 WARN  intercom_matter::actors::ring - ring detected
 //! ```
 
 struct UptimeLogger;
@@ -23,14 +23,22 @@ impl log::Log for UptimeLogger {
             let m = (total_secs % 3600) / 60;
             let s = total_secs % 60;
             let frac = ms % 1000;
+            let (color, reset) = match record.level() {
+                log::Level::Error => ("\x1b[31m", "\x1b[0m"), // red
+                log::Level::Warn => ("\x1b[33m", "\x1b[0m"),  // yellow
+                _ => ("", ""),
+            };
             esp_println::println!(
-                "{:02}:{:02}:{:02}.{:03} {} - {}",
+                "{}{:02}:{:02}:{:02}.{:03} {:<5} {} - {}{}",
+                color,
                 h,
                 m,
                 s,
                 frac,
                 record.level(),
-                record.args()
+                record.target(),
+                record.args(),
+                reset
             );
         }
     }

@@ -51,7 +51,7 @@ pub struct GpioLedDriver {
 impl GpioLedDriver {
     /// Create a new LED driver with the given output pin and configuration.
     pub fn new(pin: impl esp_hal::gpio::OutputPin + 'static, config: GpioLedConfig) -> Self {
-        info!("GpioLedDriver created (active-low)");
+        info!("created (active-low)");
 
         Self {
             pin: Output::new(pin, Level::High, OutputConfig::default()), // Start OFF (active-low)
@@ -86,7 +86,7 @@ impl IndicatorDriver for GpioLedDriver {
     async fn set_state(&mut self, state: SystemState) {
         match state {
             SystemState::Initializing => {
-                info!("LED: initializing");
+                info!("initializing");
                 self.led_on();
             }
             SystemState::Connecting => {
@@ -94,22 +94,22 @@ impl IndicatorDriver for GpioLedDriver {
                 self.led_on();
             }
             SystemState::Connected => {
-                info!("LED: connected (solid)");
+                info!("connected (solid)");
                 self.led_on();
             }
             SystemState::Ready => {
-                info!("LED: ready");
+                info!("ready");
                 self.led_on();
             }
             SystemState::Error => {
-                info!("LED: error");
+                info!("error");
                 self.led_on();
             }
         }
     }
 
     async fn indicate_ring(&mut self) {
-        info!("LED: ring indication");
+        info!("ring indication");
         self.blink_pattern(
             self.config.ring_blink_count,
             self.config.ring_blink_on_ms,
@@ -119,7 +119,7 @@ impl IndicatorDriver for GpioLedDriver {
     }
 
     async fn indicate_unlock(&mut self) {
-        info!("LED: unlock indication");
+        info!("unlock indication");
         self.blink_pattern(
             self.config.unlock_blink_count,
             self.config.unlock_blink_on_ms,

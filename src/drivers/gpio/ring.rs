@@ -43,7 +43,7 @@ impl GpioRingDriver {
     /// Create a new ring driver with the given input pin and configuration.
     pub fn new(pin: impl esp_hal::gpio::InputPin + 'static, config: GpioRingConfig) -> Self {
         info!(
-            "GpioRingDriver: debounce={}ms cooldown={}ms",
+            "debounce={}ms cooldown={}ms",
             config.debounce_ms, config.cooldown_ms
         );
 

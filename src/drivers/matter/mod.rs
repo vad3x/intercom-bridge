@@ -22,7 +22,7 @@ mod occupancy;
 use rs_matter::dm::{AsyncHandler, Cluster, DeviceType};
 
 pub use access_control::MatterAccessControlDriver;
-pub use controller::{MatterController, MatterControllerOptions};
+pub use controller::{MatterController, MatterControllerConfig};
 pub use door_lock::IntercomDoorLock;
 pub use occupancy::IntercomOccupancy;
 
@@ -58,6 +58,12 @@ pub(super) mod clusters_gen {
 /// both the handler chain **and** the node descriptor automatically,
 /// without leaking rs-matter types into `main`.
 pub trait MatterCluster: AsyncHandler {
+    /// The Matter endpoint ID this cluster is registered on.
+    ///
+    /// Used by [`MatterController::register()`] to wire the handler chain
+    /// and build the node descriptor automatically.
+    const ENDPOINT_ID: u16;
+
     /// The cluster definition (attributes, commands, revision).
     ///
     /// Used for the endpoint's cluster list in the node descriptor

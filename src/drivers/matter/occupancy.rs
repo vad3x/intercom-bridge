@@ -2,11 +2,20 @@
 //!
 //! Exposes ring detection as a Motion Sensor in HomeKit via the
 //! Matter OccupancySensing cluster.
+//!
+//! Uses `notify_attribute_changed()` to wake the Matter subscription system
+//! so HomeKit receives prompt occupancy updates (without it, ring detection
+//! wouldn't show in the app until the periodic subscription timer fires).
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::signal::Signal;
+use log::info;
+
 use rs_matter::dm::{
-    AsyncHandler, Cluster, Dataver, DeviceType, ReadContext, ReadReply, Reply, WriteContext,
+    AsyncHandler, Cluster, Dataver, DeviceType, HandlerContext, ReadContext, ReadReply, Reply,
+    WriteContext,
 };
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::with;
@@ -23,9 +32,17 @@ use super::MatterCluster;
 /// Occupancy Sensing cluster handler — exposes ring detection as Motion Sensor in HomeKit.
 ///
 /// Owns its occupancy state internally (no external atomics).
+///
+/// Out-of-band state changes (via `set_occupancy()`) signal the internal
+/// `state_changed` signal, which wakes the `run()` background task.
+/// That task then calls `ctx.notify_attribute_changed()` to push a
+/// subscription report to HomeKit.
 pub struct IntercomOccupancy {
     dataver: Dataver,
     occupancy: AtomicBool,
+    /// Signal used to wake the `run()` background task when occupancy changes
+    /// and a subscription report needs to be pushed to HomeKit.
+    state_changed: Signal<NoopRawMutex, ()>,
 }
 
 impl IntercomOccupancy {
@@ -36,14 +53,20 @@ impl IntercomOccupancy {
         Self {
             dataver: Dataver::new(2),
             occupancy: AtomicBool::new(false),
+            state_changed: Signal::new(),
         }
     }
 
     /// Update the occupancy state.
     ///
     /// Called by `MatterAccessControlDriver` when ring is detected or hold timer expires.
+    /// Bumps dataver and signals the `run()` background task to push
+    /// a subscription report to HomeKit immediately.
     pub fn set_occupancy(&self, occupied: bool) {
+        info!("set_occupancy({occupied}) → signalling subscription notify");
         self.occupancy.store(occupied, Ordering::Relaxed);
+        self.dataver.changed();
+        self.state_changed.signal(());
     }
 }
 
@@ -62,6 +85,7 @@ impl IntercomOccupancy {
 }
 
 impl MatterCluster for IntercomOccupancy {
+    const ENDPOINT_ID: u16 = crate::config::OCCUPANCY_SENSOR_ENDPOINT_ID;
     const CLUSTER_DEF: Cluster<'static> = Self::CLUSTER;
     /// Occupancy Sensor device type (Matter spec 0x0107, rev 3)
     const DEVICE_TYPE: DeviceType = DeviceType {
@@ -109,4 +133,23 @@ impl AsyncHandler for IntercomOccupancy {
     }
 
     // OccupancySensing has no commands
+
+    /// Background task: waits for occupancy state changes and notifies the
+    /// subscription system so HomeKit receives prompt motion sensor updates.
+    fn run(
+        &self,
+        ctx: impl HandlerContext,
+    ) -> impl core::future::Future<Output = Result<(), Error>> {
+        async move {
+            loop {
+                self.state_changed.wait().await;
+                info!("run() woke → notifying subscription system");
+                ctx.notify_attribute_changed(
+                    Self::ENDPOINT_ID,
+                    Self::CLUSTER.id,
+                    occupancy_sensing::AttributeId::Occupancy as _,
+                );
+            }
+        }
+    }
 }
