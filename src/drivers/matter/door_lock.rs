@@ -38,22 +38,22 @@ use super::MatterCluster;
 /// internal `state_changed` signal, which wakes the `run()` background task.
 /// That task then calls `ctx.notify_attribute_changed()` to push a
 /// subscription report to HomeKit.
-pub struct IntercomDoorLock<'a> {
+pub struct IntercomDoorLock<OnUnlock: Fn()> {
     dataver: Dataver,
     lock_state: AtomicU8,
     /// Signal used to wake the `run()` background task when an out-of-band
     /// state change (e.g. auto-relock) needs to push a subscription report.
     state_changed: Signal<NoopRawMutex, ()>,
-    on_unlock: &'a dyn Fn(),
+    on_unlock: OnUnlock,
 }
 
-impl<'a> IntercomDoorLock<'a> {
+impl<OnUnlock: Fn()> IntercomDoorLock<OnUnlock> {
     /// Create a new Door Lock handler.
     ///
     /// `on_unlock` is called (from sync Matter context) when HomeKit sends
     /// an unlock command. Typically wired to publish `Event::UnlockDispatched`
     /// to the event bus.
-    pub fn new(on_unlock: &'a dyn Fn()) -> Self {
+    pub fn new(on_unlock: OnUnlock) -> Self {
         Self {
             dataver: Dataver::new(1),
             lock_state: AtomicU8::new(DlLockState::Locked as u8),
@@ -76,7 +76,7 @@ impl<'a> IntercomDoorLock<'a> {
     }
 }
 
-impl IntercomDoorLock<'_> {
+impl<OnUnlock: Fn()> IntercomDoorLock<OnUnlock> {
     /// The subset of the DoorLock cluster we support.
     ///
     /// We only expose LockState, LockType, ActuatorEnabled attributes
@@ -93,7 +93,7 @@ impl IntercomDoorLock<'_> {
         ));
 }
 
-impl MatterCluster for IntercomDoorLock<'_> {
+impl<OnUnlock: Fn()> MatterCluster for IntercomDoorLock<OnUnlock> {
     const ENDPOINT_ID: u16 = crate::config::DOOR_LOCK_ENDPOINT_ID;
     const CLUSTER_DEF: Cluster<'static> = Self::CLUSTER;
     /// Door Lock device type (Matter spec 0x000A, rev 3)
@@ -103,7 +103,7 @@ impl MatterCluster for IntercomDoorLock<'_> {
     };
 }
 
-impl AsyncHandler for IntercomDoorLock<'_> {
+impl<OnUnlock: Fn()> AsyncHandler for IntercomDoorLock<OnUnlock> {
     async fn read(&self, ctx: impl ReadContext, reply: impl ReadReply) -> Result<(), Error> {
         if let Some(writer) = reply.with_dataver(self.dataver.get())? {
             if ctx.attr().is_system() {

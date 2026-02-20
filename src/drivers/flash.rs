@@ -219,8 +219,7 @@ impl NorFlash for EspFlash {
             let sector = addr / SECTOR_SIZE as u32;
             debug!("Erasing flash sector {} (0x{:x})", sector, addr);
 
-            let ret =
-                unsafe { esp_hal::rom::spiflash::esp_rom_spiflash_erase_sector(sector) };
+            let ret = unsafe { esp_hal::rom::spiflash::esp_rom_spiflash_erase_sector(sector) };
 
             if ret != esp_hal::rom::spiflash::ESP_ROM_SPIFLASH_RESULT_OK {
                 warn!("Flash erase sector {} failed: {}", sector, ret);

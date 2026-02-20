@@ -99,28 +99,16 @@ async fn main(_spawner: Spawner) {
     // Matter drivers — own their state internally
     // ========================================================================
 
-    let on_unlock = || {
+    let door_lock = IntercomDoorLock::new(|| {
         event_bus
             .immediate_publisher()
             .publish_immediate(Event::UnlockDispatched);
-    };
-    let door_lock = IntercomDoorLock::new(&on_unlock);
+    });
     let occupancy = IntercomOccupancy::new();
 
     // ========================================================================
     // Matter controller — register cluster handlers via builder
     // ========================================================================
-
-    let on_connecting = || {
-        event_bus
-            .immediate_publisher()
-            .publish_immediate(Event::SystemState(SystemState::Connecting));
-    };
-    let on_connected = || {
-        event_bus
-            .immediate_publisher()
-            .publish_immediate(Event::SystemState(SystemState::Connected));
-    };
 
     let matter = MatterController::new(
         MatterControllerConfig {
@@ -129,8 +117,16 @@ async fn main(_spawner: Spawner) {
             rng: peripherals.RNG,
             adc1: peripherals.ADC1,
         },
-        &on_connecting,
-        &on_connected,
+        || {
+            event_bus
+                .immediate_publisher()
+                .publish_immediate(Event::SystemState(SystemState::Connecting));
+        },
+        || {
+            event_bus
+                .immediate_publisher()
+                .publish_immediate(Event::SystemState(SystemState::Connected));
+        },
     )
     .register(&door_lock)
     .register(&occupancy);

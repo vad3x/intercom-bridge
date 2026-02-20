@@ -14,13 +14,16 @@ use super::occupancy::IntercomOccupancy;
 ///
 /// Wraps references to both Matter cluster handlers and delegates
 /// `AccessControlDriver` trait methods to their respective methods.
-pub struct MatterAccessControlDriver<'a> {
-    door_lock: &'a IntercomDoorLock<'a>,
+pub struct MatterAccessControlDriver<'a, OnUnlock: Fn()> {
+    door_lock: &'a IntercomDoorLock<OnUnlock>,
     occupancy: &'a IntercomOccupancy,
 }
 
-impl<'a> MatterAccessControlDriver<'a> {
-    pub fn new(door_lock: &'a IntercomDoorLock<'a>, occupancy: &'a IntercomOccupancy) -> Self {
+impl<'a, OnUnlock: Fn()> MatterAccessControlDriver<'a, OnUnlock> {
+    pub fn new(
+        door_lock: &'a IntercomDoorLock<OnUnlock>,
+        occupancy: &'a IntercomOccupancy,
+    ) -> Self {
         Self {
             door_lock,
             occupancy,
@@ -28,7 +31,7 @@ impl<'a> MatterAccessControlDriver<'a> {
     }
 }
 
-impl AccessControlDriver for MatterAccessControlDriver<'_> {
+impl<OnUnlock: Fn()> AccessControlDriver for MatterAccessControlDriver<'_, OnUnlock> {
     fn set_occupancy(&self, occupied: bool) {
         self.occupancy.set_occupancy(occupied);
     }

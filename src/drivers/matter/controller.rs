@@ -94,23 +94,27 @@ struct EndpointMeta {
 /// Starts above the cluster handler datavers (which use 1, 2, …).
 static DESC_DATAVER_COUNTER: portable_atomic::AtomicU32 = portable_atomic::AtomicU32::new(100);
 
-pub struct MatterController<'a, H = EmptyHandler> {
+pub struct MatterController<OnConnecting, OnConnected, H = EmptyHandler>
+where
+    OnConnecting: Fn(),
+    OnConnected: Fn(),
+{
     handler: H,
     endpoint_metas: Vec<EndpointMeta>,
     options: MatterControllerConfig,
-    on_connecting: &'a dyn Fn(),
-    on_connected: &'a dyn Fn(),
+    on_connecting: OnConnecting,
+    on_connected: OnConnected,
 }
 
-impl<'a> MatterController<'a> {
+impl<OnConnecting: Fn(), OnConnected: Fn()> MatterController<OnConnecting, OnConnected> {
     /// Start building a new Matter WiFi node with an empty handler chain.
     ///
     /// `on_connecting` is called when the WiFi/CASE handshake starts.
     /// `on_connected` is called each time the operational network comes up.
     pub fn new(
         options: MatterControllerConfig,
-        on_connecting: &'a dyn Fn(),
-        on_connected: &'a dyn Fn(),
+        on_connecting: OnConnecting,
+        on_connected: OnConnected,
     ) -> Self {
         Self {
             handler: EmptyHandler,
@@ -122,7 +126,9 @@ impl<'a> MatterController<'a> {
     }
 }
 
-impl<'a, H: AsyncHandler> MatterController<'a, H> {
+impl<OnConnecting: Fn(), OnConnected: Fn(), H: AsyncHandler>
+    MatterController<OnConnecting, OnConnected, H>
+{
     /// Register a cluster handler.
     ///
     /// The endpoint ID is obtained from `C::ENDPOINT_ID` (the [`MatterCluster`] trait).
@@ -132,10 +138,11 @@ impl<'a, H: AsyncHandler> MatterController<'a, H> {
     pub fn register<'b, C: MatterCluster>(
         mut self,
         cluster: &'b C,
-    ) -> MatterController<'a, impl AsyncHandler + 'b>
+    ) -> MatterController<OnConnecting, OnConnected, impl AsyncHandler + 'b>
     where
         H: 'b,
-        'a: 'b,
+        OnConnecting: 'b,
+        OnConnected: 'b,
     {
         let endpoint_id = C::ENDPOINT_ID;
 
@@ -273,12 +280,14 @@ impl<'a, H: AsyncHandler> MatterController<'a, H> {
 /// Uses `NetifDiag` to check if any interface is operational, and
 /// `NetChangeNotif` to wait for state changes. Signals `on_connected`
 /// when WiFi becomes operational and `on_connecting` when it drops.
-struct ConnectionMonitor<'a> {
-    on_connecting: &'a dyn Fn(),
-    on_connected: &'a dyn Fn(),
+struct ConnectionMonitor<OnConnecting: Fn(), OnConnected: Fn()> {
+    on_connecting: OnConnecting,
+    on_connected: OnConnected,
 }
 
-impl UserTask for ConnectionMonitor<'_> {
+impl<OnConnecting: Fn(), OnConnected: Fn()> UserTask
+    for ConnectionMonitor<OnConnecting, OnConnected>
+{
     async fn run<S, N>(&mut self, _net_stack: S, netif: N) -> Result<(), rs_matter::error::Error>
     where
         S: rs_matter_embassy::stack::nal::NetStack,
