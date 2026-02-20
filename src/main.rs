@@ -36,8 +36,8 @@ use crate::drivers::gpio::door::{GpioDoorConfig, GpioDoorDriver};
 use crate::drivers::gpio::led::{GpioLedConfig, GpioLedDriver};
 use crate::drivers::gpio::ring::{GpioRingConfig, GpioRingDriver};
 use crate::drivers::matter::{
-    IntercomDoorLock, IntercomOccupancy, MatterAccessControlDriver, MatterController,
-    MatterControllerConfig,
+    DeviceInfo, IntercomDoorLock, IntercomOccupancy, MatterAccessControlDriver, MatterController,
+    MatterControllerConfig, MatterPeripherals,
 };
 use crate::events::{Event, EventBus, SystemState};
 
@@ -112,10 +112,22 @@ async fn main(_spawner: Spawner) {
 
     let matter = MatterController::new(
         MatterControllerConfig {
-            wifi: peripherals.WIFI,
-            bt: peripherals.BT,
-            rng: peripherals.RNG,
-            adc1: peripherals.ADC1,
+            peripherals: MatterPeripherals {
+                wifi: peripherals.WIFI,
+                bt: peripherals.BT,
+                rng: peripherals.RNG,
+                adc1: peripherals.ADC1,
+            },
+            device_info: DeviceInfo {
+                hw_ver: config::HW_VER,
+                hw_ver_str: config::HW_VER_STR,
+                sw_ver: config::SW_VER,
+                sw_ver_str: config::SW_VER_STR,
+                serial_no: config::SERIAL_NO,
+                vendor_name: config::VENDOR_NAME,
+                product_name: config::PRODUCT_NAME,
+                device_name: config::DEVICE_NAME,
+            },
         },
         || {
             event_bus

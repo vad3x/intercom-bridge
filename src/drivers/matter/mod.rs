@@ -22,7 +22,7 @@ mod occupancy;
 use rs_matter::dm::{AsyncHandler, Cluster, DeviceType};
 
 pub use access_control::MatterAccessControlDriver;
-pub use controller::{MatterController, MatterControllerConfig};
+pub use controller::{DeviceInfo, MatterController, MatterControllerConfig, MatterPeripherals};
 pub use door_lock::IntercomDoorLock;
 pub use occupancy::IntercomOccupancy;
 

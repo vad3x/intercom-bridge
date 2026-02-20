@@ -48,31 +48,44 @@ const VID: u16 = 0xfff1;
 /// Product ID (test/development — 0x8001)
 const PID: u16 = 0x8001;
 
-/// Device identity exposed via Basic Information cluster.
-const DEV_DET: BasicInfoConfig = BasicInfoConfig {
-    vid: VID,
-    pid: PID,
-    hw_ver: 1,
-    hw_ver_str: "1.0",
-    sw_ver: 1,
-    sw_ver_str: "0.1.0",
-    serial_no: "IC-00001",
-    vendor_name: "Smart Intercom",
-    product_name: "Intercom Controller",
-    device_name: "Smart Intercom",
-    ..BasicInfoConfig::new()
-};
-
 // ============================================================================
-// WiFi peripherals config
+// Configuration
 // ============================================================================
 
-/// Peripherals required by the WiFi+BLE Matter stack.
+/// Configuration for the Matter controller.
 pub struct MatterControllerConfig {
+    /// Hardware peripherals for WiFi+BLE.
+    pub peripherals: MatterPeripherals,
+    /// Device identity for the Basic Information cluster.
+    pub device_info: DeviceInfo,
+}
+
+/// Hardware peripherals required by the WiFi+BLE Matter stack.
+pub struct MatterPeripherals {
     pub wifi: esp_hal::peripherals::WIFI<'static>,
     pub bt: esp_hal::peripherals::BT<'static>,
     pub rng: esp_hal::peripherals::RNG<'static>,
     pub adc1: esp_hal::peripherals::ADC1<'static>,
+}
+
+/// Device identity exposed via the Matter Basic Information cluster.
+pub struct DeviceInfo {
+    /// Hardware version number.
+    pub hw_ver: u16,
+    /// Hardware version string (e.g. `"1.0"`).
+    pub hw_ver_str: &'static str,
+    /// Numeric software version (e.g. `100` for `0.1.0`).
+    pub sw_ver: u32,
+    /// Human-readable software version string (e.g. `"0.1.0"`).
+    pub sw_ver_str: &'static str,
+    /// Device serial number.
+    pub serial_no: &'static str,
+    /// Vendor name shown in Matter/HomeKit.
+    pub vendor_name: &'static str,
+    /// Product name shown in Matter/HomeKit.
+    pub product_name: &'static str,
+    /// Device name shown in Matter/HomeKit.
+    pub device_name: &'static str,
 }
 
 // ============================================================================
@@ -101,7 +114,7 @@ where
 {
     handler: H,
     endpoint_metas: Vec<EndpointMeta>,
-    options: MatterControllerConfig,
+    config: MatterControllerConfig,
     on_connecting: OnConnecting,
     on_connected: OnConnected,
 }
@@ -112,14 +125,14 @@ impl<OnConnecting: Fn(), OnConnected: Fn()> MatterController<OnConnecting, OnCon
     /// `on_connecting` is called when the WiFi/CASE handshake starts.
     /// `on_connected` is called each time the operational network comes up.
     pub fn new(
-        options: MatterControllerConfig,
+        config: MatterControllerConfig,
         on_connecting: OnConnecting,
         on_connected: OnConnected,
     ) -> Self {
         Self {
             handler: EmptyHandler,
             endpoint_metas: Vec::new(),
-            options,
+            config,
             on_connecting,
             on_connected,
         }
@@ -169,7 +182,7 @@ impl<OnConnecting: Fn(), OnConnected: Fn(), H: AsyncHandler>
         MatterController {
             handler: new_handler,
             endpoint_metas: self.endpoint_metas,
-            options: self.options,
+            config: self.config,
             on_connecting: self.on_connecting,
             on_connected: self.on_connected,
         }
@@ -184,7 +197,7 @@ impl<OnConnecting: Fn(), OnConnected: Fn(), H: AsyncHandler>
     /// # Panics
     /// Panics if the Matter stack encounters a fatal error.
     pub async fn run(self) {
-        let options = self.options;
+        let config = self.config;
         // Build the Node descriptor from registered endpoints.
         // Backing arrays for each endpoint's clusters and device_types.
         let cluster_arrays: Vec<Vec<Cluster>> = self
@@ -213,11 +226,15 @@ impl<OnConnecting: Fn(), OnConnected: Fn(), H: AsyncHandler>
             endpoints: &endpoints,
         };
 
-        // Allocate stack in a static cell (safe: run() is called exactly once)
+        // Allocate device identity + stack in static cells (safe: run() is called exactly once)
+        static DEV_DET_CELL: static_cell::StaticCell<BasicInfoConfig> =
+            static_cell::StaticCell::new();
+        let dev_det = DEV_DET_CELL.init(dev_det(&config.device_info));
+
         static STACK_CELL: static_cell::StaticCell<EmbassyWifiMatterStack<BUMP_SIZE, ()>> =
             static_cell::StaticCell::new();
         let stack = STACK_CELL.uninit().init_with(EmbassyWifiMatterStack::init(
-            &DEV_DET,
+            dev_det,
             TEST_DEV_COMM,
             &TEST_DEV_ATT,
             epoch,
@@ -227,7 +244,8 @@ impl<OnConnecting: Fn(), OnConnected: Fn(), H: AsyncHandler>
         let radio = esp_radio::init().unwrap();
 
         // Crypto: TRNG → reseeding CSPRNG → DAC signing key
-        let _trng_source = esp_hal::rng::TrngSource::new(options.rng, options.adc1);
+        let _trng_source =
+            esp_hal::rng::TrngSource::new(config.peripherals.rng, config.peripherals.adc1);
         let crypto = default_crypto::<NoopRawMutex, _>(
             reseeding_csprng(esp_hal::rng::Trng::try_new().unwrap(), 1000).unwrap(),
             DAC_PRIVKEY,
@@ -255,7 +273,7 @@ impl<OnConnecting: Fn(), OnConnected: Fn(), H: AsyncHandler>
         stack
             .run_coex(
                 EmbassyWifi::new(
-                    EspWifiDriver::new(&radio, options.wifi, options.bt),
+                    EspWifiDriver::new(&radio, config.peripherals.wifi, config.peripherals.bt),
                     weak_rand,
                     true,
                     stack,
@@ -319,5 +337,22 @@ impl<OnConnecting: Fn(), OnConnected: Fn()> UserTask
             // Wait for next network state change
             netif.wait_changed().await;
         }
+    }
+}
+
+/// Build device identity for the Basic Information cluster.
+fn dev_det(info: &DeviceInfo) -> BasicInfoConfig<'static> {
+    BasicInfoConfig {
+        vid: VID,
+        pid: PID,
+        hw_ver: info.hw_ver,
+        hw_ver_str: info.hw_ver_str,
+        sw_ver: info.sw_ver,
+        sw_ver_str: info.sw_ver_str,
+        serial_no: info.serial_no,
+        vendor_name: info.vendor_name,
+        product_name: info.product_name,
+        device_name: info.device_name,
+        ..BasicInfoConfig::new()
     }
 }
