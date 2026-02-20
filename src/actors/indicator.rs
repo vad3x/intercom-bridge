@@ -5,33 +5,38 @@
 //!
 //! C++ equivalent: `IndicatorActor<Driver>`
 
-use embassy_futures::select::{select, Either};
-use embassy_time::{Duration, Timer};
+use embassy_futures::join::join;
+
 use log::info;
 
-use crate::events::{Event, EventBus, SystemState};
+use crate::config::{
+    CONNECTING_BLINK_MS, ERROR_BLINK_MS, INITIALIZING_BLINK_MS, RING_BLINK_COUNT, RING_BLINK_MS,
+    UNLOCK_BLINK_COUNT, UNLOCK_BLINK_MS,
+};
+use crate::events::{Event, EventBus, EventBusSubscriber, SystemState};
 
 // ============================================================================
-// IndicatorDriver trait (like C++ concept)
+// IndicatorDriver trait
 // ============================================================================
 
 /// Visual/audio indicator driver.
 ///
-/// Implementors provide status feedback using domain-level concepts.
-/// The implementation decides how to visually represent each state
-/// (e.g., steady LED, blink pattern, RGB color).
+/// Methods are sync — they signal the desired state to the driver's `run` loop.
+/// The `run` loop handles all GPIO timing internally.
 pub trait IndicatorDriver {
-    /// Set steady-state indication based on system lifecycle.
-    async fn set_state(&mut self, state: SystemState);
+    /// Turn the indicator on (steady state).
+    fn solid(&self);
 
-    /// Visual feedback: someone is ringing the intercom.
-    async fn indicate_ring(&mut self);
+    /// Start blinking with the given on/off durations.
+    ///
+    /// - `count: None` — blink continuously until the next command.
+    /// - `count: Some(n)` — blink `n` times, then return to steady on.
+    fn blink(&self, on_ms: u64, off_ms: u64, count: Option<u8>);
 
-    /// Visual feedback: unlock command was dispatched.
-    async fn indicate_unlock(&mut self);
-
-    /// Turn the indicator off.
-    async fn off(&mut self);
+    /// Driver event loop — processes commands and drives hardware.
+    ///
+    /// Must be run concurrently with the actor's event loop via `join`.
+    async fn run(&self);
 }
 
 /// Visual feedback actor.
@@ -42,9 +47,6 @@ pub struct IndicatorActor<I: IndicatorDriver> {
     driver: I,
 }
 
-/// Duration of each half of the connecting blink cycle (500ms on, 500ms off = 1s total).
-const CONNECTING_BLINK_MS: u64 = 500;
-
 impl<I: IndicatorDriver> IndicatorActor<I> {
     pub fn new(driver: I) -> Self {
         Self { driver }
@@ -52,66 +54,71 @@ impl<I: IndicatorDriver> IndicatorActor<I> {
 
     /// Run the indicator loop (never returns).
     ///
-    /// Sets `Initializing` state immediately, then reacts to every event.
-    /// When in `Connecting` state, blinks the LED (500ms on / 500ms off)
-    /// until another event arrives.
-    pub async fn run(&mut self, bus: &EventBus) {
-        info!("started");
+    /// Joins the driver's `run` loop with the actor's event loop.
+    /// The driver handles all GPIO timing; the actor translates
+    /// bus events into driver commands.
+    pub async fn run(&self, bus: &EventBus) {
+        // Turn on before entering event loop
+        // self.driver.solid();
 
+        join(self.driver.run(), self.event_loop(bus)).await;
+    }
+
+    /// Event loop: subscribe to bus events and signal the driver.
+    async fn event_loop(&self, bus: &EventBus) {
         let mut subscriber = bus.subscriber().unwrap();
-
-        // Set initial state before entering event loop
-        self.driver.set_state(SystemState::Initializing).await;
-
         let mut connecting = false;
 
         loop {
-            let event = if connecting {
-                // Blink loop: LED on → 500ms → LED off → 500ms → repeat
-                // Interrupted immediately when a new event arrives.
-                loop {
-                    // ON phase
-                    self.driver.set_state(SystemState::Connecting).await;
-                    match select(
-                        Timer::after(Duration::from_millis(CONNECTING_BLINK_MS)),
-                        subscriber.next_message_pure(),
-                    )
-                    .await
-                    {
-                        Either::First(()) => {}
-                        Either::Second(event) => break event,
-                    }
+            connecting = self.next(&mut subscriber, connecting).await;
+        }
+    }
 
-                    // OFF phase
-                    self.driver.off().await;
-                    match select(
-                        Timer::after(Duration::from_millis(CONNECTING_BLINK_MS)),
-                        subscriber.next_message_pure(),
-                    )
-                    .await
-                    {
-                        Either::First(()) => continue, // loop back to ON phase
-                        Either::Second(event) => break event,
+    /// Await the next event and handle it. Returns updated `connecting` state.
+    ///
+    /// Driver methods are sync (signal-based), so no `.await` on them.
+    async fn next(&self, subscriber: &mut EventBusSubscriber<'_>, connecting: bool) -> bool {
+        let event = subscriber.next_message_pure().await;
+
+        match event {
+            Event::SystemState(state) => {
+                info!("system state → {:?}", state);
+                match state {
+                    SystemState::Initializing => {
+                        self.driver
+                            .blink(INITIALIZING_BLINK_MS, INITIALIZING_BLINK_MS, None);
+                        true
+                    }
+                    SystemState::Connected => {
+                        self.driver.solid();
+                        false
+                    }
+                    SystemState::Connecting => {
+                        self.driver
+                            .blink(CONNECTING_BLINK_MS, CONNECTING_BLINK_MS, None);
+                        true
+                    }
+                    SystemState::Ready => {
+                        self.driver.solid();
+                        false
+                    }
+                    SystemState::Error => {
+                        self.driver.blink(ERROR_BLINK_MS, ERROR_BLINK_MS, None);
+                        false
                     }
                 }
-            } else {
-                subscriber.next_message_pure().await
-            };
-
-            match event {
-                Event::SystemState(state) => {
-                    info!("system state → {:?}", state);
-                    connecting = state == SystemState::Connecting;
-                    self.driver.set_state(state).await;
-                }
-                Event::Ringing => {
-                    info!("ring → blink");
-                    self.driver.indicate_ring().await;
-                }
-                Event::UnlockDispatched => {
-                    info!("unlock → blink");
-                    self.driver.indicate_unlock().await;
-                }
+            }
+            Event::Ringing => {
+                info!("ring → blink");
+                self.driver
+                    .blink(RING_BLINK_MS, RING_BLINK_MS, Some(RING_BLINK_COUNT));
+                connecting
+            }
+            Event::UnlockDispatched => {
+                info!("unlock → blink");
+                self.driver
+                    .blink(UNLOCK_BLINK_MS, UNLOCK_BLINK_MS, Some(UNLOCK_BLINK_COUNT));
+                connecting
             }
         }
     }

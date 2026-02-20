@@ -33,7 +33,7 @@ use log::info;
 
 use crate::app::App;
 use crate::drivers::gpio::door::{GpioDoorConfig, GpioDoorDriver};
-use crate::drivers::gpio::led::{GpioLedConfig, GpioLedDriver};
+use crate::drivers::gpio::led::GpioLedDriver;
 use crate::drivers::gpio::ring::{GpioRingConfig, GpioRingDriver};
 use crate::drivers::matter::{
     DeviceInfo, IntercomDoorLock, IntercomOccupancy, MatterAccessControlDriver, MatterController,
@@ -71,7 +71,7 @@ fn custom_halt() -> ! {
 async fn main(_spawner: Spawner) {
     utils::uptime_logger::init(log::LevelFilter::Info);
 
-    info!("=== Smart Intercom Starting ===");
+    info!("Smart Intercom Starting");
 
     heap_allocator!(size: HEAP_SIZE - RECLAIMED_RAM);
     heap_allocator!(#[ram(reclaimed)] size: RECLAIMED_RAM);
@@ -149,12 +149,12 @@ async fn main(_spawner: Spawner) {
 
     let ring = GpioRingDriver::new(peripherals.GPIO2, GpioRingConfig::default());
     let door = GpioDoorDriver::new(peripherals.GPIO18, GpioDoorConfig::default());
-    let indicator = GpioLedDriver::new(peripherals.GPIO19, GpioLedConfig::default());
+    let indicator = GpioLedDriver::new(peripherals.GPIO19);
     let access_driver = MatterAccessControlDriver::new(&door_lock, &occupancy);
 
     let app = App::new(ring, door, indicator, access_driver);
 
-    info!("=== Smart Intercom Ready ===");
+    info!("Smart Intercom Ready");
 
     // ========================================================================
     // Run App actors + Matter stack concurrently
@@ -163,7 +163,7 @@ async fn main(_spawner: Spawner) {
     let app_future = app.run(&event_bus);
     let matter_future = pin!(matter.run());
 
-    info!("=== Matter Controller Running ===");
+    info!("Matter Controller Running");
 
     // Both run forever; join waits for both
     embassy_futures::join::join(app_future, matter_future).await;

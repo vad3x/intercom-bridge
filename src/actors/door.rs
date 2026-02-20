@@ -5,6 +5,8 @@
 //!
 //! C++ equivalent: `DoorActor<Driver>`
 
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::pubsub::Subscriber;
 use log::info;
 
 use crate::events::{Event, EventBus};
@@ -29,6 +31,9 @@ pub struct DoorActor<D: DoorDriver> {
     driver: D,
 }
 
+/// Subscriber type alias matching `EventBus` parameters.
+type EventSubscriber<'a> = Subscriber<'a, CriticalSectionRawMutex, Event, 4, 4, 4>;
+
 impl<D: DoorDriver> DoorActor<D> {
     pub fn new(driver: D) -> Self {
         Self { driver }
@@ -43,21 +48,26 @@ impl<D: DoorDriver> DoorActor<D> {
         let mut subscriber = bus.subscriber().unwrap();
 
         loop {
-            if let Event::UnlockDispatched = subscriber.next_message_pure().await {
-                info!("unlock event → triggering hardware");
-                self.driver.trigger_unlock().await;
-                info!("unlock pulse complete");
+            self.next(&mut subscriber).await;
+        }
+    }
 
-                // Drain any unlock events that queued up during the pulse.
-                // Without this, rapid-fire commands (e.g. double-tap) would
-                // chain back-to-back pulses instead of being deduplicated.
-                let mut drained = 0;
-                while let Some(Event::UnlockDispatched) = subscriber.try_next_message_pure() {
-                    drained += 1;
-                }
-                if drained > 0 {
-                    info!("drained {} queued unlock events", drained);
-                }
+    /// Await the next unlock event and trigger the hardware relay.
+    ///
+    /// Drains any unlock events that queued up during the pulse to
+    /// deduplicate rapid-fire commands (e.g. double-tap).
+    async fn next(&mut self, subscriber: &mut EventSubscriber<'_>) {
+        if let Event::UnlockDispatched = subscriber.next_message_pure().await {
+            info!("unlock event → triggering hardware");
+            self.driver.trigger_unlock().await;
+            info!("unlock pulse complete");
+
+            let mut drained = 0;
+            while let Some(Event::UnlockDispatched) = subscriber.try_next_message_pure() {
+                drained += 1;
+            }
+            if drained > 0 {
+                info!("drained {} queued unlock events", drained);
             }
         }
     }

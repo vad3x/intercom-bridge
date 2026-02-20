@@ -1,146 +1,152 @@
 //! Smart Intercom - GPIO LED Indicator Driver
 //!
-//! Async LED control for status indication (active-low red LED).
-//! Replaces the C++ GpioLedDriver (output + FreeRTOS blink timer)
-//! with Embassy async blink loops.
+//! Signal-based LED driver: sync methods signal commands, `run` loop
+//! drives GPIO. Replaces the C++ GpioLedDriver (output + FreeRTOS blink timer).
 
+use core::cell::RefCell;
+
+use embassy_futures::select::{select, Either};
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Timer};
 use esp_hal::gpio::{Level, Output, OutputConfig};
 use log::info;
 
 use crate::actors::indicator::IndicatorDriver;
-use crate::events::SystemState;
-
-/// Configuration for GPIO LED driver
-pub struct GpioLedConfig {
-    /// Blink ON duration for ring indication (ms)
-    pub ring_blink_on_ms: u64,
-    /// Blink OFF duration for ring indication (ms)
-    pub ring_blink_off_ms: u64,
-    /// Number of blinks for ring indication
-    pub ring_blink_count: u8,
-    /// Blink ON duration for unlock indication (ms)
-    pub unlock_blink_on_ms: u64,
-    /// Blink OFF duration for unlock indication (ms)
-    pub unlock_blink_off_ms: u64,
-    /// Number of blinks for unlock indication
-    pub unlock_blink_count: u8,
-}
-
-impl Default for GpioLedConfig {
-    fn default() -> Self {
-        Self {
-            ring_blink_on_ms: 100,
-            ring_blink_off_ms: 100,
-            ring_blink_count: 2,
-            unlock_blink_on_ms: 200,
-            unlock_blink_off_ms: 200,
-            unlock_blink_count: 2,
-        }
-    }
-}
 
 /// GPIO-based LED indicator driver (active-low red LED).
 ///
 /// LED is ON when GPIO is LOW, OFF when GPIO is HIGH.
+/// Sync methods signal commands; `run` loop handles GPIO + timing.
 pub struct GpioLedDriver {
-    pin: Output<'static>,
-    config: GpioLedConfig,
+    pin: RefCell<Output<'static>>,
+    signal: Signal<CriticalSectionRawMutex, IndicatorCommand>,
 }
 
 impl GpioLedDriver {
-    /// Create a new LED driver with the given output pin and configuration.
-    pub fn new(pin: impl esp_hal::gpio::OutputPin + 'static, config: GpioLedConfig) -> Self {
+    /// Create a new LED driver with the given output pin.
+    pub fn new(pin: impl esp_hal::gpio::OutputPin + 'static) -> Self {
         info!("created (active-low)");
 
         Self {
-            pin: Output::new(pin, Level::High, OutputConfig::default()), // Start OFF (active-low)
-            config,
+            pin: RefCell::new(Output::new(pin, Level::High, OutputConfig::default())), // Start OFF
+            signal: Signal::new(),
         }
     }
 
-    /// Turn LED on (active-low: GPIO LOW)
-    fn led_on(&mut self) {
-        self.pin.set_low();
-    }
-
-    /// Turn LED off (active-low: GPIO HIGH)
-    fn led_off(&mut self) {
-        self.pin.set_high();
+    /// Execute a command. Returns the next pending command if interrupted.
+    async fn next(&self, cmd: IndicatorCommand) -> Option<IndicatorCommand> {
+        match cmd {
+            IndicatorCommand::On => {
+                self.led_on();
+                None
+            }
+            IndicatorCommand::Blink {
+                on_ms,
+                off_ms,
+                count: None,
+            } => {
+                // Continuous blink until interrupted by a new command
+                loop {
+                    if let Some(next) = self.blink_pattern(1, on_ms, off_ms).await {
+                        return Some(next);
+                    }
+                }
+            }
+            IndicatorCommand::Blink {
+                on_ms,
+                off_ms,
+                count: Some(n),
+            } => {
+                // Finite blink — return to steady on when done
+                let interrupted = self.blink_pattern(n, on_ms, off_ms).await;
+                if interrupted.is_none() {
+                    self.led_on();
+                }
+                interrupted
+            }
+        }
     }
 
     /// Blink the LED `count` times with given ON/OFF durations.
-    async fn blink_pattern(&mut self, count: u8, on_ms: u64, off_ms: u64) {
+    /// Returns `Some(cmd)` if interrupted by a new command, `None` if completed.
+    async fn blink_pattern(&self, count: u8, on_ms: u64, off_ms: u64) -> Option<IndicatorCommand> {
         for _ in 0..count {
             self.led_on();
-            Timer::after(Duration::from_millis(on_ms)).await;
+            match select(
+                Timer::after(Duration::from_millis(on_ms)),
+                self.signal.wait(),
+            )
+            .await
+            {
+                Either::First(()) => {}
+                Either::Second(cmd) => return Some(cmd),
+            }
+
             self.led_off();
-            Timer::after(Duration::from_millis(off_ms)).await;
+            match select(
+                Timer::after(Duration::from_millis(off_ms)),
+                self.signal.wait(),
+            )
+            .await
+            {
+                Either::First(()) => {}
+                Either::Second(cmd) => return Some(cmd),
+            }
         }
-        // Return to steady on after blink sequence
-        self.led_on();
+        None
+    }
+
+    /// Turn LED on (active-low: GPIO LOW)
+    fn led_on(&self) {
+        self.pin.borrow_mut().set_low();
+    }
+
+    /// Turn LED off (active-low: GPIO HIGH)
+    fn led_off(&self) {
+        self.pin.borrow_mut().set_high();
     }
 }
 
 impl IndicatorDriver for GpioLedDriver {
-    async fn set_state(&mut self, state: SystemState) {
-        match state {
-            SystemState::Initializing => {
-                info!("initializing");
-                self.led_on();
-            }
-            SystemState::Connecting => {
-                // LED on (blink timing is managed by IndicatorActor)
-                self.led_on();
-            }
-            SystemState::Connected => {
-                info!("connected (solid)");
-                self.led_on();
-            }
-            SystemState::Ready => {
-                info!("ready");
-                self.led_on();
-            }
-            SystemState::Error => {
-                info!("error");
-                self.led_on();
+    fn solid(&self) {
+        self.signal.signal(IndicatorCommand::On);
+    }
+
+    fn blink(&self, on_ms: u64, off_ms: u64, count: Option<u8>) {
+        self.signal.signal(IndicatorCommand::Blink {
+            on_ms,
+            off_ms,
+            count,
+        });
+    }
+
+    async fn run(&self) {
+        // Wait for commands and execute them
+        let mut cmd = self.signal.wait().await;
+
+        loop {
+            // Execute the command; if interrupted, handle the new command immediately
+            match self.next(cmd).await {
+                Some(next) => cmd = next,
+                None => cmd = self.signal.wait().await,
             }
         }
     }
-
-    async fn indicate_ring(&mut self) {
-        info!("ring indication");
-        self.blink_pattern(
-            self.config.ring_blink_count,
-            self.config.ring_blink_on_ms,
-            self.config.ring_blink_off_ms,
-        )
-        .await;
-    }
-
-    async fn indicate_unlock(&mut self) {
-        info!("unlock indication");
-        self.blink_pattern(
-            self.config.unlock_blink_count,
-            self.config.unlock_blink_on_ms,
-            self.config.unlock_blink_off_ms,
-        )
-        .await;
-    }
-
-    async fn off(&mut self) {
-        self.led_off();
-    }
 }
 
-/// Stub indicator driver for boards without LEDs.
-///
-/// C++ equivalent: `StubLedDriver`
-pub struct StubIndicatorDriver;
-
-impl IndicatorDriver for StubIndicatorDriver {
-    async fn set_state(&mut self, _state: SystemState) {}
-    async fn indicate_ring(&mut self) {}
-    async fn indicate_unlock(&mut self) {}
-    async fn off(&mut self) {}
+/// Commands the actor sends to the driver's `run` loop via `Signal`.
+#[derive(Clone, Copy, Debug)]
+enum IndicatorCommand {
+    /// Steady on.
+    On,
+    /// Blink with given on/off durations (ms).
+    ///
+    /// - `count: None` — blink continuously until the next command.
+    /// - `count: Some(n)` — blink `n` times, then return to steady on.
+    Blink {
+        on_ms: u64,
+        off_ms: u64,
+        count: Option<u8>,
+    },
 }

@@ -13,7 +13,7 @@ use embassy_time::{Duration, Instant, Timer};
 use log::info;
 
 use crate::config;
-use crate::events::{Event, EventBus};
+use crate::events::{Event, EventBus, EventBusSubscriber};
 
 // ============================================================================
 // AccessControlDriver trait (like C++ concept)
@@ -47,11 +47,17 @@ pub trait AccessControlDriver {
 /// - Relock timer expired → `driver.lock()`
 pub struct AccessControlActor<D: AccessControlDriver> {
     driver: D,
+    occupancy_deadline: Instant,
+    relock_deadline: Instant,
 }
 
 impl<D: AccessControlDriver> AccessControlActor<D> {
     pub fn new(driver: D) -> Self {
-        Self { driver }
+        Self {
+            driver,
+            occupancy_deadline: Instant::MAX,
+            relock_deadline: Instant::MAX,
+        }
     }
 
     /// Run the access control loop (never returns).
@@ -62,56 +68,52 @@ impl<D: AccessControlDriver> AccessControlActor<D> {
 
         let mut subscriber = bus.subscriber().unwrap();
 
-        let mut occupancy_deadline = Instant::MAX;
-        let mut relock_deadline = Instant::MAX;
-
         loop {
-            // Compute the nearest deadline for either timer
-            let nearest = occupancy_deadline.min(relock_deadline);
-            let timeout = if nearest == Instant::MAX {
-                Duration::from_secs(86400) // No active timers → park
-            } else {
-                nearest
-                    .checked_duration_since(Instant::now())
-                    .unwrap_or(Duration::from_millis(0))
-            };
+            self.next(&mut subscriber).await;
+        }
+    }
 
-            match select(subscriber.next_message_pure(), Timer::after(timeout)).await {
-                // ============================================================
-                // Event received
-                // ============================================================
-                Either::First(event) => match event {
-                    Event::Ringing => {
-                        info!("ring → occupancy ON");
-                        self.driver.set_occupancy(true);
-                        occupancy_deadline =
-                            Instant::now() + Duration::from_millis(config::RING_HOLD_MS);
-                    }
-                    Event::UnlockDispatched => {
-                        info!("unlock → auto-relock timer started");
-                        relock_deadline =
-                            Instant::now() + Duration::from_secs(config::AUTO_RELOCK_SEC);
-                    }
-                    _ => {}
-                },
+    /// Await the next event or timer expiration and handle it.
+    ///
+    /// Multiplexes event reception with the nearest active deadline.
+    async fn next(&mut self, subscriber: &mut EventBusSubscriber<'_>) {
+        let nearest = self.occupancy_deadline.min(self.relock_deadline);
+        let timeout = if nearest == Instant::MAX {
+            Duration::from_secs(86400) // No active timers → park
+        } else {
+            nearest
+                .checked_duration_since(Instant::now())
+                .unwrap_or(Duration::from_millis(0))
+        };
 
-                // ============================================================
-                // Timer expired — check which deadline(s) passed
-                // ============================================================
-                Either::Second(()) => {
-                    let now = Instant::now();
+        match select(subscriber.next_message_pure(), Timer::after(timeout)).await {
+            Either::First(event) => match event {
+                Event::Ringing => {
+                    info!("ring → occupancy ON");
+                    self.driver.set_occupancy(true);
+                    self.occupancy_deadline =
+                        Instant::now() + Duration::from_millis(config::RING_HOLD_MS);
+                }
+                Event::UnlockDispatched => {
+                    info!("unlock → auto-relock timer started");
+                    self.relock_deadline =
+                        Instant::now() + Duration::from_secs(config::AUTO_RELOCK_SEC);
+                }
+                _ => {}
+            },
+            Either::Second(()) => {
+                let now = Instant::now();
 
-                    if now >= occupancy_deadline {
-                        info!("occupancy hold expired → OFF");
-                        self.driver.set_occupancy(false);
-                        occupancy_deadline = Instant::MAX;
-                    }
+                if now >= self.occupancy_deadline {
+                    info!("occupancy hold expired → OFF");
+                    self.driver.set_occupancy(false);
+                    self.occupancy_deadline = Instant::MAX;
+                }
 
-                    if now >= relock_deadline {
-                        info!("auto-relock");
-                        self.driver.lock();
-                        relock_deadline = Instant::MAX;
-                    }
+                if now >= self.relock_deadline {
+                    info!("auto-relock");
+                    self.driver.lock();
+                    self.relock_deadline = Instant::MAX;
                 }
             }
         }

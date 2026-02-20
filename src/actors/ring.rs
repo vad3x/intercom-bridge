@@ -7,7 +7,7 @@
 
 use log::info;
 
-use crate::events::{Event, EventBus};
+use crate::events::{Event, EventBus, EventBusPublisher};
 
 // ============================================================================
 // RingDriver trait (like C++ concept)
@@ -29,6 +29,8 @@ pub struct RingActor<R: RingDriver> {
     driver: R,
 }
 
+/// Publisher type alias matching `EventBus` parameters.
+
 impl<R: RingDriver> RingActor<R> {
     pub fn new(driver: R) -> Self {
         Self { driver }
@@ -38,14 +40,17 @@ impl<R: RingDriver> RingActor<R> {
     ///
     /// Waits for the driver to report a ring, then publishes to the event bus.
     pub async fn run(&mut self, bus: &EventBus) {
-        info!("started");
-
         let publisher = bus.publisher().unwrap();
 
         loop {
-            self.driver.wait_for_ring().await;
-            info!("ring detected → publishing");
-            publisher.publish(Event::Ringing).await;
+            self.next(&publisher).await;
         }
+    }
+
+    /// Wait for a ring event and publish it.
+    async fn next(&mut self, publisher: &EventBusPublisher<'_>) {
+        self.driver.wait_for_ring().await;
+        info!("ring detected → publishing");
+        publisher.publish(Event::Ringing).await;
     }
 }

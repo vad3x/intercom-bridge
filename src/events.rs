@@ -7,6 +7,8 @@
 
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::pubsub::PubSubChannel;
+use embassy_sync::pubsub::Publisher;
+use embassy_sync::pubsub::Subscriber;
 
 /// System lifecycle states
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -51,3 +53,10 @@ const BUS_PUBS: usize = 4;
 ///
 /// C++ equivalent: `EventBus` class
 pub type EventBus = PubSubChannel<CriticalSectionRawMutex, Event, BUS_CAP, BUS_SUBS, BUS_PUBS>;
+
+/// Subscriber type alias matching `EventBus` parameters.
+pub type EventBusSubscriber<'a> =
+    Subscriber<'a, CriticalSectionRawMutex, Event, BUS_CAP, BUS_SUBS, BUS_PUBS>;
+
+pub type EventBusPublisher<'a> =
+    Publisher<'a, CriticalSectionRawMutex, Event, BUS_CAP, BUS_SUBS, BUS_PUBS>;

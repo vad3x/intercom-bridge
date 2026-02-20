@@ -70,6 +70,26 @@ pub const RING_HOLD_MS: u64 = 15000;
 /// Auto-relock time in seconds (Matter state only, door springs back mechanically)
 pub const AUTO_RELOCK_SEC: u64 = 4;
 
+pub const INITIALIZING_BLINK_MS: u64 = 300;
+
+/// Duration of each half of the connecting blink cycle
+pub const CONNECTING_BLINK_MS: u64 = 1000;
+
+/// Duration of each half of the connecting blink cycle
+pub const ERROR_BLINK_MS: u64 = 200;
+
+/// Duration of each half of the ring indication blink cycle (ms)
+pub const RING_BLINK_MS: u64 = 100;
+
+/// Number of blinks for ring indication
+pub const RING_BLINK_COUNT: u8 = 2;
+
+/// Duration of each half of the unlock indication blink cycle (ms)
+pub const UNLOCK_BLINK_MS: u64 = 200;
+
+/// Number of blinks for unlock indication
+pub const UNLOCK_BLINK_COUNT: u8 = 2;
+
 // ============================================================================
 // Matter endpoints
 // ============================================================================

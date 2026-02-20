@@ -225,6 +225,88 @@ pub const AUTO_RELOCK_SEC: u64 = 4;
 - Traits for hardware abstraction, generics for composition
 - Actors receive `&EventBus` as `run()` parameter
 
+## Coding Standards
+
+### Test Structure — Arrange / Act / Assert
+
+All tests MUST follow the **Arrange → Act → Assert** pattern. Separate each phase with a blank line and a `// Act` / `// Assert` comment for clarity:
+
+```rust
+#[test]
+fn door_driver_triggers_unlock() {
+    // Arrange
+    let mut door = MockDoorDriver::new();
+
+    // Act
+    door.trigger_unlock();
+
+    // Assert
+    assert!(door.was_triggered());
+}
+```
+
+### Public Before Private
+
+Within any file, **public items MUST appear above private items**. This applies to methods, functions, structs, enums, traits, and impls:
+
+- `pub` functions / methods first, then private helpers
+- `pub struct` / `pub enum` / `pub trait` definitions first, then internal types
+- In `impl` blocks: `pub fn` methods first, then `fn` (private) methods
+
+```rust
+// ✅ Correct — public API on top, private helpers below
+pub struct RingActor { /* ... */ }
+
+impl RingActor {
+    pub fn new(driver: impl RingDriver) -> Self { /* ... */ }
+    pub async fn run(&mut self) { /* ... */ }
+
+    fn debounce(&self) -> bool { /* ... */ }
+}
+
+struct InternalState { /* ... */ }
+```
+
+### High-Level Abstractions Above Low-Level Details
+
+Within a single file, order items from **highest-level abstraction to lowest-level detail**:
+
+1. Main public struct / trait (the primary purpose of the file)
+2. `impl` blocks for the main struct
+3. Supporting public types (config structs, error enums)
+4. Private helper types and functions
+5. Trait implementations for external traits (e.g., `AsyncHandler`)
+6. `#[cfg(test)]` module at the very bottom
+
+```rust
+// ✅ Correct ordering within a file
+
+// 1. Primary trait (highest-level abstraction)
+pub trait DoorDriver {
+    async fn trigger_unlock(&mut self);
+}
+
+// 2. Main struct
+pub struct GpioDoorDriver { /* ... */ }
+
+// 3. Main impl
+impl GpioDoorDriver {
+    pub fn new(pin: GpioPin, config: GpioDoorConfig) -> Self { /* ... */ }
+}
+
+// 4. Supporting config type
+pub struct GpioDoorConfig { /* ... */ }
+
+// 5. Trait impl (lower-level detail)
+impl DoorDriver for GpioDoorDriver {
+    async fn trigger_unlock(&mut self) { /* ... */ }
+}
+
+// 6. Tests at the bottom
+#[cfg(test)]
+mod tests { /* ... */ }
+```
+
 ## Debugging
 
 ### Serial Monitor
