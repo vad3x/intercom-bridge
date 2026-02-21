@@ -58,5 +58,31 @@ pub type EventBus = PubSubChannel<CriticalSectionRawMutex, Event, BUS_CAP, BUS_S
 pub type EventBusSubscriber<'a> =
     Subscriber<'a, CriticalSectionRawMutex, Event, BUS_CAP, BUS_SUBS, BUS_PUBS>;
 
+/// Publisher type alias matching `EventBus` parameters.
 pub type EventBusPublisher<'a> =
     Publisher<'a, CriticalSectionRawMutex, Event, BUS_CAP, BUS_SUBS, BUS_PUBS>;
+
+// ============================================================================
+// Event bus convenience methods
+// ============================================================================
+
+/// Extension trait adding convenience publish methods to `EventBus`.
+pub trait EventBusExt {
+    /// Publish `SystemState::Connecting` synchronously (immediate).
+    fn connecting(&self);
+
+    /// Publish `SystemState::Connected` synchronously (immediate).
+    fn connected(&self);
+}
+
+impl EventBusExt for EventBus {
+    fn connecting(&self) {
+        self.immediate_publisher()
+            .publish_immediate(Event::SystemState(SystemState::Connecting));
+    }
+
+    fn connected(&self) {
+        self.immediate_publisher()
+            .publish_immediate(Event::SystemState(SystemState::Connected));
+    }
+}

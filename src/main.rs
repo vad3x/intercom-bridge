@@ -39,7 +39,7 @@ use crate::drivers::matter::{
     DeviceInfo, IntercomDoorLock, IntercomOccupancy, MatterAccessControlDriver, MatterController,
     MatterControllerConfig, MatterPeripherals,
 };
-use crate::events::{Event, EventBus, SystemState};
+use crate::events::{Event, EventBus, EventBusExt};
 
 // ============================================================================
 // Memory configuration
@@ -129,16 +129,8 @@ async fn main(_spawner: Spawner) {
                 device_name: config::DEVICE_NAME,
             },
         },
-        || {
-            event_bus
-                .immediate_publisher()
-                .publish_immediate(Event::SystemState(SystemState::Connecting));
-        },
-        || {
-            event_bus
-                .immediate_publisher()
-                .publish_immediate(Event::SystemState(SystemState::Connected));
-        },
+        || event_bus.connecting(),
+        || event_bus.connected(),
     )
     .register(&door_lock)
     .register(&occupancy);
