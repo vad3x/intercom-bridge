@@ -12,13 +12,17 @@ use crate::config;
 
 /// Configuration for GPIO door driver
 pub struct GpioDoorConfig {
+    /// Output pin (PhotoMOS relay control, active HIGH)
+    pub pin: Output<'static>,
     /// Duration of unlock pulse in milliseconds
     pub unlock_pulse_ms: u64,
 }
 
-impl Default for GpioDoorConfig {
-    fn default() -> Self {
+impl GpioDoorConfig {
+    /// Create a config with the given output pin and default timing values.
+    pub fn new(pin: impl esp_hal::gpio::OutputPin + 'static) -> Self {
         Self {
+            pin: Output::new(pin, Level::Low, OutputConfig::default()),
             unlock_pulse_ms: config::UNLOCK_PULSE_MS,
         }
     }
@@ -29,18 +33,16 @@ impl Default for GpioDoorConfig {
 /// Controls a PhotoMOS relay to release the door latch.
 /// Produces a timed HIGH pulse, then returns to LOW.
 pub struct GpioDoorDriver {
-    pin: Output<'static>,
     config: GpioDoorConfig,
     unlocking: bool,
 }
 
 impl GpioDoorDriver {
-    /// Create a new door driver with the given output pin and configuration.
-    pub fn new(pin: impl esp_hal::gpio::OutputPin + 'static, config: GpioDoorConfig) -> Self {
+    /// Create a new door driver with the given configuration.
+    pub fn new(config: GpioDoorConfig) -> Self {
         info!("pulse={}ms", config.unlock_pulse_ms);
 
         Self {
-            pin: Output::new(pin, Level::Low, OutputConfig::default()),
             config,
             unlocking: false,
         }
@@ -57,9 +59,9 @@ impl DoorDriver for GpioDoorDriver {
         info!("Unlock pulse start ({}ms)", self.config.unlock_pulse_ms);
         self.unlocking = true;
 
-        self.pin.set_high();
+        self.config.pin.set_high();
         Timer::after(Duration::from_millis(self.config.unlock_pulse_ms)).await;
-        self.pin.set_low();
+        self.config.pin.set_low();
 
         self.unlocking = false;
         info!("Unlock pulse end");

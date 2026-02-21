@@ -139,8 +139,8 @@ async fn main(_spawner: Spawner) {
     // Create GPIO + access control drivers → wire into App
     // ========================================================================
 
-    let ring = GpioRingDriver::new(peripherals.GPIO2, GpioRingConfig::default());
-    let door = GpioDoorDriver::new(peripherals.GPIO18, GpioDoorConfig::default());
+    let ring = GpioRingDriver::new(GpioRingConfig::new(peripherals.GPIO2));
+    let door = GpioDoorDriver::new(GpioDoorConfig::new(peripherals.GPIO18));
     let indicator = GpioLedDriver::new(peripherals.GPIO19);
     let access_driver = MatterAccessControlDriver::new(&door_lock, &occupancy);
 

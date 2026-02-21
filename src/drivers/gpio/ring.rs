@@ -13,15 +13,19 @@ use crate::config;
 
 /// Configuration for GPIO ring driver
 pub struct GpioRingConfig {
+    /// Input pin (optocoupler output, active LOW)
+    pub pin: Input<'static>,
     /// Debounce time in milliseconds
     pub debounce_ms: u64,
     /// Cooldown between ring events in milliseconds
     pub cooldown_ms: u64,
 }
 
-impl Default for GpioRingConfig {
-    fn default() -> Self {
+impl GpioRingConfig {
+    /// Create a config with the given input pin and default timing values.
+    pub fn new(pin: impl esp_hal::gpio::InputPin + 'static) -> Self {
         Self {
+            pin: Input::new(pin, InputConfig::default().with_pull(Pull::Up)),
             debounce_ms: config::RING_DEBOUNCE_MS,
             cooldown_ms: config::RING_COOLDOWN_MS,
         }
@@ -33,22 +37,19 @@ impl Default for GpioRingConfig {
 /// Detects ring signals from optocoupler input (active LOW, falling edge).
 /// Includes debouncing and cooldown logic, all via async Embassy timers.
 pub struct GpioRingDriver {
-    //TODO: pass pin into config
-    pin: Input<'static>,
     config: GpioRingConfig,
     last_ring_time: Instant,
 }
 
 impl GpioRingDriver {
-    /// Create a new ring driver with the given input pin and configuration.
-    pub fn new(pin: impl esp_hal::gpio::InputPin + 'static, config: GpioRingConfig) -> Self {
+    /// Create a new ring driver with the given configuration.
+    pub fn new(config: GpioRingConfig) -> Self {
         info!(
             "debounce={}ms cooldown={}ms",
             config.debounce_ms, config.cooldown_ms
         );
 
         Self {
-            pin: Input::new(pin, InputConfig::default().with_pull(Pull::Up)),
             config,
             last_ring_time: Instant::from_millis(0),
         }
@@ -58,12 +59,12 @@ impl GpioRingDriver {
 impl RingDriver for GpioRingDriver {
     async fn wait_for_ring(&mut self) {
         loop {
-            self.pin.wait_for_falling_edge().await;
+            self.config.pin.wait_for_falling_edge().await;
 
             // Debounce: wait then re-check
             Timer::after(Duration::from_millis(self.config.debounce_ms)).await;
 
-            if self.pin.is_high() {
+            if self.config.pin.is_high() {
                 continue;
             }
 
