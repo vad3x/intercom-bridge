@@ -29,9 +29,12 @@ use esp_hal::ram;
 use esp_hal::timer::timg::TimerGroup;
 use esp_metadata_generated::memory_range;
 
-use log::info;
+use log::{info, warn};
+use rs_matter_embassy::persist::EmbassyKvBlobStore;
 
 use crate::app::App;
+use crate::drivers::flash::EspFlash;
+use crate::drivers::gpio::boot_button::{GpioBootButtonConfig, GpioBootButtonDriver};
 use crate::drivers::gpio::door::{GpioDoorConfig, GpioDoorDriver};
 use crate::drivers::gpio::led::GpioLedDriver;
 use crate::drivers::gpio::ring::{GpioRingConfig, GpioRingDriver};
@@ -61,6 +64,53 @@ esp_bootloader_esp_idf::esp_app_desc!();
 #[unsafe(no_mangle)]
 fn custom_halt() -> ! {
     esp_hal::system::software_reset();
+}
+
+// ============================================================================
+// Matter persistence + factory reset
+// ============================================================================
+
+/// Matter KV blob store backed by ESP32 internal SPI flash.
+type MatterPersist = EmbassyKvBlobStore<EspFlash>;
+
+/// Create the Matter persistence layer for the given flash range.
+fn create_matter_persist(kvs_range: core::ops::Range<u32>) -> MatterPersist {
+    let flash = EspFlash::new(kvs_range.clone());
+    EmbassyKvBlobStore::new(flash, kvs_range)
+}
+
+/// Erase the Matter KVS partition (commissioning data) for factory reset.
+///
+/// Erases all 4 KiB sectors in the given flash range using ROM SPI flash calls.
+/// This is a blocking operation (~ms per sector, 6 sectors = ~24 ms for 24 KiB).
+fn erase_matter_kvs(range: &core::ops::Range<u32>) {
+    const SECTOR_SIZE: u32 = 4096;
+
+    info!(
+        "Erasing Matter KVS: 0x{:x}..0x{:x} ({} sectors)",
+        range.start,
+        range.end,
+        (range.end - range.start) / SECTOR_SIZE
+    );
+
+    // Unlock flash for erasing
+    let ret = unsafe { esp_hal::rom::spiflash::esp_rom_spiflash_unlock() };
+    if ret != esp_hal::rom::spiflash::ESP_ROM_SPIFLASH_RESULT_OK {
+        warn!("Flash unlock failed: {}", ret);
+        return;
+    }
+
+    let mut addr = range.start;
+    while addr < range.end {
+        let sector = addr / SECTOR_SIZE;
+        let ret = unsafe { esp_hal::rom::spiflash::esp_rom_spiflash_erase_sector(sector) };
+        if ret != esp_hal::rom::spiflash::ESP_ROM_SPIFLASH_RESULT_OK {
+            warn!("Flash erase sector {} failed: {}", sector, ret);
+        }
+        addr += SECTOR_SIZE;
+    }
+
+    info!("Matter KVS erased successfully");
 }
 
 // ============================================================================
@@ -128,6 +178,7 @@ async fn main(_spawner: Spawner) {
                 product_name: config::PRODUCT_NAME,
                 device_name: config::DEVICE_NAME,
             },
+            persist: create_matter_persist(config::MATTER_KVS_RANGE),
         },
         || event_bus.connecting(),
         || event_bus.connected(),
@@ -143,8 +194,11 @@ async fn main(_spawner: Spawner) {
     let door = GpioDoorDriver::new(GpioDoorConfig::new(peripherals.GPIO18));
     let indicator = GpioLedDriver::new(peripherals.GPIO19);
     let access_driver = MatterAccessControlDriver::new(&door_lock, &occupancy);
+    let boot_button = GpioBootButtonDriver::new(GpioBootButtonConfig::new(peripherals.GPIO9));
 
-    let app = App::new(ring, door, indicator, access_driver);
+    let app = App::new(ring, door, indicator, access_driver, boot_button, || {
+        erase_matter_kvs(&config::MATTER_KVS_RANGE)
+    });
 
     info!("Smart Intercom Ready");
 

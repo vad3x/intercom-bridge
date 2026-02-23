@@ -5,11 +5,9 @@
 //!
 //! C++ equivalent: `DoorActor<Driver>`
 
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::pubsub::Subscriber;
 use log::info;
 
-use crate::events::{Event, EventBus};
+use crate::events::{Event, EventBus, EventBusSubscriber};
 
 // ============================================================================
 // DoorDriver trait (like C++ concept)
@@ -30,9 +28,6 @@ pub trait DoorDriver {
 pub struct DoorActor<D: DoorDriver> {
     driver: D,
 }
-
-/// Subscriber type alias matching `EventBus` parameters.
-type EventSubscriber<'a> = Subscriber<'a, CriticalSectionRawMutex, Event, 4, 4, 4>;
 
 impl<D: DoorDriver> DoorActor<D> {
     pub fn new(driver: D) -> Self {
@@ -56,7 +51,7 @@ impl<D: DoorDriver> DoorActor<D> {
     ///
     /// Drains any unlock events that queued up during the pulse to
     /// deduplicate rapid-fire commands (e.g. double-tap).
-    async fn next(&mut self, subscriber: &mut EventSubscriber<'_>) {
+    async fn next(&mut self, subscriber: &mut EventBusSubscriber<'_>) {
         if let Event::UnlockDispatched = subscriber.next_message_pure().await {
             info!("unlock event → triggering hardware");
             self.driver.trigger_unlock().await;

@@ -70,6 +70,9 @@ pub const RING_HOLD_MS: u64 = 15000;
 /// Auto-relock time in seconds (Matter state only, door springs back mechanically)
 pub const AUTO_RELOCK_SEC: u64 = 4;
 
+/// How long the BOOT button must be held to trigger a factory reset (ms)
+pub const FACTORY_RESET_HOLD_MS: u64 = 5000;
+
 pub const INITIALIZING_BLINK_MS: u64 = 300;
 
 /// Duration of each half of the connecting blink cycle
@@ -89,6 +92,12 @@ pub const UNLOCK_BLINK_MS: u64 = 200;
 
 /// Number of blinks for unlock indication
 pub const UNLOCK_BLINK_COUNT: u8 = 2;
+
+/// Duration of each half of the factory reset blink cycle (ms)
+pub const FACTORY_RESET_BLINK_MS: u64 = 50;
+
+/// Delay before reboot after factory reset (ms) — gives indicator time to blink
+pub const FACTORY_RESET_REBOOT_DELAY_MS: u64 = 2000;
 
 // ============================================================================
 // Matter endpoints

@@ -10,8 +10,8 @@ use embassy_futures::join::join;
 use log::info;
 
 use crate::config::{
-    CONNECTING_BLINK_MS, ERROR_BLINK_MS, INITIALIZING_BLINK_MS, RING_BLINK_COUNT, RING_BLINK_MS,
-    UNLOCK_BLINK_COUNT, UNLOCK_BLINK_MS,
+    CONNECTING_BLINK_MS, ERROR_BLINK_MS, FACTORY_RESET_BLINK_MS, INITIALIZING_BLINK_MS,
+    RING_BLINK_COUNT, RING_BLINK_MS, UNLOCK_BLINK_COUNT, UNLOCK_BLINK_MS,
 };
 use crate::events::{Event, EventBus, EventBusSubscriber, SystemState};
 
@@ -100,6 +100,11 @@ impl<I: IndicatorDriver> IndicatorActor<I> {
                     }
                     SystemState::Ready => {
                         self.driver.solid();
+                        false
+                    }
+                    SystemState::FactoryReset => {
+                        self.driver
+                            .blink(FACTORY_RESET_BLINK_MS, FACTORY_RESET_BLINK_MS, None);
                         false
                     }
                     SystemState::Error => {

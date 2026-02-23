@@ -114,9 +114,7 @@ impl<OnUnlock: Fn()> AsyncHandler for IntercomDoorLock<OnUnlock> {
             if ctx.attr().is_system() {
                 ctx.attr().cluster()?.read(ctx.attr(), writer)
             } else {
-                let attr_id = ctx.attr().attr_id;
-                info!("DoorLock: read attr {}", attr_id);
-                match attr_id as u16 {
+                match ctx.attr().attr_id as u16 {
                     // LockState (id=0): Nullable<DlLockState>
                     x if x == door_lock::AttributeId::LockState as u16 => {
                         let state = match self.lock_state.load(Ordering::Relaxed) {

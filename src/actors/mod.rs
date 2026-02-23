@@ -9,5 +9,7 @@
 
 pub mod access_control;
 pub mod door;
+pub mod factory_reset;
 pub mod indicator;
+pub mod matter_controller;
 pub mod ring;

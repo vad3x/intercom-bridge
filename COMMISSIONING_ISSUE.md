@@ -1,10 +1,10 @@
-# Apple Home Commissioning Failure — Root Cause Analysis
+# Apple Home Commissioning — Root Cause Analysis & Resolution
 
 ## Summary
 
-The ESP32-C6 Matter device fails to complete Apple Home commissioning. The first fabric (Fabric 1) commissions successfully, but the second fabric (Fabric 2 — Apple's operational fabric) always fails because its 30-second fail-safe timer expires before the Apple Home Hub establishes a CASE session over IP.
+The ESP32-C6 Matter device originally failed Apple Home commissioning because the 30-second Fabric-2 fail-safe expired before the Apple Home Hub could complete a CASE session over IP. After extensive debugging, the issue was resolved with two targeted patches to the `rs-matter` / `rs-matter-embassy` vendor crates. The device now commissions reliably with both Apple Home and Aqara Home.
 
-This is the same issue as [rs-matter-embassy #37](https://github.com/sysgrok/rs-matter-embassy/issues/37).
+Related: [rs-matter-embassy #37](https://github.com/sysgrok/rs-matter-embassy/issues/37)
 
 ## Commissioning Flow (Matter over WiFi with BLE)
 
@@ -13,102 +13,158 @@ Apple Home commissions in two phases:
 1. **BLE phase** — PASE pairing, device attestation, WiFi credentials, AddNOC for **Fabric 1** (Apple's admin fabric)
 2. **IP phase** — After WiFi connects and mDNS starts, the Hub opens a CASE session over WiFi, subscribes to the device, then commissions **Fabric 2** (Apple's operational/HomeKit fabric) with a **30-second fail-safe**
 
-The critical requirement: the Hub must discover the device via mDNS, establish a CASE session, run AddNOC, and send CommissioningComplete — all within 30 seconds.
+The critical requirement: the Hub must discover the device via mDNS, establish a CASE session, run AddNOC, and send CommissioningComplete — all within the fail-safe window.
 
-## What Happens (from `new-log5.log`)
+## Why Commissioning Takes >30 Seconds
 
-| Time | Event | Status |
-|------|-------|--------|
-| 00:01:36 | ArmFailSafe(120s) via BLE | ✅ |
-| 00:01:42 | AddNOC → Fabric 1 added | ✅ |
-| 00:01:42 | ArmFailSafe(177s), ConnectNetwork | ✅ |
-| 00:01:47 | WiFi up, IP 192.168.0.136 | ✅ |
-| 00:01:51 | mDNS starts broadcasting | ✅ |
-| 00:01:51 | CASE Sigma1 from stale node `b7da0709…` | ❌ "Fabric Index mismatch" |
-| 00:01:51–00:02:49 | Device retransmits StatusReport 11× — Hub never ACKs | ⏳ 58s wasted |
-| 00:02:49 | New CASE Sigma1 from correct node `d21069b0…` | ✅ |
-| 00:02:51 | CommissioningComplete → Fabric 1 done | ✅ |
-| 00:02:53 | ArmFailSafe(**30s**) — Fabric 2 commissioning starts | ⏱️ |
-| 00:02:55 | AddNOC → Fabric 2 added to device | ✅ |
-| ~00:03:23 | **30s fail-safe expires** (no CommissioningComplete received) | ❌ |
-| 00:03:55 | CASE Sigma1 for Fabric 2 finally arrives (59s after AddNOC) | ✅ (too late) |
-| 00:03:58 | CommissioningComplete → **NoFailSafe** | ❌ |
-| 00:03:58 | Hub removes Fabric 1, device left in limbo | 💀 |
+The 30-second fail-safe was designed for devices with hardware ECC accelerators. The ESP32-C6 (160 MHz RISC-V, no P-256 hardware acceleration) cannot finish the required crypto within that window.
 
-## Root Causes
+### Software P-256 Crypto (Primary Bottleneck)
 
-### 1. Stale CASE Session from Previous Commissioning
+Matter commissioning requires multiple heavy elliptic curve operations:
 
-The Apple Home Hub remembers a node identity (`b7da0709…`) from a **previous failed commissioning attempt**. When the device appears on the network, the Hub immediately tries to reach it using the old identity. The device (which was erased) rejects it with "Fabric Index mismatch" and sends a StatusReport error.
+| Step | Crypto operation | Approx. time on ESP32-C6 |
+|------|-----------------|-------------------------|
+| PASE/CASE key exchange | ECDH (P-256) | 2–5s |
+| Attestation verification | ECDSA verify | 2–4s |
+| CSR generation | ECDSA sign | 2–4s |
+| NOC processing | ECDSA verify + key derivation | 2–5s |
 
-The Hub **never acknowledges** this StatusReport, so the device retransmits it 11 times over **58 seconds** with exponential backoff. Only after giving up does the Hub retry with the correct identity.
+**Total crypto time alone: ~10–18s**, leaving almost no margin for network overhead.
 
-**Impact:** Wastes ~60 seconds before Fabric 1's CASE session succeeds.
+### MRP Retransmission Cascade
 
-### 2. ~60-Second mDNS Discovery Delay for Fabric 2
+While the CPU crunches a multi-second ECDH computation, it cannot send MRP acknowledgements. The commissioner times out and re-sends, adding 1–3s per retry with exponential backoff. Typically 3–5 retransmissions occur per commissioning, adding **~5–10s**.
 
-After Fabric 2's AddNOC, the device updates its mDNS records with a new operational instance ID. The Hub needs to discover this new instance and initiate a CASE session. This takes **~59 seconds**, but the fail-safe is only **30 seconds**.
+### mDNS Operational Discovery Gap
 
-The delay is likely caused by:
-- The Hub's mDNS browse/retry interval (~60 seconds)
-- Possible multicast propagation delays between 2.4 GHz (device) and 5 GHz (Hub) on the Omada network
+After `AddNOC`, the commissioner must discover the device's new operational instance via mDNS. The default `rs-matter` `BuiltinMdnsResponder` sends periodic announcements every **15 seconds**. If the commissioner misses the initial burst, it waits for the next cycle.
 
-### 3. RX QUEUE FULL During Crypto Operations
+### Single-Core Cooperative Async
 
-During ECDSA signing (CSR Request), the CPU is fully occupied for ~1 second, causing `RX QUEUE FULL` warnings. While not the primary cause, this contributes to packet loss and retransmissions.
+Embassy runs all tasks on one core. During crypto operations, mDNS responses and MRP ACKs are starved — there are no preemptive yield points in the crypto path. This amplifies all other delays.
+
+### Wi-Fi Reconnect During Multi-Admin (Fixed)
+
+During multi-admin commissioning (e.g., adding Aqara from Apple Home), the Matter stack re-calls `connect()` with the same Wi-Fi credentials. Without protection, this triggers a full Wi-Fi **stop → reconfigure → start** cycle, killing all active Matter sessions and causing "No valid session found" drops.
+
+## Root Causes (Original Failure)
+
+### 1. 30-Second Fail-Safe Too Short for Software Crypto
+
+The commissioner (Apple Home Hub) sends `ArmFailSafe(30s)` for Fabric 2. With ~15–25s of crypto + retransmission + mDNS discovery overhead, the device cannot complete `CommissioningComplete` before the fail-safe expires.
+
+### 2. Wi-Fi Reconnect Drops Active Sessions
+
+The `EspWifiController::connect()` method unconditionally stopped and restarted Wi-Fi, even when already connected with the same SSID/password. During multi-admin flows, this killed active CASE sessions and forced the commissioner to retry from scratch.
+
+### 3. Flash Persistence Offset Mismatch (Fixed Early)
+
+The custom `EspFlash` driver was incorrectly treating `embedded-storage`'s region-relative offsets as absolute flash addresses. This corrupted Matter KVS data and caused `Error::StdIoError` panics at startup.
+
+### 4. Stale CASE Session from Previous Commissioning
+
+The Apple Home Hub remembers node identities from previous failed attempts. When the device appears on the network, the Hub tries the old identity first. The device rejects it, but the Hub never ACKs the error, causing 11 retransmissions over ~58 seconds before falling back to a fresh identity.
+
+### 5. Debug Logging UART Saturation
+
+At `Debug` log level, the `BuiltinMdnsResponder` floods UART with ~20 messages/second. Since `esp_println!` uses blocking I/O, this starves the CPU during commissioning and amplifies packet loss.
+
+## Resolution
+
+Two vendor patches are required for reliable commissioning:
+
+### Patch 1: Fail-Safe Timeout Clamp (120s minimum)
+
+**File:** `vendor/rs-matter/rs-matter/src/failsafe.rs`
+
+Enforces a minimum 120-second fail-safe window on the device side, regardless of what the commissioner requests. This gives the ESP32-C6 enough time to complete all P-256 crypto, MRP retransmissions, and mDNS discovery.
+
+```rust
+const MIN_FAILSAFE_TIMEOUT_SECS: u16 = 120;
+
+// In FailSafe::arm():
+let effective_timeout_secs = timeout_secs.max(MIN_FAILSAFE_TIMEOUT_SECS);
+```
+
+**Why this is necessary:** The commissioner cannot be told to send a larger fail-safe value — `ArmFailSafe` timeout is decided by the commissioner, not the device. The `CommPolicy::failsafe_expiry_len_secs()` is informational only and Apple Home ignores it for Fabric 2.
+
+### Patch 2: Wi-Fi Reconnect Guard
+
+**File:** `vendor/rs-matter-embassy/src/wifi/esp.rs`
+
+Skips redundant Wi-Fi stop/start cycles when `connect()` is called with the same credentials and the device is already connected. Uses a simple FNV-1a hash to detect identical credential sets.
+
+```rust
+// In EspWifiController::connect():
+if ctl.is_connected()?
+    && self.1.lock(|connected| connected.get())
+    && self.2.lock(|last_hash| last_hash.get() == requested_hash)
+{
+    info!("Wifi already connected with requested credentials, skipping reconnect");
+    return Ok(());
+}
+```
+
+**Why this is necessary:** During multi-admin commissioning, the Matter stack calls `connect()` for each fabric. Without this guard, the Wi-Fi restart kills all active sessions and causes cascading failures.
+
+### Other Fixes (In Main Codebase)
+
+| Fix | File | Effect |
+|-----|------|--------|
+| Added `OperatingMode` + `SupportedOperatingModes` attrs | `src/drivers/matter/door_lock.rs` | DoorLock cluster spec-compliant |
+| Per-module log filtering | `src/utils/uptime_logger.rs` | Suppresses noisy mDNS/BLE debug logs |
+| Default log level set to `Info` | `src/main.rs` | Prevents UART saturation during commissioning |
+| Fixed flash offset mismatch in KVS driver | `src/drivers/flash.rs` | Correct Matter KVS persistence |
+| HEAP_SIZE increased to 210 KB | `src/main.rs` | Sufficient memory for Matter stack |
+
+## Patches Explored and Rolled Back
+
+These patches were tested during debugging but are **not required** for stable commissioning:
+
+| Patch | File | Reason rolled back |
+|-------|------|--------------------|
+| Aggressive mDNS tuning (1s periodic, 30 bursts) | `vendor/rs-matter/.../builtin.rs` | Not needed with 120s fail-safe; added unnecessary traffic |
+| MRP retransmission reduction (10→4, backoff 1.6→1.4) | `vendor/rs-matter/.../mrp.rs` | Caused premature exchange drops |
+| BLE panic→retry conversion | `vendor/rs-matter-embassy/src/ble.rs` | Caused infinite retry loops instead of clean resets |
+| Interruptible mDNS burst pacing | `vendor/rs-matter/.../builtin.rs` | Minor improvement, not worth the patch complexity |
+
+## Commissioning Results
+
+| Scenario | Status |
+|----------|--------|
+| Fresh commission to Apple Home | ✅ Works (~60s, within 120s fail-safe) |
+| Fresh commission to Aqara Home | ✅ Works (even without patches) |
+| Multi-admin: Apple Home → Aqara Home | ✅ Works (requires both patches) |
+| Multi-admin: Aqara Home → Apple Home | ✅ Works (requires both patches) |
+| Re-commission after device removal | ✅ Works (erase `matter_kvs` first recommended) |
+
+## Potential Future Improvements
+
+| Action | Expected improvement |
+|--------|---------------------|
+| Build with `--release` + LTO | Crypto 2–3× faster, may reduce total time to ~30–40s |
+| Targeted mDNS speed-up (faster change-triggered burst) | Save ~5–10s on operational discovery |
+| Yield points in crypto path (upstream `rs-matter`) | Allow MRP ACKs during ECDH — reduces retransmissions |
+| Hardware with P-256 accelerator | Crypto drops to <1s per operation |
 
 ## Environment
 
 - **Device:** ESP32-C6 (DFRobot Beetle), Rust/Embassy, `rs-matter` + `rs-matter-embassy`
 - **Network:** TP-Link Omada SDN, device on 2.4 GHz WiFi, Apple Home Hub on 5 GHz WiFi
 - **Hub:** Apple TV / HomePod (acts as Matter commissioner)
-- **C++ version:** Works fine with the same network setup (ESP-IDF + ESP-Matter SDK)
+- **Alt Commissioner:** Aqara Hub M3 / Aqara Home app
+- **C++ version:** Works within 30s fail-safe (ESP-IDF + mbedTLS likely has better-optimized P-256)
 
-## Diagnostic Findings
+## Useful Commands
 
-### mDNS Works Across Bands
-
-`dns-sd -B _matterc._udp` from a Mac on the Omada network **does** see the device's commissioning advertisement, confirming multicast flows between 2.4 GHz and 5 GHz.
-
-### DoorLock Attributes (Fixed)
-
-Two mandatory DoorLock attributes were missing (`OperatingMode` and `SupportedOperatingModes`). These have been added but are not the cause of the commissioning timeout.
-
-### Debug Logging Exacerbates the Issue
-
-Setting log level to `Debug` causes the `BuiltinMdnsResponder` to flood the UART with mDNS service enumeration (~20 messages/second). Since `esp_println!` uses blocking I/O, this starves the CPU and causes packet loss. Per-module log filtering was added to `uptime_logger.rs` to suppress noisy modules while keeping debug output for transport/CASE/PASE.
-
-### Bump Allocator Memory
-
-`BUMP_SIZE` is set to 36000 bytes. After initialization, ~19748 bytes remain free — sufficient for CASE sessions and subscriptions.
-
-## Fixes Applied So Far
-
-| Fix | File | Effect |
-|-----|------|--------|
-| Added `OperatingMode` + `SupportedOperatingModes` attrs | `src/drivers/matter/door_lock.rs` | DoorLock cluster now spec-compliant |
-| Per-module log filtering | `src/utils/uptime_logger.rs` | Suppresses mDNS/bump spam at Debug level |
-| BUMP_SIZE restored to 36000 | `src/drivers/matter/mod.rs` | Sufficient memory for CASE sessions |
-
-## Next Steps
-
-### Immediate: Clean Stale State
-
-1. **Remove the device from Apple Home** (Settings → Home → device → Remove Accessory)
-2. **Erase the matter_kvs partition:**
    ```bash
-   espflash erase-region --port /dev/cu.usbserial-210 0x310000 0x6000
-   ```
-3. Re-flash and attempt commissioning from a clean state
+# Erase Matter KVS partition (clean commissioning state)
+espflash erase-region --port /dev/cu.usbmodem2101 0x310000 0x6000
 
-Without the stale `b7da0709…` identity, the first CASE session should succeed in milliseconds (not 58 seconds), which may leave enough time for Fabric 2 to complete within 30 seconds.
+# Build + flash + monitor
+cargo run
 
-### If Still Failing: Test Network Isolation
-
-Commission using an iPhone hotspot (both device and Hub on same 2.4 GHz network) to rule out Omada multicast issues:
-- Change WiFi SSID/password in code to match hotspot
-- Flash and commission
-
-### Upstream: rs-matter-embassy #37
-
-The ~60-second CASE discovery delay for Fabric 2 may be an issue with how `BuiltinMdnsResponder` announces new operational instances after AddNOC. The C++ ESP-IDF mDNS implementation sends gratuitous announcements immediately; `rs-matter` may not. This needs investigation in the upstream `rs-matter` / `rs-matter-embassy` crates.
+# Monitor only (after flash)
+cargo espflash monitor --port /dev/cu.usbmodem2101
+```

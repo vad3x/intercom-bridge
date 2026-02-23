@@ -8,6 +8,7 @@
 //! Driver traits are defined in `src/actors/` — each actor defines the
 //! trait it needs, and the GPIO drivers here implement them.
 
+pub mod boot_button;
 pub mod door;
 pub mod led;
 pub mod ring;

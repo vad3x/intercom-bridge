@@ -37,6 +37,8 @@ use rs_matter_embassy::stack::UserTask;
 use rs_matter_embassy::wireless::esp::EspWifiDriver;
 use rs_matter_embassy::wireless::{EmbassyWifi, EmbassyWifiMatterStack};
 
+use crate::drivers::flash::EspFlash;
+
 use super::{MatterCluster, BUMP_SIZE};
 
 // ============================================================================
@@ -58,6 +60,8 @@ pub struct MatterControllerConfig {
     pub peripherals: MatterPeripherals,
     /// Device identity for the Basic Information cluster.
     pub device_info: DeviceInfo,
+    /// KV blob store for Matter commissioning data persistence.
+    pub persist: EmbassyKvBlobStore<EspFlash>,
 }
 
 /// Hardware peripherals required by the WiFi+BLE Matter stack.
@@ -253,10 +257,8 @@ impl<OnConnecting: Fn(), OnConnected: Fn(), H: AsyncHandler>
         let weak_rand = crypto.weak_rand().unwrap();
 
         // Persistence (commissioning data -> flash partition)
-        let flash = crate::drivers::flash::EspFlash::new(crate::config::MATTER_KVS_RANGE);
-        let kvs = EmbassyKvBlobStore::new(flash, crate::config::MATTER_KVS_RANGE);
         let persist = stack
-            .create_persist_with_comm_window(&crypto, kvs)
+            .create_persist_with_comm_window(&crypto, config.persist)
             .await
             .unwrap();
 
@@ -265,7 +267,7 @@ impl<OnConnecting: Fn(), OnConnected: Fn(), H: AsyncHandler>
         // Signal that WiFi/CASE negotiation is starting
         (self.on_connecting)();
 
-        // Run the Matter stack forever (WiFi coexistence mode)
+        // Run the Matter stack forever
         let mut monitor = ConnectionMonitor {
             on_connecting: self.on_connecting,
             on_connected: self.on_connected,

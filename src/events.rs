@@ -21,6 +21,8 @@ pub enum SystemState {
     Connecting,
     /// Connected to Matter hub, fully operational
     Connected,
+    /// Factory reset triggered (erasing Matter KVS, rebooting)
+    FactoryReset,
     /// Something went wrong
     Error,
 }
@@ -45,7 +47,7 @@ pub enum Event {
 /// Buffer capacity for the event bus
 const BUS_CAP: usize = 4;
 /// Maximum concurrent subscribers
-const BUS_SUBS: usize = 4;
+const BUS_SUBS: usize = 5;
 /// Maximum concurrent publishers
 const BUS_PUBS: usize = 4;
 
