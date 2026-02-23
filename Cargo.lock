@@ -2884,7 +2884,6 @@ dependencies = [
 [[package]]
 name = "rs-matter"
 version = "0.1.1"
-source = "git+https://github.com/sysgrok/rs-matter?branch=next#5bd264ba8da006b7b6682af22cd8f1968dccfdbb"
 dependencies = [
  "aes",
  "bitflags 2.11.0",
@@ -2934,7 +2933,6 @@ dependencies = [
 [[package]]
 name = "rs-matter-embassy"
 version = "0.1.0"
-source = "git+https://github.com/sysgrok/rs-matter-embassy.git#bab3a1897615386c2e680c2d9c596cdd7ef9cad7"
 dependencies = [
  "bt-hci",
  "cyw43",
@@ -2963,7 +2961,6 @@ dependencies = [
 [[package]]
 name = "rs-matter-macros"
 version = "0.1.0"
-source = "git+https://github.com/sysgrok/rs-matter?branch=next#5bd264ba8da006b7b6682af22cd8f1968dccfdbb"
 dependencies = [
  "convert_case 0.6.0",
  "miette",
@@ -2983,7 +2980,6 @@ dependencies = [
 [[package]]
 name = "rs-matter-stack"
 version = "0.1.0"
-source = "git+https://github.com/sysgrok/rs-matter-stack.git?branch=next#5eac62422f9e3e1a1c87040f8dfede7ba4946daf"
 dependencies = [
  "bitflags 2.11.0",
  "cfg-if",

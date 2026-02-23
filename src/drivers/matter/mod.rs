@@ -31,9 +31,10 @@ pub use occupancy::IntercomOccupancy;
 /// The rs-matter-embassy example uses 16500 for a single cluster (On-Off).
 /// We register two clusters (DoorLock + Occupancy) each with a descriptor
 /// handler, which consumes more bump memory during init. After init the
-/// allocator also needs headroom for CASE sessions and subscription reports.
-/// 20000 gives ~5KB of headroom over observed init usage (~15.6KB).
-const BUMP_SIZE: usize = 20000;
+/// allocator also needs headroom for CASE sessions, subscription reports,
+/// multi-fabric commissioning, and mDNS service records.
+/// Init usage is ~16.3KB; 36000 gives ~20KB headroom for commissioning.
+const BUMP_SIZE: usize = 36000;
 
 // ============================================================================
 // Import cluster declarations from Matter spec

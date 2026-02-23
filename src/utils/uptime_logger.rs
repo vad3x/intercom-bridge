@@ -1,7 +1,9 @@
 //! Uptime logger — `log` implementation with HH:MM:SS.mmm timestamps.
 //!
 //! Uses Embassy's monotonic clock to prefix every log line with the
-//! device uptime in a human-readable format.
+//! device uptime in a human-readable format. Supports per-module
+//! filtering to allow Debug level for interesting modules while
+//! suppressing noisy ones (mDNS, BUMP allocator).
 //!
 //! ```text
 //! 00:00:00.012 INFO  intercom_matter - === Smart Intercom Starting ===
@@ -10,8 +12,37 @@
 
 struct UptimeLogger;
 
+/// Modules suppressed at Debug/Trace level (only Info+ passes).
+/// These produce high-volume output that blocks the UART and starves the CPU.
+///
+/// Prefix match — any target starting with these strings is suppressed.
+const SUPPRESSED_DEBUG_PREFIXES: &[&str] = &[
+    "rs_matter::transport::network::mdns", // mDNS broadcast flood
+    "trouble_host",                        // BLE host internals
+];
+
+/// Exact-match targets suppressed at Debug/Trace level.
+/// The `rs_matter` root module logs mDNS service enumeration at debug!
+/// level (~20/sec), but sub-modules like `rs_matter::transport` and
+/// `rs_matter::sc` contain the useful CASE/PASE diagnostics we need.
+const SUPPRESSED_DEBUG_EXACT: &[&str] = &[];
+
 impl log::Log for UptimeLogger {
-    fn enabled(&self, _: &log::Metadata) -> bool {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        // For Debug/Trace, suppress noisy modules
+        if metadata.level() > log::Level::Info {
+            let target = metadata.target();
+            for exact in SUPPRESSED_DEBUG_EXACT {
+                if target == *exact {
+                    return false;
+                }
+            }
+            for prefix in SUPPRESSED_DEBUG_PREFIXES {
+                if target.starts_with(prefix) {
+                    return false;
+                }
+            }
+        }
         true
     }
 

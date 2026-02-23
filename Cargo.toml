@@ -11,8 +11,8 @@ path = "src/main.rs"
 harness = false
 
 [patch.crates-io]
-rs-matter = { git = "https://github.com/sysgrok/rs-matter", branch = "next" }
-rs-matter-stack = { git = "https://github.com/sysgrok/rs-matter-stack.git", branch = "next" }
+rs-matter = { path = "vendor/rs-matter/rs-matter" }
+rs-matter-stack = { path = "vendor/rs-matter-stack" }
 openthread = { git = "https://github.com/sysgrok/openthread.git" }
 
 [profile.dev]
@@ -55,7 +55,7 @@ esp-println = { version = "0.16", features = ["log-04"] }
 esp-radio = { version = "0.17", features = ["ble", "log-04", "unstable"] }
 esp-bootloader-esp-idf = { version = "0.4", features = ["log-04"] }
 esp-metadata-generated = "0.3"
-rs-matter-embassy = { git = "https://github.com/sysgrok/rs-matter-embassy.git", features = ["esp", "embassy-net", "log", "kv-blob-store-8192"] }
+rs-matter-embassy = { path = "vendor/rs-matter-embassy", features = ["esp", "embassy-net", "log", "kv-blob-store-8192"] }
 tinyrlibc = { version = "0.5", default-features = false, features = ["utoa", "strtoul"] }
 static_cell = "2"
 portable-atomic = "1"

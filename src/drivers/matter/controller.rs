@@ -252,7 +252,7 @@ impl<OnConnecting: Fn(), OnConnected: Fn(), H: AsyncHandler>
         );
         let weak_rand = crypto.weak_rand().unwrap();
 
-        // Persistence (commissioning data → NVS flash partition)
+        // Persistence (commissioning data -> flash partition)
         let flash = crate::drivers::flash::EspFlash::new(crate::config::MATTER_KVS_RANGE);
         let kvs = EmbassyKvBlobStore::new(flash, crate::config::MATTER_KVS_RANGE);
         let persist = stack

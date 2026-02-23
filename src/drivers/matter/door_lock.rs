@@ -21,7 +21,9 @@ use rs_matter::error::{Error, ErrorCode};
 use rs_matter::tlv::Nullable;
 use rs_matter::with;
 
-use super::clusters_gen::door_lock::{self, DlLockState, DlLockType};
+use super::clusters_gen::door_lock::{
+    self, DlLockState, DlLockType, DlSupportedOperatingModes, OperatingModeEnum,
+};
 use super::MatterCluster;
 
 // ============================================================================
@@ -79,14 +81,17 @@ impl<OnUnlock: Fn()> IntercomDoorLock<OnUnlock> {
 impl<OnUnlock: Fn()> IntercomDoorLock<OnUnlock> {
     /// The subset of the DoorLock cluster we support.
     ///
-    /// We only expose LockState, LockType, ActuatorEnabled attributes
-    /// and Lock/Unlock commands.
+    /// Mandatory attributes: LockState, LockType, ActuatorEnabled,
+    /// OperatingMode, SupportedOperatingModes.
+    /// Commands: LockDoor, UnlockDoor.
     pub const CLUSTER: Cluster<'static> = door_lock::FULL_CLUSTER
         .with_revision(7)
         .with_attrs(with!(
             door_lock::AttributeId::LockState
                 | door_lock::AttributeId::LockType
                 | door_lock::AttributeId::ActuatorEnabled
+                | door_lock::AttributeId::OperatingMode
+                | door_lock::AttributeId::SupportedOperatingModes
         ))
         .with_cmds(with!(
             door_lock::CommandId::LockDoor | door_lock::CommandId::UnlockDoor
@@ -109,7 +114,9 @@ impl<OnUnlock: Fn()> AsyncHandler for IntercomDoorLock<OnUnlock> {
             if ctx.attr().is_system() {
                 ctx.attr().cluster()?.read(ctx.attr(), writer)
             } else {
-                match ctx.attr().attr_id as u16 {
+                let attr_id = ctx.attr().attr_id;
+                info!("DoorLock: read attr {}", attr_id);
+                match attr_id as u16 {
                     // LockState (id=0): Nullable<DlLockState>
                     x if x == door_lock::AttributeId::LockState as u16 => {
                         let state = match self.lock_state.load(Ordering::Relaxed) {
@@ -125,6 +132,14 @@ impl<OnUnlock: Fn()> AsyncHandler for IntercomDoorLock<OnUnlock> {
                     // ActuatorEnabled (id=2): bool
                     x if x == door_lock::AttributeId::ActuatorEnabled as u16 => {
                         Reply::set(writer, true)
+                    }
+                    // OperatingMode (id=37): OperatingModeEnum
+                    x if x == door_lock::AttributeId::OperatingMode as u16 => {
+                        Reply::set(writer, OperatingModeEnum::Normal)
+                    }
+                    // SupportedOperatingModes (id=38): DlSupportedOperatingModes
+                    x if x == door_lock::AttributeId::SupportedOperatingModes as u16 => {
+                        Reply::set(writer, DlSupportedOperatingModes::NORMAL)
                     }
                     _ => Err(ErrorCode::AttributeNotFound.into()),
                 }
