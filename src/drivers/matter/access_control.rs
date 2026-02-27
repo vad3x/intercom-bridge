@@ -14,15 +14,17 @@ use super::occupancy::IntercomOccupancy;
 ///
 /// Wraps references to both Matter cluster handlers and delegates
 /// `AccessControlDriver` trait methods to their respective methods.
-pub struct MatterAccessControlDriver<'a, OnUnlock: Fn()> {
-    door_lock: &'a IntercomDoorLock<OnUnlock>,
-    occupancy: &'a IntercomOccupancy,
+pub struct MatterAccessControlDriver<'a, OnUnlock: Fn(), OnDoorReady: Fn(), OnOccReady: Fn()> {
+    door_lock: &'a IntercomDoorLock<OnUnlock, OnDoorReady>,
+    occupancy: &'a IntercomOccupancy<OnOccReady>,
 }
 
-impl<'a, OnUnlock: Fn()> MatterAccessControlDriver<'a, OnUnlock> {
+impl<'a, OnUnlock: Fn(), OnDoorReady: Fn(), OnOccReady: Fn()>
+    MatterAccessControlDriver<'a, OnUnlock, OnDoorReady, OnOccReady>
+{
     pub fn new(
-        door_lock: &'a IntercomDoorLock<OnUnlock>,
-        occupancy: &'a IntercomOccupancy,
+        door_lock: &'a IntercomDoorLock<OnUnlock, OnDoorReady>,
+        occupancy: &'a IntercomOccupancy<OnOccReady>,
     ) -> Self {
         Self {
             door_lock,
@@ -31,7 +33,9 @@ impl<'a, OnUnlock: Fn()> MatterAccessControlDriver<'a, OnUnlock> {
     }
 }
 
-impl<OnUnlock: Fn()> AccessControlDriver for MatterAccessControlDriver<'_, OnUnlock> {
+impl<OnUnlock: Fn(), OnDoorReady: Fn(), OnOccReady: Fn()> AccessControlDriver
+    for MatterAccessControlDriver<'_, OnUnlock, OnDoorReady, OnOccReady>
+{
     fn set_occupancy(&self, occupied: bool) {
         self.occupancy.set_occupancy(occupied);
     }

@@ -27,6 +27,7 @@ overflow-checks = false
 
 [features]
 default = ["esp32c6"]
+dummy-persist = []
 esp32c6 = [
     "esp-rtos/esp32c6",
     "esp-hal/esp32c6",

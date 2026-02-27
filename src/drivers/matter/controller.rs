@@ -33,13 +33,11 @@ use rs_matter_embassy::epoch::epoch;
 use rs_matter_embassy::matter::crypto::{default_crypto, Crypto};
 use rs_matter_embassy::matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM};
 use rs_matter_embassy::matter::utils::init::InitMaybeUninit;
-use rs_matter_embassy::persist::EmbassyKvBlobStore;
+use rs_matter_embassy::stack::persist::KvBlobStore;
 use rs_matter_embassy::stack::rand::reseeding_csprng;
 use rs_matter_embassy::stack::UserTask;
 use rs_matter_embassy::wireless::esp::EspWifiDriver;
 use rs_matter_embassy::wireless::{EmbassyWifi, EmbassyWifiMatterStack};
-
-use crate::drivers::flash::EspFlash;
 
 use super::{MatterCluster, BUMP_SIZE};
 
@@ -57,13 +55,17 @@ const PID: u16 = 0x8001;
 // ============================================================================
 
 /// Configuration for the Matter controller.
-pub struct MatterControllerConfig {
+///
+/// Generic over `S: KvBlobStore` — the persistence backend for Matter
+/// commissioning data. Typically `EmbassyKvBlobStore<EspFlash>` on real
+/// hardware, but can be swapped for testing or alternative flash drivers.
+pub struct MatterControllerConfig<S: KvBlobStore> {
     /// Hardware peripherals for WiFi+BLE.
     pub peripherals: MatterPeripherals,
     /// Device identity for the Basic Information cluster.
     pub device_info: DeviceInfo,
     /// KV blob store for Matter commissioning data persistence.
-    pub persist: EmbassyKvBlobStore<EspFlash>,
+    pub store: S,
 }
 
 /// Hardware peripherals required by the WiFi+BLE Matter stack.
@@ -113,25 +115,27 @@ struct EndpointMeta {
 /// Starts above the cluster handler datavers (which use 1, 2, …).
 static DESC_DATAVER_COUNTER: portable_atomic::AtomicU32 = portable_atomic::AtomicU32::new(100);
 
-pub struct MatterController<OnConnecting, OnConnected, H = EmptyHandler>
+pub struct MatterController<S: KvBlobStore, OnConnecting, OnConnected, H = EmptyHandler>
 where
     OnConnecting: Fn(),
     OnConnected: Fn(),
 {
     handler: H,
     endpoint_metas: Vec<EndpointMeta>,
-    config: MatterControllerConfig,
+    config: MatterControllerConfig<S>,
     on_connecting: OnConnecting,
     on_connected: OnConnected,
 }
 
-impl<OnConnecting: Fn(), OnConnected: Fn()> MatterController<OnConnecting, OnConnected> {
+impl<S: KvBlobStore, OnConnecting: Fn(), OnConnected: Fn()>
+    MatterController<S, OnConnecting, OnConnected>
+{
     /// Start building a new Matter WiFi node with an empty handler chain.
     ///
     /// `on_connecting` is called when the WiFi/CASE handshake starts.
     /// `on_connected` is called each time the operational network comes up.
     pub fn new(
-        config: MatterControllerConfig,
+        config: MatterControllerConfig<S>,
         on_connecting: OnConnecting,
         on_connected: OnConnected,
     ) -> Self {
@@ -145,8 +149,8 @@ impl<OnConnecting: Fn(), OnConnected: Fn()> MatterController<OnConnecting, OnCon
     }
 }
 
-impl<OnConnecting: Fn(), OnConnected: Fn(), H: AsyncHandler>
-    MatterController<OnConnecting, OnConnected, H>
+impl<S: KvBlobStore, OnConnecting: Fn(), OnConnected: Fn(), H: AsyncHandler>
+    MatterController<S, OnConnecting, OnConnected, H>
 {
     /// Register a cluster handler.
     ///
@@ -157,9 +161,10 @@ impl<OnConnecting: Fn(), OnConnected: Fn(), H: AsyncHandler>
     pub fn register<'b, C: MatterCluster>(
         mut self,
         cluster: &'b C,
-    ) -> MatterController<OnConnecting, OnConnected, impl AsyncHandler + 'b>
+    ) -> MatterController<S, OnConnecting, OnConnected, impl AsyncHandler + 'b>
     where
         H: 'b,
+        S: 'b,
         OnConnecting: 'b,
         OnConnected: 'b,
     {
@@ -185,7 +190,7 @@ impl<OnConnecting: Fn(), OnConnected: Fn(), H: AsyncHandler>
             ),
         );
 
-        MatterController {
+        MatterController::<S, _, _, _> {
             handler: new_handler,
             endpoint_metas: self.endpoint_metas,
             config: self.config,
@@ -260,7 +265,7 @@ impl<OnConnecting: Fn(), OnConnected: Fn(), H: AsyncHandler>
 
         // Persistence (commissioning data -> flash partition)
         let persist = stack
-            .create_persist_with_comm_window(&crypto, config.persist)
+            .create_persist_with_comm_window(&crypto, config.store)
             .await
             .unwrap();
 

@@ -7,7 +7,7 @@
 //! so HomeKit receives prompt state updates (without it, the app stays on
 //! "Unlocking…" until the periodic subscription timer fires).
 
-use core::sync::atomic::{AtomicU8, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::signal::Signal;
@@ -30,6 +30,17 @@ use super::MatterCluster;
 // Door Lock handler
 // ============================================================================
 
+/// Configuration for `IntercomDoorLock`.
+///
+/// Groups callbacks passed at construction time, keeping the constructor
+/// signature stable as new callbacks are added.
+pub struct IntercomDoorLockConfig<OnUnlock: Fn(), OnReady: Fn()> {
+    /// Called when HomeKit sends an unlock command.
+    pub on_unlock: OnUnlock,
+    /// Called when the cluster is first read (subscription primed in Apple Home).
+    pub on_ready: OnReady,
+}
+
 /// Door Lock cluster handler — handles lock/unlock commands from HomeKit.
 ///
 /// Owns its lock state internally (no external atomics).
@@ -40,27 +51,34 @@ use super::MatterCluster;
 /// internal `state_changed` signal, which wakes the `run()` background task.
 /// That task then calls `ctx.notify_attribute_changed()` to push a
 /// subscription report to HomeKit.
-pub struct IntercomDoorLock<OnUnlock: Fn()> {
+pub struct IntercomDoorLock<OnUnlock: Fn(), OnReady: Fn()> {
+    config: IntercomDoorLockConfig<OnUnlock, OnReady>,
     dataver: Dataver,
     lock_state: AtomicU8,
     /// Signal used to wake the `run()` background task when an out-of-band
     /// state change (e.g. auto-relock) needs to push a subscription report.
     state_changed: Signal<NoopRawMutex, ()>,
-    on_unlock: OnUnlock,
+    /// Guards `on_ready` so it fires only once per connection cycle
+    /// (on the first subscription priming read from Apple Home).
+    ready_notified: AtomicBool,
 }
 
-impl<OnUnlock: Fn()> IntercomDoorLock<OnUnlock> {
+impl<OnUnlock: Fn(), OnReady: Fn()> IntercomDoorLock<OnUnlock, OnReady> {
     /// Create a new Door Lock handler.
     ///
-    /// `on_unlock` is called (from sync Matter context) when HomeKit sends
-    /// an unlock command. Typically wired to publish `Event::UnlockDispatched`
-    /// to the event bus.
-    pub fn new(on_unlock: OnUnlock) -> Self {
+    /// `config.on_unlock` is called (from sync Matter context) when HomeKit
+    /// sends an unlock command. Typically wired to publish
+    /// `Event::UnlockDispatched` to the event bus.
+    ///
+    /// `config.on_ready` is called when the cluster is first read by Apple Home,
+    /// signalling that subscriptions have been primed.
+    pub fn new(config: IntercomDoorLockConfig<OnUnlock, OnReady>) -> Self {
         Self {
+            config,
             dataver: Dataver::new(1),
             lock_state: AtomicU8::new(DlLockState::Locked as u8),
             state_changed: Signal::new(),
-            on_unlock,
+            ready_notified: AtomicBool::new(false),
         }
     }
 
@@ -78,7 +96,7 @@ impl<OnUnlock: Fn()> IntercomDoorLock<OnUnlock> {
     }
 }
 
-impl<OnUnlock: Fn()> IntercomDoorLock<OnUnlock> {
+impl<OnUnlock: Fn(), OnReady: Fn()> IntercomDoorLock<OnUnlock, OnReady> {
     /// The subset of the DoorLock cluster we support.
     ///
     /// Mandatory attributes: LockState, LockType, ActuatorEnabled,
@@ -98,7 +116,7 @@ impl<OnUnlock: Fn()> IntercomDoorLock<OnUnlock> {
         ));
 }
 
-impl<OnUnlock: Fn()> MatterCluster for IntercomDoorLock<OnUnlock> {
+impl<OnUnlock: Fn(), OnReady: Fn()> MatterCluster for IntercomDoorLock<OnUnlock, OnReady> {
     const ENDPOINT_ID: u16 = crate::config::DOOR_LOCK_ENDPOINT_ID;
     const CLUSTER_DEF: Cluster<'static> = Self::CLUSTER;
     /// Door Lock device type (Matter spec 0x000A, rev 3)
@@ -108,8 +126,12 @@ impl<OnUnlock: Fn()> MatterCluster for IntercomDoorLock<OnUnlock> {
     };
 }
 
-impl<OnUnlock: Fn()> AsyncHandler for IntercomDoorLock<OnUnlock> {
+impl<OnUnlock: Fn(), OnReady: Fn()> AsyncHandler for IntercomDoorLock<OnUnlock, OnReady> {
     async fn read(&self, ctx: impl ReadContext, reply: impl ReadReply) -> Result<(), Error> {
+        if !self.ready_notified.swap(true, Ordering::Relaxed) {
+            (self.config.on_ready)();
+        }
+
         if let Some(writer) = reply.with_dataver(self.dataver.get())? {
             if ctx.attr().is_system() {
                 ctx.attr().cluster()?.read(ctx.attr(), writer)
@@ -188,7 +210,7 @@ impl<OnUnlock: Fn()> AsyncHandler for IntercomDoorLock<OnUnlock> {
                 );
 
                 // Notify app layer (sync context — non-blocking)
-                (self.on_unlock)();
+                (self.config.on_unlock)();
 
                 Ok(())
             }

@@ -12,7 +12,7 @@ use crate::actors::access_control::{AccessControlActor, AccessControlDriver};
 use crate::actors::door::{DoorActor, DoorDriver};
 use crate::actors::factory_reset::{FactoryResetActor, FactoryResetDriver};
 use crate::actors::indicator::{IndicatorActor, IndicatorDriver};
-use crate::actors::matter_controller::MatterControllerActor;
+use crate::actors::matter_controller::{MatterControllerActor, MatterControllerActorConfig};
 use crate::actors::ring::{RingActor, RingDriver};
 use crate::events::{Event, EventBus, SystemState};
 
@@ -53,7 +53,7 @@ where
         indicator: I,
         access_control: A,
         factory_reset: F,
-        on_factory_reset: fn(),
+        matter_controller_config: MatterControllerActorConfig,
     ) -> Self {
         Self {
             ring_actor: RingActor::new(ring),
@@ -61,7 +61,7 @@ where
             indicator_actor: IndicatorActor::new(indicator),
             access_control_actor: AccessControlActor::new(access_control),
             factory_reset_actor: FactoryResetActor::new(factory_reset),
-            matter_controller_actor: MatterControllerActor::new(on_factory_reset),
+            matter_controller_actor: MatterControllerActor::new(matter_controller_config),
         }
     }
 
@@ -69,12 +69,12 @@ where
     ///
     /// Each actor creates its own publisher/subscriber from the bus.
     pub async fn run(mut self, bus: &EventBus) {
-        info!("publishing Ready state");
+        info!("publishing Initialized state");
 
-        // Publish Ready state before actors start their loops
+        // Publish Initialized state before actors start their loops
         let state_pub = bus.publisher().unwrap();
         state_pub
-            .publish(Event::SystemState(SystemState::Ready))
+            .publish(Event::SystemState(SystemState::Initialized))
             .await;
 
         info!("starting actors");

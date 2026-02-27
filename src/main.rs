@@ -30,17 +30,23 @@ use esp_hal::timer::timg::TimerGroup;
 use esp_metadata_generated::memory_range;
 
 use log::{info, warn};
+#[cfg(not(feature = "dummy-persist"))]
 use rs_matter_embassy::persist::EmbassyKvBlobStore;
+#[cfg(feature = "dummy-persist")]
+use rs_matter_embassy::stack::persist::DummyKvBlobStore;
 
+use crate::actors::matter_controller::MatterControllerActorConfig;
 use crate::app::App;
+#[cfg(not(feature = "dummy-persist"))]
 use crate::drivers::flash::EspFlash;
 use crate::drivers::gpio::boot_button::{GpioBootButtonConfig, GpioBootButtonDriver};
 use crate::drivers::gpio::door::{GpioDoorConfig, GpioDoorDriver};
 use crate::drivers::gpio::led::GpioLedDriver;
 use crate::drivers::gpio::ring::{GpioRingConfig, GpioRingDriver};
 use crate::drivers::matter::{
-    DeviceInfo, IntercomDoorLock, IntercomOccupancy, MatterAccessControlDriver, MatterController,
-    MatterControllerConfig, MatterPeripherals,
+    DeviceInfo, IntercomDoorLock, IntercomDoorLockConfig, IntercomOccupancy,
+    IntercomOccupancyConfig, MatterAccessControlDriver, MatterController, MatterControllerConfig,
+    MatterPeripherals,
 };
 use crate::events::{Event, EventBus, EventBusExt};
 
@@ -70,11 +76,9 @@ fn custom_halt() -> ! {
 // Matter persistence + factory reset
 // ============================================================================
 
-/// Matter KV blob store backed by ESP32 internal SPI flash.
-type MatterPersist = EmbassyKvBlobStore<EspFlash>;
-
 /// Create the Matter persistence layer for the given flash range.
-fn create_matter_persist(kvs_range: core::ops::Range<u32>) -> MatterPersist {
+#[cfg(not(feature = "dummy-persist"))]
+fn create_embassy_kv_blob_store(kvs_range: core::ops::Range<u32>) -> EmbassyKvBlobStore<EspFlash> {
     let flash = EspFlash::new(kvs_range.clone());
     EmbassyKvBlobStore::new(flash, kvs_range)
 }
@@ -83,6 +87,7 @@ fn create_matter_persist(kvs_range: core::ops::Range<u32>) -> MatterPersist {
 ///
 /// Erases all 4 KiB sectors in the given flash range using ROM SPI flash calls.
 /// This is a blocking operation (~ms per sector, 6 sectors = ~24 ms for 24 KiB).
+#[cfg(not(feature = "dummy-persist"))]
 fn erase_matter_kvs(range: &core::ops::Range<u32>) {
     const SECTOR_SIZE: u32 = 4096;
 
@@ -149,12 +154,17 @@ async fn main(_spawner: Spawner) {
     // Matter drivers — own their state internally
     // ========================================================================
 
-    let door_lock = IntercomDoorLock::new(|| {
-        event_bus
-            .immediate_publisher()
-            .publish_immediate(Event::UnlockDispatched);
+    let door_lock = IntercomDoorLock::new(IntercomDoorLockConfig {
+        on_unlock: || {
+            event_bus
+                .immediate_publisher()
+                .publish_immediate(Event::UnlockDispatched);
+        },
+        on_ready: || event_bus.door_lock_ready(),
     });
-    let occupancy = IntercomOccupancy::new();
+    let occupancy = IntercomOccupancy::new(IntercomOccupancyConfig {
+        on_ready: || event_bus.ring_ready(),
+    });
 
     // ========================================================================
     // Matter controller — register cluster handlers via builder
@@ -178,7 +188,10 @@ async fn main(_spawner: Spawner) {
                 product_name: config::PRODUCT_NAME,
                 device_name: config::DEVICE_NAME,
             },
-            persist: create_matter_persist(config::MATTER_KVS_RANGE),
+            #[cfg(not(feature = "dummy-persist"))]
+            store: create_embassy_kv_blob_store(config::MATTER_KVS_RANGE),
+            #[cfg(feature = "dummy-persist")]
+            store: DummyKvBlobStore,
         },
         || event_bus.connecting(),
         || event_bus.connected(),
@@ -196,9 +209,19 @@ async fn main(_spawner: Spawner) {
     let access_driver = MatterAccessControlDriver::new(&door_lock, &occupancy);
     let boot_button = GpioBootButtonDriver::new(GpioBootButtonConfig::new(peripherals.GPIO9));
 
-    let app = App::new(ring, door, indicator, access_driver, boot_button, || {
-        erase_matter_kvs(&config::MATTER_KVS_RANGE)
-    });
+    let app = App::new(
+        ring,
+        door,
+        indicator,
+        access_driver,
+        boot_button,
+        MatterControllerActorConfig {
+            #[cfg(not(feature = "dummy-persist"))]
+            on_factory_reset: || erase_matter_kvs(&config::MATTER_KVS_RANGE),
+            #[cfg(feature = "dummy-persist")]
+            on_factory_reset: || info!("Factory reset skipped (dummy-persist)"),
+        },
+    );
 
     info!("Smart Intercom Ready");
 

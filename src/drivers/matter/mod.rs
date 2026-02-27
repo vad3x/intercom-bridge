@@ -23,8 +23,8 @@ use rs_matter::dm::{AsyncHandler, Cluster, DeviceType};
 
 pub use access_control::MatterAccessControlDriver;
 pub use controller::{DeviceInfo, MatterController, MatterControllerConfig, MatterPeripherals};
-pub use door_lock::IntercomDoorLock;
-pub use occupancy::IntercomOccupancy;
+pub use door_lock::{IntercomDoorLock, IntercomDoorLockConfig};
+pub use occupancy::{IntercomOccupancy, IntercomOccupancyConfig};
 
 /// Bump allocator size for the Matter protocol stack.
 ///

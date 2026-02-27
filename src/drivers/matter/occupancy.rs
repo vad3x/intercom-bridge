@@ -29,6 +29,15 @@ use super::MatterCluster;
 // Occupancy Sensing handler
 // ============================================================================
 
+/// Configuration for `IntercomOccupancy`.
+///
+/// Groups callbacks passed at construction time, keeping the constructor
+/// signature stable as new callbacks are added.
+pub struct IntercomOccupancyConfig<OnReady: Fn()> {
+    /// Called when the cluster is first read (subscription primed in Apple Home).
+    pub on_ready: OnReady,
+}
+
 /// Occupancy Sensing cluster handler — exposes ring detection as Motion Sensor in HomeKit.
 ///
 /// Owns its occupancy state internally (no external atomics).
@@ -37,23 +46,32 @@ use super::MatterCluster;
 /// `state_changed` signal, which wakes the `run()` background task.
 /// That task then calls `ctx.notify_attribute_changed()` to push a
 /// subscription report to HomeKit.
-pub struct IntercomOccupancy {
+pub struct IntercomOccupancy<OnReady: Fn()> {
+    config: IntercomOccupancyConfig<OnReady>,
     dataver: Dataver,
     occupancy: AtomicBool,
     /// Signal used to wake the `run()` background task when occupancy changes
     /// and a subscription report needs to be pushed to HomeKit.
     state_changed: Signal<NoopRawMutex, ()>,
+    /// Guards `on_ready` so it fires only once per connection cycle
+    /// (on the first subscription priming read from Apple Home).
+    ready_notified: AtomicBool,
 }
 
-impl IntercomOccupancy {
+impl<OnReady: Fn()> IntercomOccupancy<OnReady> {
     /// Create a new Occupancy Sensing handler.
     ///
+    /// `config.on_ready` is called when the cluster is first read by Apple Home,
+    /// signalling that subscriptions have been primed.
+    ///
     /// Occupancy starts as `false` (unoccupied).
-    pub fn new() -> Self {
+    pub fn new(config: IntercomOccupancyConfig<OnReady>) -> Self {
         Self {
+            config,
             dataver: Dataver::new(2),
             occupancy: AtomicBool::new(false),
             state_changed: Signal::new(),
+            ready_notified: AtomicBool::new(false),
         }
     }
 
@@ -70,7 +88,7 @@ impl IntercomOccupancy {
     }
 }
 
-impl IntercomOccupancy {
+impl<OnReady: Fn()> IntercomOccupancy<OnReady> {
     /// The subset of OccupancySensing we support.
     ///
     /// We expose the three mandatory attributes; no commands.
@@ -84,7 +102,7 @@ impl IntercomOccupancy {
         .with_cmds(with!());
 }
 
-impl MatterCluster for IntercomOccupancy {
+impl<OnReady: Fn()> MatterCluster for IntercomOccupancy<OnReady> {
     const ENDPOINT_ID: u16 = crate::config::OCCUPANCY_SENSOR_ENDPOINT_ID;
     const CLUSTER_DEF: Cluster<'static> = Self::CLUSTER;
     /// Occupancy Sensor device type (Matter spec 0x0107, rev 3)
@@ -94,8 +112,12 @@ impl MatterCluster for IntercomOccupancy {
     };
 }
 
-impl AsyncHandler for IntercomOccupancy {
+impl<OnReady: Fn()> AsyncHandler for IntercomOccupancy<OnReady> {
     async fn read(&self, ctx: impl ReadContext, reply: impl ReadReply) -> Result<(), Error> {
+        if !self.ready_notified.swap(true, Ordering::Relaxed) {
+            (self.config.on_ready)();
+        }
+
         if let Some(writer) = reply.with_dataver(self.dataver.get())? {
             if ctx.attr().is_system() {
                 ctx.attr().cluster()?.read(ctx.attr(), writer)

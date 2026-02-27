@@ -67,17 +67,17 @@ impl<I: IndicatorDriver> IndicatorActor<I> {
     /// Event loop: subscribe to bus events and signal the driver.
     async fn event_loop(&self, bus: &EventBus) {
         let mut subscriber = bus.subscriber().unwrap();
-        let mut connecting = false;
+        let mut current = false;
 
         loop {
-            connecting = self.next(&mut subscriber, connecting).await;
+            current = self.next(&mut subscriber, current).await;
         }
     }
 
-    /// Await the next event and handle it. Returns updated `connecting` state.
+    /// Await the next event and handle it. Returns updated `current` state.
     ///
     /// Driver methods are sync (signal-based), so no `.await` on them.
-    async fn next(&self, subscriber: &mut EventBusSubscriber<'_>, connecting: bool) -> bool {
+    async fn next(&self, subscriber: &mut EventBusSubscriber<'_>, current: bool) -> bool {
         let event = subscriber.next_message_pure().await;
 
         match event {
@@ -98,6 +98,10 @@ impl<I: IndicatorDriver> IndicatorActor<I> {
                             .blink(CONNECTING_BLINK_MS, CONNECTING_BLINK_MS, None);
                         true
                     }
+                    SystemState::Initialized => {
+                        self.driver.solid();
+                        false
+                    }
                     SystemState::Ready => {
                         self.driver.solid();
                         false
@@ -117,14 +121,16 @@ impl<I: IndicatorDriver> IndicatorActor<I> {
                 info!("ring → blink");
                 self.driver
                     .blink(RING_BLINK_MS, RING_BLINK_MS, Some(RING_BLINK_COUNT));
-                connecting
+                current
             }
             Event::UnlockDispatched => {
                 info!("unlock → blink");
                 self.driver
                     .blink(UNLOCK_BLINK_MS, UNLOCK_BLINK_MS, Some(UNLOCK_BLINK_COUNT));
-                connecting
+                current
             }
+            // Internal readiness signals — no visual feedback
+            Event::DoorLockReady | Event::RingReady => current,
         }
     }
 }
