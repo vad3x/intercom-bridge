@@ -65,6 +65,24 @@ impl GpioLedDriver {
                 }
                 interrupted
             }
+            IndicatorCommand::Burst {
+                on_ms,
+                off_ms,
+                burst_count,
+                pause_ms,
+            } => {
+                // Continuous burst: N quick blinks + long pause, repeating
+                loop {
+                    // Do the quick blinks
+                    if let Some(next) = self.blink_pattern(burst_count, on_ms, off_ms).await {
+                        return Some(next);
+                    }
+                    // Long pause (LED stays off after blink_pattern)
+                    if let Some(next) = self.interruptible_wait(pause_ms).await {
+                        return Some(next);
+                    }
+                }
+            }
         }
     }
 
@@ -97,6 +115,15 @@ impl GpioLedDriver {
         None
     }
 
+    /// Wait for `ms` milliseconds, interruptible by a new command.
+    /// Returns `Some(cmd)` if interrupted, `None` if the wait completed.
+    async fn interruptible_wait(&self, ms: u64) -> Option<IndicatorCommand> {
+        match select(Timer::after(Duration::from_millis(ms)), self.signal.wait()).await {
+            Either::First(()) => None,
+            Either::Second(cmd) => Some(cmd),
+        }
+    }
+
     /// Turn LED on (active-low: GPIO LOW)
     fn led_on(&self) {
         self.pin.borrow_mut().set_low();
@@ -118,6 +145,15 @@ impl IndicatorDriver for GpioLedDriver {
             on_ms,
             off_ms,
             count,
+        });
+    }
+
+    fn burst(&self, on_ms: u64, off_ms: u64, burst_count: u8, pause_ms: u64) {
+        self.signal.signal(IndicatorCommand::Burst {
+            on_ms,
+            off_ms,
+            burst_count,
+            pause_ms,
         });
     }
 
@@ -148,5 +184,14 @@ enum IndicatorCommand {
         on_ms: u64,
         off_ms: u64,
         count: Option<u8>,
+    },
+    /// Burst: `burst_count` quick blinks, then a long pause, repeating.
+    ///
+    /// Creates an irregular rhythm (e.g. double-flash for error state).
+    Burst {
+        on_ms: u64,
+        off_ms: u64,
+        burst_count: u8,
+        pause_ms: u64,
     },
 }

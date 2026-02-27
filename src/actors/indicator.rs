@@ -10,7 +10,9 @@ use embassy_futures::join::join;
 use log::info;
 
 use crate::config::{
-    CONNECTING_BLINK_MS, ERROR_BLINK_MS, FACTORY_RESET_BLINK_MS, INITIALIZING_BLINK_MS,
+    CONNECTED_OFF_MS, CONNECTED_ON_MS, CONNECTING_OFF_MS, CONNECTING_ON_MS, ERROR_BURST_COUNT,
+    ERROR_OFF_MS, ERROR_ON_MS, ERROR_PAUSE_MS, FACTORY_RESET_OFF_MS, FACTORY_RESET_ON_MS,
+    INITIALIZED_OFF_MS, INITIALIZED_ON_MS, INITIALIZING_OFF_MS, INITIALIZING_ON_MS,
     RING_BLINK_COUNT, RING_BLINK_MS, UNLOCK_BLINK_COUNT, UNLOCK_BLINK_MS,
 };
 use crate::events::{Event, EventBus, EventBusSubscriber, SystemState};
@@ -32,6 +34,12 @@ pub trait IndicatorDriver {
     /// - `count: None` — blink continuously until the next command.
     /// - `count: Some(n)` — blink `n` times, then return to steady on.
     fn blink(&self, on_ms: u64, off_ms: u64, count: Option<u8>);
+
+    /// Start a burst pattern: `burst_count` quick blinks, then a long pause, repeating.
+    ///
+    /// Creates an irregular rhythm (e.g. double-flash) that stands out from
+    /// regular blink patterns. Repeats continuously until the next command.
+    fn burst(&self, on_ms: u64, off_ms: u64, burst_count: u8, pause_ms: u64);
 
     /// Driver event loop — processes commands and drives hardware.
     ///
@@ -86,21 +94,21 @@ impl<I: IndicatorDriver> IndicatorActor<I> {
                 match state {
                     SystemState::Initializing => {
                         self.driver
-                            .blink(INITIALIZING_BLINK_MS, INITIALIZING_BLINK_MS, None);
-                        true
-                    }
-                    SystemState::Connected => {
-                        self.driver.solid();
-                        false
-                    }
-                    SystemState::Connecting => {
-                        self.driver
-                            .blink(CONNECTING_BLINK_MS, CONNECTING_BLINK_MS, None);
+                            .blink(INITIALIZING_ON_MS, INITIALIZING_OFF_MS, None);
                         true
                     }
                     SystemState::Initialized => {
-                        self.driver.solid();
-                        false
+                        self.driver
+                            .blink(INITIALIZED_ON_MS, INITIALIZED_OFF_MS, None);
+                        true
+                    }
+                    SystemState::Connecting => {
+                        self.driver.blink(CONNECTING_ON_MS, CONNECTING_OFF_MS, None);
+                        true
+                    }
+                    SystemState::Connected => {
+                        self.driver.blink(CONNECTED_ON_MS, CONNECTED_OFF_MS, None);
+                        true
                     }
                     SystemState::Ready => {
                         self.driver.solid();
@@ -108,11 +116,16 @@ impl<I: IndicatorDriver> IndicatorActor<I> {
                     }
                     SystemState::FactoryReset => {
                         self.driver
-                            .blink(FACTORY_RESET_BLINK_MS, FACTORY_RESET_BLINK_MS, None);
+                            .blink(FACTORY_RESET_ON_MS, FACTORY_RESET_OFF_MS, None);
                         false
                     }
                     SystemState::Error => {
-                        self.driver.blink(ERROR_BLINK_MS, ERROR_BLINK_MS, None);
+                        self.driver.burst(
+                            ERROR_ON_MS,
+                            ERROR_OFF_MS,
+                            ERROR_BURST_COUNT,
+                            ERROR_PAUSE_MS,
+                        );
                         false
                     }
                 }

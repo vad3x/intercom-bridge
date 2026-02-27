@@ -73,13 +73,39 @@ pub const AUTO_RELOCK_SEC: u64 = 4;
 /// How long the BOOT button must be held to trigger a factory reset (ms)
 pub const FACTORY_RESET_HOLD_MS: u64 = 5000;
 
-pub const INITIALIZING_BLINK_MS: u64 = 300;
+// ----------------------------------------------------------------------------
+// LED patterns — asymmetric duty cycles (on_ms / off_ms)
+//
+// Duty cycle increases with system readiness:
+//   Initializing (17%) → Initialized (30%) → Connecting (50%) → Connected (90%) → Ready (solid)
+// Error and FactoryReset break the pattern intentionally to stand out.
+// ----------------------------------------------------------------------------
 
-/// Duration of each half of the connecting blink cycle
-pub const CONNECTING_BLINK_MS: u64 = 1000;
+/// Initializing: slow heartbeat — brief flash, long dark (~17% duty)
+pub const INITIALIZING_ON_MS: u64 = 200;
+pub const INITIALIZING_OFF_MS: u64 = 1000;
 
-/// Duration of each half of the connecting blink cycle
-pub const ERROR_BLINK_MS: u64 = 200;
+/// Initialized: faster heartbeat — hardware ready, waiting (30% duty)
+pub const INITIALIZED_ON_MS: u64 = 300;
+pub const INITIALIZED_OFF_MS: u64 = 700;
+
+/// Connecting: even medium blink — actively connecting (50% duty)
+pub const CONNECTING_ON_MS: u64 = 500;
+pub const CONNECTING_OFF_MS: u64 = 500;
+
+/// Connected: mostly on, brief wink — almost ready (90% duty)
+pub const CONNECTED_ON_MS: u64 = 900;
+pub const CONNECTED_OFF_MS: u64 = 100;
+
+/// Error: burst pattern — 2 quick flashes then a long pause (irregular, unmistakable)
+pub const ERROR_ON_MS: u64 = 100;
+pub const ERROR_OFF_MS: u64 = 100;
+pub const ERROR_BURST_COUNT: u8 = 2;
+pub const ERROR_PAUSE_MS: u64 = 700;
+
+/// Factory reset: ultra-rapid strobe — critical action in progress (50% duty, very fast)
+pub const FACTORY_RESET_ON_MS: u64 = 50;
+pub const FACTORY_RESET_OFF_MS: u64 = 50;
 
 /// Duration of each half of the ring indication blink cycle (ms)
 pub const RING_BLINK_MS: u64 = 100;
@@ -92,9 +118,6 @@ pub const UNLOCK_BLINK_MS: u64 = 200;
 
 /// Number of blinks for unlock indication
 pub const UNLOCK_BLINK_COUNT: u8 = 2;
-
-/// Duration of each half of the factory reset blink cycle (ms)
-pub const FACTORY_RESET_BLINK_MS: u64 = 50;
 
 /// Delay before reboot after factory reset (ms) — gives indicator time to blink
 pub const FACTORY_RESET_REBOOT_DELAY_MS: u64 = 2000;
