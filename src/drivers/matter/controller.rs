@@ -1,8 +1,10 @@
 //! Matter-over-WiFi node driver.
 //!
 //! `MatterController` is a builder+runner for the full rs-matter-embassy WiFi
-//! coexistence stack. Cluster handlers are registered via `.register()` and
-//! the stack is launched with `.run()`.
+//! stack in **concurrent** (coex) commissioning mode. BLE and WiFi run
+//! simultaneously, sharing the ESP32-C6's single radio via the coexistence
+//! driver. Cluster handlers are registered via `.register()` and the stack
+//! is launched with `.run()`.
 //!
 //! ```ignore
 //! let matter = MatterController::new(MatterControllerConfig { /* ... */ })
@@ -262,12 +264,16 @@ impl<OnConnecting: Fn(), OnConnected: Fn(), H: AsyncHandler>
             .await
             .unwrap();
 
-        info!("Matter stack initialized, starting run_coex");
+        info!("Matter stack initialized, starting concurrent commissioning (BLE + WiFi coex)");
 
         // Signal that WiFi/CASE negotiation is starting
         (self.on_connecting)();
 
-        // Run the Matter stack forever
+        // Run the Matter stack forever.
+        // Concurrent mode (`run_coex`): BLE and WiFi run simultaneously
+        // via the coexistence driver. Required because sequential mode
+        // (BLE then WiFi) breaks WiFi on ESP32-C6 — the radio doesn't
+        // properly transition from BLE-only to WiFi-only.
         let mut monitor = ConnectionMonitor {
             on_connecting: self.on_connecting,
             on_connected: self.on_connected,
