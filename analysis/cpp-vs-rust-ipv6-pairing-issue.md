@@ -249,8 +249,8 @@ Compare with the C++ device's ESP-IDF which uses lwIP — a full-featured TCP/IP
 
 ## Files
 
-- `logs/log-22-merged.log` — Rust device session (FAILS) — 3431 lines
-- `logs/log-23-merged.log` — C++ device session (SUCCEEDS) — 6323 lines
+- `log-22-merged.plog` — Rust device session (FAILS) — 3431 lines
+- `log-23-merged.plog` — C++ device session (SUCCEEDS) — 6323 lines
 
 Both files are in the `intercom-matter/` directory. The Rust codebase is in `src/` and the patched dependency repos:
 
