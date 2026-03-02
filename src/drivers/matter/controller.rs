@@ -19,8 +19,12 @@ extern crate alloc;
 use alloc::vec;
 use alloc::vec::Vec;
 
+use core::pin::pin;
+
+use embassy_futures::select::select;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use log::info;
+use embassy_time::{Duration, Timer};
+use log::{info, warn};
 
 use rs_matter::dm::clusters::basic_info::BasicInfoConfig;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
@@ -282,6 +286,7 @@ impl<S: KvBlobStore, OnConnecting: Fn(), OnConnected: Fn(), H: AsyncHandler>
         let mut monitor = ConnectionMonitor {
             on_connecting: self.on_connecting,
             on_connected: self.on_connected,
+            matter: stack.matter(),
         };
         stack
             .run_coex(
@@ -306,18 +311,21 @@ impl<S: KvBlobStore, OnConnecting: Fn(), OnConnected: Fn(), H: AsyncHandler>
 // ============================================================================
 
 /// Watches the network interface and signals connectivity changes.
+/// Also monitors for decommissioning (all fabrics removed from Apple Home)
+/// and reboots the device to re-enter commissioning mode.
 ///
 /// Implements `UserTask`: runs alongside the Matter stack from startup.
 /// Uses `NetifDiag` to check if any interface is operational, and
 /// `NetChangeNotif` to wait for state changes. Signals `on_connected`
 /// when WiFi becomes operational and `on_connecting` when it drops.
-struct ConnectionMonitor<OnConnecting: Fn(), OnConnected: Fn()> {
+struct ConnectionMonitor<'a, OnConnecting: Fn(), OnConnected: Fn()> {
     on_connecting: OnConnecting,
     on_connected: OnConnected,
+    matter: &'a rs_matter::Matter<'a>,
 }
 
 impl<OnConnecting: Fn(), OnConnected: Fn()> UserTask
-    for ConnectionMonitor<OnConnecting, OnConnected>
+    for ConnectionMonitor<'_, OnConnecting, OnConnected>
 {
     async fn run<S, N>(&mut self, _net_stack: S, netif: N) -> Result<(), rs_matter::error::Error>
     where
@@ -325,6 +333,7 @@ impl<OnConnecting: Fn(), OnConnected: Fn()> UserTask
         N: rs_matter::dm::clusters::gen_diag::NetifDiag + rs_matter::dm::networks::NetChangeNotif,
     {
         let mut was_operational = false;
+        let mut was_commissioned = self.matter.is_commissioned();
 
         loop {
             // Check if any network interface is operational
@@ -347,8 +356,26 @@ impl<OnConnecting: Fn(), OnConnected: Fn()> UserTask
 
             was_operational = is_operational;
 
-            // Wait for next network state change
-            netif.wait_changed().await;
+            // Wait for a network state change OR a periodic tick.
+            // The tick lets us detect decommissioning (all fabrics removed)
+            // without stealing the persist notification from MatterPersist
+            // (embassy Notification supports only one waiter).
+            let net_changed = pin!(netif.wait_changed());
+            let tick = pin!(Timer::after(Duration::from_secs(5)));
+
+            select(net_changed, tick).await;
+
+            // Detect transition from commissioned → uncommissioned
+            // (all fabrics removed via RemoveFabric, i.e. device removed
+            // from Apple Home). By the time the timer fires the persist task
+            // has already saved the empty state to flash, so the reboot will
+            // correctly enter commissioning mode.
+            let is_commissioned = self.matter.is_commissioned();
+            if was_commissioned && !is_commissioned {
+                warn!("All fabrics removed — device decommissioned, rebooting to re-enter commissioning mode");
+                esp_hal::system::software_reset();
+            }
+            was_commissioned = is_commissioned;
         }
     }
 }
