@@ -31,9 +31,9 @@ use esp_metadata_generated::memory_range;
 
 use log::{info, warn};
 #[cfg(not(feature = "dummy-persist"))]
-use rs_matter_embassy::persist::EmbassyKvBlobStore;
+use rs_matter_embassy::persist::SeqMapKvBlobStore;
 #[cfg(feature = "dummy-persist")]
-use rs_matter_embassy::stack::persist::DummyKvBlobStore;
+use rs_matter_embassy::matter::persist::DummyKvBlobStore;
 
 use crate::actors::matter_controller::MatterControllerActorConfig;
 use crate::app::App;
@@ -78,9 +78,9 @@ fn custom_halt() -> ! {
 
 /// Create the Matter persistence layer for the given flash range.
 #[cfg(not(feature = "dummy-persist"))]
-fn create_embassy_kv_blob_store(kvs_range: core::ops::Range<u32>) -> EmbassyKvBlobStore<EspFlash> {
+fn create_kv_blob_store(kvs_range: core::ops::Range<u32>) -> SeqMapKvBlobStore<EspFlash> {
     let flash = EspFlash::new(kvs_range.clone());
-    EmbassyKvBlobStore::new(flash, kvs_range)
+    SeqMapKvBlobStore::new(flash, kvs_range)
 }
 
 /// Erase the Matter KVS partition (commissioning data) for factory reset.
@@ -189,7 +189,7 @@ async fn main(_spawner: Spawner) {
                 device_name: config::DEVICE_NAME,
             },
             #[cfg(not(feature = "dummy-persist"))]
-            store: create_embassy_kv_blob_store(config::MATTER_KVS_RANGE),
+            store: create_kv_blob_store(config::MATTER_KVS_RANGE),
             #[cfg(feature = "dummy-persist")]
             store: DummyKvBlobStore,
         },

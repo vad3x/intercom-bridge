@@ -14,13 +14,13 @@ use embassy_sync::signal::Signal;
 use log::info;
 
 use rs_matter::dm::{
-    AsyncHandler, Cluster, Dataver, DeviceType, HandlerContext, ReadContext, ReadReply, Reply,
-    WriteContext,
+    AsyncHandler, Cluster, Dataver, DeviceType, HandlerContext, MatchContext, ReadContext,
+    ReadReply, Reply, WriteContext,
 };
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::with;
 
-use super::clusters_gen::occupancy_sensing::{
+use rs_matter::dm::clusters::decl::occupancy_sensing::{
     self, OccupancyBitmap, OccupancySensorTypeBitmap, OccupancySensorTypeEnum,
 };
 use super::MatterCluster;
@@ -44,7 +44,7 @@ pub struct IntercomOccupancyConfig<OnReady: Fn()> {
 ///
 /// Out-of-band state changes (via `set_occupancy()`) signal the internal
 /// `state_changed` signal, which wakes the `run()` background task.
-/// That task then calls `ctx.notify_attribute_changed()` to push a
+/// That task then calls `ctx.notify_attr_changed()` to push a
 /// subscription report to HomeKit.
 pub struct IntercomOccupancy<OnReady: Fn()> {
     config: IntercomOccupancyConfig<OnReady>,
@@ -120,7 +120,7 @@ impl<OnReady: Fn()> AsyncHandler for IntercomOccupancy<OnReady> {
 
         if let Some(writer) = reply.with_dataver(self.dataver.get())? {
             if ctx.attr().is_system() {
-                ctx.attr().cluster()?.read(ctx.attr(), writer)
+                Self::CLUSTER.read(ctx.attr(), writer)
             } else {
                 match ctx.attr().attr_id as u16 {
                     // Occupancy (id=0): OccupancyBitmap
@@ -156,8 +156,12 @@ impl<OnReady: Fn()> AsyncHandler for IntercomOccupancy<OnReady> {
 
     // OccupancySensing has no commands
 
-    /// Background task: waits for occupancy state changes and notifies the
-    /// subscription system so HomeKit receives prompt motion sensor updates.
+    fn bump_dataver(&self, ctx: impl MatchContext) {
+        if ctx.endpt() == Some(Self::ENDPOINT_ID) && ctx.cluster() == Some(Self::CLUSTER.id) {
+            self.dataver.changed();
+        }
+    }
+
     fn run(
         &self,
         ctx: impl HandlerContext,
@@ -166,7 +170,7 @@ impl<OnReady: Fn()> AsyncHandler for IntercomOccupancy<OnReady> {
             loop {
                 self.state_changed.wait().await;
                 info!("run() woke → notifying subscription system");
-                ctx.notify_attribute_changed(
+                ctx.notify_attr_changed(
                     Self::ENDPOINT_ID,
                     Self::CLUSTER.id,
                     occupancy_sensing::AttributeId::Occupancy as _,

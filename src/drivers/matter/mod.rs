@@ -28,29 +28,12 @@ pub use occupancy::{IntercomOccupancy, IntercomOccupancyConfig};
 
 /// Bump allocator size for the Matter protocol stack.
 ///
-/// The rs-matter-embassy example uses 16500 for a single cluster (On-Off).
+/// The rs-matter-embassy example uses 17500–18000 for a single cluster.
 /// We register two clusters (DoorLock + Occupancy) each with a descriptor
 /// handler, which consumes more bump memory during init. After init the
 /// allocator also needs headroom for CASE sessions, subscription reports,
 /// multi-fabric commissioning, and mDNS service records.
-///
-/// Init usage is ~16.3KB. During multi-admin commissioning the device may
-/// hold sessions for up to 5 fabrics simultaneously, each needing CASE
-/// context + exchange buffers + TLV serialization space. 48000 gives ~32KB
-/// headroom which accommodates 5 concurrent fabrics without NoSpace panics.
 const BUMP_SIZE: usize = 48000;
-
-// ============================================================================
-// Import cluster declarations from Matter spec
-// ============================================================================
-
-/// Generate DoorLock and OccupancySensing cluster declarations from the Matter IDL spec.
-/// This creates modules `door_lock` and `occupancy_sensing` with:
-/// - `FULL_CLUSTER` constant, `AttributeId`, `CommandId` enums
-/// - Type enums (DlLockState, OccupancyBitmap, etc.)
-pub(super) mod clusters_gen {
-    rs_matter::import!(DoorLock, OccupancySensing);
-}
 
 // ============================================================================
 // MatterCluster trait

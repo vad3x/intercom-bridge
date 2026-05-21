@@ -22,7 +22,6 @@ use alloc::vec::Vec;
 use core::pin::pin;
 
 use embassy_futures::select::select;
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::{Duration, Timer};
 use log::{info, warn};
 
@@ -32,12 +31,12 @@ use rs_matter::dm::{
     Async, AsyncHandler, ChainedHandler, Cluster, Dataver, DeviceType, EmptyHandler, Endpoint,
     EpClMatcher, Node,
 };
+use rs_matter::persist::KvBlobStore;
 
 use rs_matter_embassy::epoch::epoch;
 use rs_matter_embassy::matter::crypto::{default_crypto, Crypto};
 use rs_matter_embassy::matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM};
 use rs_matter_embassy::matter::utils::init::InitMaybeUninit;
-use rs_matter_embassy::stack::persist::KvBlobStore;
 use rs_matter_embassy::stack::rand::reseeding_csprng;
 use rs_matter_embassy::stack::UserTask;
 use rs_matter_embassy::wireless::esp::EspWifiDriver;
@@ -207,14 +206,13 @@ impl<S: KvBlobStore, OnConnecting: Fn(), OnConnected: Fn(), H: AsyncHandler>
     ///
     /// Builds the `Node` descriptor from registered endpoints, then
     /// launches the full rs-matter-embassy stack: static stack allocation,
-    /// radio init, crypto, persistence, WiFi driver, and the main event loop.
+    /// crypto, persistence, WiFi driver, and the main event loop.
     ///
     /// # Panics
     /// Panics if the Matter stack encounters a fatal error.
     pub async fn run(self) {
         let config = self.config;
         // Build the Node descriptor from registered endpoints.
-        // Backing arrays for each endpoint's clusters and device_types.
         let cluster_arrays: Vec<Vec<Cluster>> = self
             .endpoint_metas
             .iter()
@@ -229,15 +227,14 @@ impl<S: KvBlobStore, OnConnecting: Fn(), OnConnected: Fn(), H: AsyncHandler>
         let mut endpoints: Vec<Endpoint> = Vec::with_capacity(1 + self.endpoint_metas.len());
         endpoints.push(EmbassyWifiMatterStack::<0, ()>::root_endpoint());
         for (i, meta) in self.endpoint_metas.iter().enumerate() {
-            endpoints.push(Endpoint {
-                id: meta.id,
-                device_types: &dtype_arrays[i],
-                clusters: &cluster_arrays[i],
-            });
+            endpoints.push(Endpoint::new(
+                meta.id,
+                &dtype_arrays[i],
+                &cluster_arrays[i],
+            ));
         }
 
         let node = Node {
-            id: 0,
             endpoints: &endpoints,
         };
 
@@ -255,23 +252,27 @@ impl<S: KvBlobStore, OnConnecting: Fn(), OnConnected: Fn(), H: AsyncHandler>
             epoch,
         ));
 
-        // Initialize WiFi + BLE radio
-        let radio = esp_radio::init().unwrap();
-
         // Crypto: TRNG → reseeding CSPRNG → DAC signing key
         let _trng_source =
             esp_hal::rng::TrngSource::new(config.peripherals.rng, config.peripherals.adc1);
-        let crypto = default_crypto::<NoopRawMutex, _>(
+        let crypto = default_crypto(
             reseeding_csprng(esp_hal::rng::Trng::try_new().unwrap(), 1000).unwrap(),
             DAC_PRIVKEY,
         );
         let weak_rand = crypto.weak_rand().unwrap();
 
-        // Persistence (commissioning data -> flash partition)
-        let persist = stack
-            .create_persist_with_comm_window(&crypto, config.store)
-            .await
-            .unwrap();
+        // Load persisted state + open commissioning window if not yet commissioned.
+        // If loading fails (e.g. TLV format mismatch after firmware upgrade),
+        // reset the KV store and retry so the device doesn't boot-loop.
+        let mut kv = config.store;
+        if let Err(e) = stack.startup(&crypto, &mut kv).await {
+            warn!("Failed to load persisted state ({:?}), resetting KV store", e);
+            stack.reset(&mut kv).await.unwrap();
+            stack.startup(&crypto, &mut kv).await.unwrap();
+        }
+
+        // Wrap KV store as shared reference for concurrent access by Matter stack
+        let kv = stack.create_shared_kv(kv).unwrap();
 
         info!("Matter stack initialized, starting concurrent commissioning (BLE + WiFi coex)");
 
@@ -291,14 +292,14 @@ impl<S: KvBlobStore, OnConnecting: Fn(), OnConnected: Fn(), H: AsyncHandler>
         stack
             .run_coex(
                 EmbassyWifi::new(
-                    EspWifiDriver::new(&radio, config.peripherals.wifi, config.peripherals.bt),
+                    EspWifiDriver::new(config.peripherals.wifi, config.peripherals.bt),
                     weak_rand,
                     true,
                     stack,
                 ),
-                &persist,
                 &crypto,
                 (node, self.handler),
+                &kv,
                 &mut monitor,
             )
             .await

@@ -15,13 +15,13 @@ use log::info;
 
 use rs_matter::dm::{
     AsyncHandler, Cluster, Dataver, DeviceType, HandlerContext, InvokeContext, InvokeReply,
-    ReadContext, ReadReply, Reply, WriteContext,
+    MatchContext, ReadContext, ReadReply, Reply, WriteContext,
 };
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::tlv::Nullable;
 use rs_matter::with;
 
-use super::clusters_gen::door_lock::{
+use rs_matter::dm::clusters::decl::door_lock::{
     self, DlLockState, DlLockType, DlSupportedOperatingModes, OperatingModeEnum,
 };
 use super::MatterCluster;
@@ -49,7 +49,7 @@ pub struct IntercomDoorLockConfig<OnUnlock: Fn(), OnReady: Fn()> {
 ///
 /// Out-of-band state changes (e.g. auto-relock via `lock()`) signal the
 /// internal `state_changed` signal, which wakes the `run()` background task.
-/// That task then calls `ctx.notify_attribute_changed()` to push a
+/// That task then calls `ctx.notify_attr_changed()` to push a
 /// subscription report to HomeKit.
 pub struct IntercomDoorLock<OnUnlock: Fn(), OnReady: Fn()> {
     config: IntercomDoorLockConfig<OnUnlock, OnReady>,
@@ -134,7 +134,7 @@ impl<OnUnlock: Fn(), OnReady: Fn()> AsyncHandler for IntercomDoorLock<OnUnlock, 
 
         if let Some(writer) = reply.with_dataver(self.dataver.get())? {
             if ctx.attr().is_system() {
-                ctx.attr().cluster()?.read(ctx.attr(), writer)
+                Self::CLUSTER.read(ctx.attr(), writer)
             } else {
                 match ctx.attr().attr_id as u16 {
                     // LockState (id=0): Nullable<DlLockState>
@@ -185,7 +185,7 @@ impl<OnUnlock: Fn(), OnReady: Fn()> AsyncHandler for IntercomDoorLock<OnUnlock, 
                 self.dataver.changed();
 
                 // Wake subscription system → push LockState report to HomeKit
-                ctx.notify_attribute_changed(
+                ctx.notify_attr_changed(
                     ctx.cmd().endpoint_id,
                     ctx.cmd().cluster_id,
                     door_lock::AttributeId::LockState as _,
@@ -203,7 +203,7 @@ impl<OnUnlock: Fn(), OnReady: Fn()> AsyncHandler for IntercomDoorLock<OnUnlock, 
                 // Wake subscription system → push LockState report to HomeKit
                 // Without this, the app stays on "Unlocking…" until the periodic
                 // subscription timer fires (could be 60+ seconds).
-                ctx.notify_attribute_changed(
+                ctx.notify_attr_changed(
                     ctx.cmd().endpoint_id,
                     ctx.cmd().cluster_id,
                     door_lock::AttributeId::LockState as _,
@@ -218,8 +218,12 @@ impl<OnUnlock: Fn(), OnReady: Fn()> AsyncHandler for IntercomDoorLock<OnUnlock, 
         }
     }
 
-    /// Background task: waits for out-of-band state changes (e.g. auto-relock)
-    /// and notifies the subscription system so HomeKit receives prompt updates.
+    fn bump_dataver(&self, ctx: impl MatchContext) {
+        if ctx.endpt() == Some(Self::ENDPOINT_ID) && ctx.cluster() == Some(Self::CLUSTER.id) {
+            self.dataver.changed();
+        }
+    }
+
     fn run(
         &self,
         ctx: impl HandlerContext,
@@ -228,7 +232,7 @@ impl<OnUnlock: Fn(), OnReady: Fn()> AsyncHandler for IntercomDoorLock<OnUnlock, 
             loop {
                 self.state_changed.wait().await;
                 info!("run() woke → notifying subscription system");
-                ctx.notify_attribute_changed(
+                ctx.notify_attr_changed(
                     Self::ENDPOINT_ID,
                     Self::CLUSTER.id,
                     door_lock::AttributeId::LockState as _,
