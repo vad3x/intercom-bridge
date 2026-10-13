@@ -15,6 +15,7 @@
 //! - `controller`  — WiFi Matter controller (`MatterController`)
 
 mod access_control;
+pub mod commissioning;
 mod controller;
 mod door_lock;
 mod occupancy;
@@ -22,6 +23,8 @@ mod occupancy;
 use rs_matter::dm::{AsyncHandler, Cluster, DeviceType};
 
 pub use access_control::MatterAccessControlDriver;
+#[allow(unused_imports)]
+pub use commissioning::{comm_data_from_mac, discriminator_from_mac, passcode_from_mac};
 pub use controller::{DeviceInfo, MatterController, MatterControllerConfig, MatterPeripherals};
 pub use door_lock::{IntercomDoorLock, IntercomDoorLockConfig};
 pub use occupancy::{IntercomOccupancy, IntercomOccupancyConfig};

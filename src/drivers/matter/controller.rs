@@ -32,16 +32,17 @@ use rs_matter::dm::{
     Node,
 };
 use rs_matter::persist::KvBlobStore;
+use rs_matter::BasicCommData;
 
 use rs_matter_embassy::matter::crypto::{default_crypto, Crypto};
-use rs_matter_embassy::matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM};
+use rs_matter_embassy::matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT};
 use rs_matter_embassy::matter::utils::init::InitMaybeUninit;
 use rs_matter_embassy::stack::rand::reseeding_csprng;
 use rs_matter_embassy::stack::UserTask;
 use rs_matter_embassy::wireless::esp::EspWifiDriver;
 use rs_matter_embassy::wireless::{EmbassyWifi, EmbassyWifiMatterStack};
 
-use super::{MatterCluster, BUMP_SIZE};
+use super::{commissioning, MatterCluster, BUMP_SIZE};
 
 // ============================================================================
 // Device identity — replaces rs-matter TEST_DEV_* defaults
@@ -68,6 +69,8 @@ pub struct MatterControllerConfig<S: KvBlobStore> {
     pub device_info: DeviceInfo,
     /// KV blob store for Matter commissioning data persistence.
     pub store: S,
+    /// Optional commissioning data override (if None, derived from hardware MAC).
+    pub comm_data: Option<BasicCommData>,
 }
 
 /// Hardware peripherals required by the WiFi+BLE Matter stack.
@@ -237,6 +240,24 @@ impl<S: KvBlobStore, OnConnecting: Fn(), OnConnected: Fn(), H: AsyncHandler>
             endpoints: &endpoints,
         };
 
+        let comm_data = if let Some(custom_comm) = config.comm_data {
+            info!(
+                "Using custom commissioning parameters (discriminator: {})",
+                custom_comm.discriminator
+            );
+            custom_comm
+        } else {
+            let mac = esp_hal::efuse::base_mac_address();
+            let mac_bytes: [u8; 6] = mac.as_bytes().try_into().unwrap();
+            let data = commissioning::comm_data_from_mac(&mac_bytes);
+            let passcode = commissioning::passcode_from_mac(&mac_bytes);
+            info!(
+                "Generated commissioning parameters from MAC {}: passcode {}, discriminator {}",
+                mac, passcode, data.discriminator
+            );
+            data
+        };
+
         // Allocate device identity + stack in static cells (safe: run() is called exactly once)
         static DEV_DET_CELL: static_cell::StaticCell<BasicInfoConfig> =
             static_cell::StaticCell::new();
@@ -246,7 +267,7 @@ impl<S: KvBlobStore, OnConnecting: Fn(), OnConnected: Fn(), H: AsyncHandler>
             static_cell::StaticCell::new();
         let stack = STACK_CELL.uninit().init_with(EmbassyWifiMatterStack::init(
             dev_det,
-            TEST_DEV_COMM,
+            comm_data,
             &TEST_DEV_ATT,
         ));
 

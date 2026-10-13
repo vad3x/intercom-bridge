@@ -188,6 +188,7 @@ async fn main(_spawner: Spawner) {
             store: create_kv_blob_store(config::MATTER_KVS_RANGE),
             #[cfg(feature = "dummy-persist")]
             store: DummyKvBlobStore,
+            comm_data: None,
         },
         || event_bus.connecting(),
         || event_bus.connected(),
