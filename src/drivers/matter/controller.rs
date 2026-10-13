@@ -29,7 +29,7 @@ use rs_matter::dm::clusters::basic_info::BasicInfoConfig;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::{
     Async, AsyncHandler, ChainedHandler, Cluster, Dataver, DeviceType, EmptyHandler, Endpoint,
-    EpClMatcher, Node,
+    Node,
 };
 use rs_matter::persist::KvBlobStore;
 
@@ -182,11 +182,11 @@ impl<S: KvBlobStore, OnConnecting: Fn(), OnConnected: Fn(), H: AsyncHandler>
         // Build the handler chain
         let dataver_seed = DESC_DATAVER_COUNTER.fetch_add(1, portable_atomic::Ordering::Relaxed);
 
-        let new_handler = ChainedHandler::new(
-            EpClMatcher::new(Some(endpoint_id), Some(desc::DescHandler::CLUSTER.id)),
+        let new_handler = ChainedHandler::new_with_matcher(
+            move |e, c| e == endpoint_id && c == desc::DescHandler::CLUSTER.id,
             Async(desc::DescHandler::new(Dataver::new(dataver_seed)).adapt()),
-            ChainedHandler::new(
-                EpClMatcher::new(Some(endpoint_id), Some(C::CLUSTER_DEF.id)),
+            ChainedHandler::new_with_matcher(
+                move |e, c| e == endpoint_id && c == C::CLUSTER_DEF.id,
                 cluster,
                 self.handler,
             ),
@@ -265,7 +265,10 @@ impl<S: KvBlobStore, OnConnecting: Fn(), OnConnected: Fn(), H: AsyncHandler>
         let mut kv = config.store;
         if let Err(e) = stack.startup(&crypto, &mut kv).await {
             warn!("Failed to load persisted state ({:?}), resetting KV store", e);
-            stack.reset(&mut kv).await.unwrap();
+            stack
+                .reset(&crypto, (&node, &self.handler), &mut kv)
+                .await
+                .unwrap();
             stack.startup(&crypto, &mut kv).await.unwrap();
         }
 
@@ -332,7 +335,7 @@ impl<OnConnecting: Fn(), OnConnected: Fn()> UserTask
         N: rs_matter::dm::clusters::gen_diag::NetifDiag + rs_matter::dm::networks::NetChangeNotif,
     {
         let mut was_operational = false;
-        let mut was_commissioned = self.matter.is_commissioned();
+        let mut was_commissioned = self.matter.has_fabrics();
 
         loop {
             // Check if any network interface is operational
@@ -369,7 +372,7 @@ impl<OnConnecting: Fn(), OnConnected: Fn()> UserTask
             // from Apple Home). By the time the timer fires the persist task
             // has already saved the empty state to flash, so the reboot will
             // correctly enter commissioning mode.
-            let is_commissioned = self.matter.is_commissioned();
+            let is_commissioned = self.matter.has_fabrics();
             if was_commissioned && !is_commissioned {
                 warn!("All fabrics removed — device decommissioned, rebooting to re-enter commissioning mode");
                 esp_hal::system::software_reset();

@@ -14,6 +14,7 @@ use embassy_sync::pubsub::Subscriber;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SystemState {
     /// Starting up, hardware init in progress
+    #[allow(dead_code)]
     Initializing,
     /// App actors running, hardware initialized
     Initialized,
@@ -26,6 +27,7 @@ pub enum SystemState {
     /// Factory reset triggered (erasing Matter KVS, rebooting)
     FactoryReset,
     /// Something went wrong
+    #[allow(dead_code)]
     Error,
 }
 

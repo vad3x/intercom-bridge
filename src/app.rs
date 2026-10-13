@@ -14,7 +14,7 @@ use crate::actors::factory_reset::{FactoryResetActor, FactoryResetDriver};
 use crate::actors::indicator::{IndicatorActor, IndicatorDriver};
 use crate::actors::matter_controller::{MatterControllerActor, MatterControllerActorConfig};
 use crate::actors::ring::{RingActor, RingDriver};
-use crate::events::{Event, EventBus, SystemState};
+use crate::events::{EventBus, EventBusExt};
 
 /// The Smart Intercom application.
 ///
@@ -72,10 +72,7 @@ where
         info!("publishing Initialized state");
 
         // Publish Initialized state before actors start their loops
-        let state_pub = bus.publisher().unwrap();
-        state_pub
-            .publish(Event::SystemState(SystemState::Initialized))
-            .await;
+        bus.initialized();
 
         info!("starting actors");
 
