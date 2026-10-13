@@ -280,6 +280,16 @@ impl<S: KvBlobStore, OnConnecting: Fn(), OnConnected: Fn(), H: AsyncHandler>
         );
         let weak_rand = crypto.weak_rand().unwrap();
 
+        // Chain root endpoint (Endpoint 0) system clusters (Descriptor, Basic Info, Admin Comm, NOC, ACL, etc.)
+        let handler = ChainedHandler::new_with_matcher(
+            |e, _| e == rs_matter::dm::endpoints::ROOT_ENDPOINT_ID,
+            Async(EmbassyWifiMatterStack::<0, ()>::root_handler(
+                &(),
+                crypto.weak_rand().unwrap(),
+            )),
+            self.handler,
+        );
+
         // Load persisted state + open commissioning window if not yet commissioned.
         // If loading fails (e.g. TLV format mismatch after firmware upgrade),
         // reset the KV store and retry so the device doesn't boot-loop.
@@ -287,7 +297,7 @@ impl<S: KvBlobStore, OnConnecting: Fn(), OnConnected: Fn(), H: AsyncHandler>
         if let Err(e) = stack.startup(&crypto, &mut kv).await {
             warn!("Failed to load persisted state ({:?}), resetting KV store", e);
             stack
-                .reset(&crypto, (&node, &self.handler), &mut kv)
+                .reset(&crypto, (&node, &handler), &mut kv)
                 .await
                 .unwrap();
             stack.startup(&crypto, &mut kv).await.unwrap();
@@ -320,7 +330,7 @@ impl<S: KvBlobStore, OnConnecting: Fn(), OnConnected: Fn(), H: AsyncHandler>
                     stack,
                 ),
                 &crypto,
-                (node, self.handler),
+                (node, handler),
                 kv,
                 &mut monitor,
             )
