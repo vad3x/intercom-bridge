@@ -2,7 +2,7 @@
 target = "riscv32imac-unknown-none-elf"
 
 [target.riscv32imac-unknown-none-elf]
-runner = ["sh", "-c", "espflash flash --port /dev/cu.usbmodem2101 \"$1\" && espflash monitor --port /dev/cu.usbmodem2101 | ts '[%H:%M:%.S]'", "_"]
+runner = "espflash flash --monitor"
 rustflags = ["-C", "link-arg=-Tlinkall.x", "-C", "force-frame-pointers"]
 
 [unstable]
