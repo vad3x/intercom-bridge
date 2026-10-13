@@ -33,7 +33,6 @@ use rs_matter::dm::{
 };
 use rs_matter::persist::KvBlobStore;
 
-use rs_matter_embassy::epoch::epoch;
 use rs_matter_embassy::matter::crypto::{default_crypto, Crypto};
 use rs_matter_embassy::matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM};
 use rs_matter_embassy::matter::utils::init::InitMaybeUninit;
@@ -249,7 +248,6 @@ impl<S: KvBlobStore, OnConnecting: Fn(), OnConnected: Fn(), H: AsyncHandler>
             dev_det,
             TEST_DEV_COMM,
             &TEST_DEV_ATT,
-            epoch,
         ));
 
         // Crypto: TRNG → reseeding CSPRNG → DAC signing key
@@ -272,7 +270,7 @@ impl<S: KvBlobStore, OnConnecting: Fn(), OnConnected: Fn(), H: AsyncHandler>
         }
 
         // Wrap KV store as shared reference for concurrent access by Matter stack
-        let kv = stack.create_shared_kv(kv).unwrap();
+        let kv = stack.matter().kv(kv);
 
         info!("Matter stack initialized, starting concurrent commissioning (BLE + WiFi coex)");
 
@@ -299,7 +297,7 @@ impl<S: KvBlobStore, OnConnecting: Fn(), OnConnected: Fn(), H: AsyncHandler>
                 ),
                 &crypto,
                 (node, self.handler),
-                &kv,
+                kv,
                 &mut monitor,
             )
             .await
