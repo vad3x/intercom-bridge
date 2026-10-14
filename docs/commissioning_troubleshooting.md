@@ -212,7 +212,7 @@ For reliable Matter over Wi-Fi commissioning on TP-Link Omada or similar SDN set
 When commissioning a newly flashed device or troubleshooting pairing:
 
 - [ ] Connect iPhone to `vs_us_iot` (WPA2 2.4 GHz).
-- [ ] Connect serial monitor without resetting board (`python3 scratch/monitor.py --no-reset`).
+- [ ] Connect serial monitor without resetting board (`python3 scripts/monitor.py --no-reset`).
 - [ ] Check BLE advertising: `Matter controller is not commissioned. Starting BLE...`
 - [ ] Scan QR code / enter setup code in Apple Home.
 - [ ] Verify BLE PASE completes: `PASE complete`.
@@ -222,3 +222,53 @@ When commissioning a newly flashed device or troubleshooting pairing:
 - [ ] Verify Hub initiates CASE over IPv6 Link-Local UDP 5540.
 - [ ] Verify `CommissioningComplete` received and BLE terminates cleanly.
 - [ ] Verify accessories appear in Apple Home: Intercom Lock (Door Lock) + Ring Sensor (Motion Sensor).
+
+---
+
+## 7. Agent Operations Cheat Sheet: Run, Reset, Debug & Monitor
+
+### 1. Run & Build
+```bash
+# Build the firmware targeting RISC-V ESP32-C6
+mise exec -- cargo build
+
+# Build + flash + monitor (using .cargo/config.toml runner)
+mise exec -- cargo run
+
+# Flash a pre-built binary directly
+espflash flash target/riscv32imac-unknown-none-elf/debug/intercom-matter --port /dev/cu.usbmodem14201
+```
+
+### 2. Monitor Live Logs (Without Rebooting)
+Opening standard serial terminals (`screen`, `picocom`, `espflash monitor`) asserts DTR/RTS and resets the ESP32-C6, wiping active state. Use `scripts/monitor.py`:
+```bash
+# Non-intrusive live log streaming (preserves running state)
+python3 scripts/monitor.py --no-reset
+
+# Stream background log file directly:
+tail -f /tmp/intercom_serial.log
+```
+
+### 3. Reset Hardware & Matter Fabric
+- **Soft Reboot:** Tap `RST` button on the board, or run `python3 scripts/monitor.py` without flags.
+- **Factory Reset Commissioning Only (Recommended to re-pair without reflashing):**
+  ```bash
+  espflash erase-parts --port /dev/cu.usbmodem14201 matter_kvs nvs
+  ```
+  After wiping `matter_kvs` and `nvs`, reboot the board. It will boot cleanly into uncommissioned mode with BLE advertising enabled.
+- **Bootloader / Download Mode:**
+  If serial hangs or USB does not enumerate: Hold `BOOT` (GPIO9) -> tap `RST` -> release `BOOT`.
+- **Full Flash Wipe (Complete erase):**
+  ```bash
+  espflash erase-flash --port /dev/cu.usbmodem14201
+  ```
+
+### 4. Debugging & Verbosity
+In `src/main.rs`:
+```rust
+uptime_logger::init(log::LevelFilter::Debug); // LevelFilter::Info, Debug, or Trace
+```
+Key logs:
+- `rs_matter::transport::exchange` — MRP retry count, ACKs, packet delivery
+- `wifi: Scan completed`, `wifi: Connected` — 802.11 association and IP state
+- `Starting BLE`, `PASE complete` — Commissioning handshake progress

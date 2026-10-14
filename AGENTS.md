@@ -24,17 +24,17 @@ ESP32-C6 Matter controller for IR204E analog intercom. Provides door lock contro
 ## Build & Flash
 
 ```bash
-# Build (from host — no Docker needed for Rust)
-cargo build
+# Build binary
+mise exec -- cargo build
 
-# Build + flash + monitor (via cargo-espflash)
-cargo run
+# Build + flash + monitor (via cargo runner in .cargo/config.toml)
+mise exec -- cargo run
 
-# Flash only (uses .cargo/config.toml runner)
-cargo-espflash flash --port /dev/cu.usbserial-210 --monitor
+# Flash directly to specific port
+espflash flash target/riscv32imac-unknown-none-elf/debug/intercom-matter --port /dev/cu.usbmodem14201
 ```
 
-The `.cargo/config.toml` configures the RISC-V target, `build-std`, and the espflash runner.
+The `.cargo/config.toml` configures the RISC-V target (`riscv32imac-unknown-none-elf`), `build-std`, and the `espflash` runner. USB ports are typically `/dev/cu.usbmodem*` (native ESP32-C6 USB) or `/dev/cu.usbserial*` (UART bridge).
 
 ## Project Structure
 
@@ -307,37 +307,95 @@ impl DoorDriver for GpioDoorDriver {
 mod tests { /* ... */ }
 ```
 
-## Debugging
+## Debugging & Monitoring
 
-### Serial Monitor
+### Non-Intrusive Serial Monitor (Recommended)
+
+> [!WARNING]
+> Standard tools like `screen`, `picocom`, and `espflash monitor` toggle DTR/RTS upon opening, which **reboots the ESP32-C6** and wipes in-memory Matter state.
+
+Use the custom `scripts/monitor.py` script to monitor serial output without triggering a chip reset:
 
 ```bash
-# Via cargo runner (build + flash + monitor)
-cargo run
+# Monitor live output WITHOUT resetting the running chip
+python3 scripts/monitor.py --no-reset
 
-# Manual
-screen /dev/cu.usbserial-210 115200
+# Optional: target a specific serial port or baud rate
+python3 scripts/monitor.py --port /dev/cu.usbmodem14201 --no-reset
+
+# All logs are automatically mirrored to:
+tail -f /tmp/intercom_serial.log
 ```
 
-### Common Issues
+If you *do* want to trigger a reboot upon attaching, simply omit `--no-reset`:
+
+```bash
+python3 scripts/monitor.py
+```
+
+### Log Levels & Subsystems
+
+Adjust logging level in `src/main.rs`:
+
+```rust
+// In src/main.rs:
+uptime_logger::init(log::LevelFilter::Debug); // Options: Info, Debug, Trace
+```
+
+Key subsystems to monitor during debugging:
+- **Matter Exchange & MRP:** `rs_matter::transport::exchange` (`Too many retransmissions`, `Ack`, `Msg`)
+- **Wi-Fi Scanning & Association:** `wifi: Scan completed`, `wifi: AP[...]`, `wifi: Connected`, `DisconnectedInfo`
+- **BLE PASE & Commissioning:** `Starting BLE`, `PASE complete`, `CommissioningComplete`
+- **Actor Event Bus:** `RingActor`, `DoorActor`, `IndicatorActor` transitions
+
+---
+
+## Resetting the Device
+
+### 1. Soft Reboot (Preserves Flash & Fabric Credentials)
+- Tap the physical **RST** button on the DFRobot Beetle board, or
+- Run `python3 scripts/monitor.py` (asserts RTS/DTR reset sequence).
+
+### 2. Reset Matter Commissioning (Re-Pairing without Reflashing)
+To wipe pairing credentials so the device returns to an uncommissioned state (starts BLE advertising again on boot) **without** deleting the flashed firmware:
+
+```bash
+espflash erase-parts --port /dev/cu.usbmodem14201 matter_kvs nvs
+```
+
+Then reboot the board.
+
+### 3. Enter Hardware Download Mode (Bootloader)
+If flashing hangs or native USB fails to enumerate:
+1. Press and hold **BOOT** button (GPIO9).
+2. Press and release **RST** button (EN).
+3. Release **BOOT** button.
+4. The device is now in ROM bootloader mode ready for flashing.
+
+### 4. Full Flash Erase (Hard Factory Reset)
+To wipe all partitions (bootloader, partitions, app, NVS, and Matter state):
+
+```bash
+espflash erase-flash --port /dev/cu.usbmodem14201
+# Or UART port if native USB is unresponsive:
+espflash erase-flash --port /dev/cu.usbserial-210
+```
+*Note: A complete re-flash (`mise exec -- cargo run`) is required after this.*
+
+---
+
+## Troubleshooting & Common Issues
 
 | Issue | Solution |
 |-------|----------|
+| Device reboots whenever serial monitor opens | Use `python3 scripts/monitor.py --no-reset` to avoid DTR/RTS reset |
 | Build fails with linker errors | Check `Cargo.toml` patch overrides, run `cargo clean` |
-| `espflash` can't find port | Check `ls /dev/cu.usbserial*`, update `.cargo/config.toml` runner |
-| Device not enumerating on USB | Use UART port, enter download mode (BOOT+RESET) |
+| `espflash` can't find port | Check `ls /dev/cu.usb*`, pass `--port /dev/cu.usbmodem14201` |
+| Device not enumerating on USB | Enter download mode (BOOT+RST) or switch to UART bridge |
 | Apple Home "Unable to add" | See [docs/commissioning_troubleshooting.md](docs/commissioning_troubleshooting.md) for Omada/IPv6/Wi-Fi fixes |
+| Device already paired elsewhere | Erase Matter credentials: `espflash erase-parts --port <PORT> matter_kvs nvs` |
 | Stack overflow / alloc failure | Increase `HEAP_SIZE` in `src/main.rs` |
 | Commissioning unreliable | Increase `BUMP_SIZE` in `src/drivers/matter/mod.rs` |
-
-## ESP32-C6 Recovery
-
-If native USB stops working:
-
-1. Connect to UART USB port (not native USB)
-2. Check port: `ls /dev/cu.usbserial*`
-3. Enter download mode: Hold BOOT → Tap RESET → Release BOOT
-4. Erase flash: `espflash erase-flash --port /dev/cu.usbserial-210`
 
 ## Dependencies
 
