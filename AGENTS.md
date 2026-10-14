@@ -326,7 +326,7 @@ screen /dev/cu.usbserial-210 115200
 | Build fails with linker errors | Check `Cargo.toml` patch overrides, run `cargo clean` |
 | `espflash` can't find port | Check `ls /dev/cu.usbserial*`, update `.cargo/config.toml` runner |
 | Device not enumerating on USB | Use UART port, enter download mode (BOOT+RESET) |
-| Apple Home "Unable to add" | Try Aqara Home, check QR code matches logs |
+| Apple Home "Unable to add" | See [docs/commissioning_troubleshooting.md](docs/commissioning_troubleshooting.md) for Omada/IPv6/Wi-Fi fixes |
 | Stack overflow / alloc failure | Increase `HEAP_SIZE` in `src/main.rs` |
 | Commissioning unreliable | Increase `BUMP_SIZE` in `src/drivers/matter/mod.rs` |
 
