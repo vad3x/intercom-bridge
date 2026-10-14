@@ -8,6 +8,9 @@ description = "Hardware GPIO adapter for Intercom Bridge (IR204E & ESP32-C6)"
 [dependencies]
 intercom-core = { path = "../intercom-core" }
 log = "0.4"
+embassy-sync = "0.8"
+embassy-futures = "0.1"
 embassy-time = { version = "0.5", features = ["generic-queue-8"] }
 esp-hal = { version = "~1.2", features = ["log-04", "unstable", "esp32c6"] }
 embedded-storage = "0.3"
+embedded-storage-async = "0.4"
