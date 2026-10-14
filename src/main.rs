@@ -124,7 +124,7 @@ fn erase_matter_kvs(range: &core::ops::Range<u32>) {
 
 #[esp_rtos::main]
 async fn main(_spawner: Spawner) {
-    utils::uptime_logger::init(log::LevelFilter::Info);
+    utils::uptime_logger::init(log::LevelFilter::Debug);
 
     info!("Smart Intercom Starting");
 

@@ -55,7 +55,7 @@ esp-println = { version = "0.18", features = ["log-04"] }
 esp-radio = { version = "1.0.0-beta.1", features = ["ble", "coex", "log-04", "unstable"] }
 esp-bootloader-esp-idf = { version = "0.6", features = ["log-04"] }
 esp-metadata-generated = "0.5"
-rs-matter-embassy = { path = "../rs-matter-embassy/rs-matter-embassy", default-features = false, features = ["esp", "trouble", "embassy-net", "log", "rustcrypto", "kv-blob-store-8192"] }
+rs-matter-embassy = { path = "../rs-matter-embassy/rs-matter-embassy", default-features = false, features = ["esp", "trouble", "embassy-net", "log", "rustcrypto", "kv-blob-store-8192", "mld-v1-compat", "nd-learn-from-frames"] }
 tinyrlibc = { version = "0.5", default-features = false, features = ["utoa", "strtoul"] }
 static_cell = "2"
 portable-atomic = "1"
