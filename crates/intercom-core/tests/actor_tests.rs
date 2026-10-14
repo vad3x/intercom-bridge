@@ -3,14 +3,13 @@
 //! Follows the Arrange -> Act -> Assert pattern strictly.
 
 use intercom_core::actors::access_controller::AccessController;
-use intercom_core::actors::indicator::IndicatorActor;
 use intercom_core::actors::ring::RingActor;
 use intercom_core::app::App;
 use intercom_core::events::{SystemState, SystemStateSender, SystemStateWatch};
 use intercom_core::ports::inbound::{AccessCommand, AccessControllerHandle, CommandChannel};
 use intercom_core::ports::reporter::{IntercomReporter, LockState};
 use intercom_core::ports::{
-    DoorDriver, FactoryResetDriver, IndicatorDriver, RingDriver, SystemResetDriver,
+    DoorDriver, FactoryResetDriver, RingDriver, SystemResetDriver,
 };
 use portable_atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
 
@@ -55,50 +54,6 @@ impl RingDriver for &MockRingDriver {
         }
         self.should_ring.store(false, Ordering::SeqCst);
     }
-}
-
-struct MockIndicatorDriver {
-    solid_count: AtomicU32,
-    blink_calls: AtomicU32,
-    burst_calls: AtomicU32,
-    ring_blinks: AtomicU32,
-    unlock_blinks: AtomicU32,
-}
-
-impl MockIndicatorDriver {
-    fn new() -> Self {
-        Self {
-            solid_count: AtomicU32::new(0),
-            blink_calls: AtomicU32::new(0),
-            burst_calls: AtomicU32::new(0),
-            ring_blinks: AtomicU32::new(0),
-            unlock_blinks: AtomicU32::new(0),
-        }
-    }
-}
-
-impl IndicatorDriver for &MockIndicatorDriver {
-    fn solid(&self) {
-        self.solid_count.fetch_add(1, Ordering::SeqCst);
-    }
-
-    fn blink(&self, _on_ms: u64, _off_ms: u64, _count: Option<u8>) {
-        self.blink_calls.fetch_add(1, Ordering::SeqCst);
-    }
-
-    fn burst(&self, _on_ms: u64, _off_ms: u64, _burst_count: u8, _pause_ms: u64) {
-        self.burst_calls.fetch_add(1, Ordering::SeqCst);
-    }
-
-    fn indicate_ring(&self) {
-        self.ring_blinks.fetch_add(1, Ordering::SeqCst);
-    }
-
-    fn indicate_unlock(&self) {
-        self.unlock_blinks.fetch_add(1, Ordering::SeqCst);
-    }
-
-    async fn run(&self) {}
 }
 
 struct MockResetDriver {
@@ -186,8 +141,7 @@ fn access_controller_processes_unlock_command_from_handle() {
     let handle = AccessControllerHandle::new(channel.sender());
     let door = MockDoorDriver::new();
     let reporter = MockReporter::new();
-    let indicator = MockIndicatorDriver::new();
-    let mut controller = AccessController::new(&door, &reporter, &indicator);
+    let mut controller = AccessController::new(&door, &reporter);
 
     // Act
     handle.request_unlock();
@@ -196,7 +150,6 @@ fn access_controller_processes_unlock_command_from_handle() {
     // Assert
     assert_eq!(door.trigger_count.load(Ordering::SeqCst), 1);
     assert_eq!(reporter.lock_state.load(Ordering::SeqCst), 2); // 2 = Unlocked
-    assert_eq!(indicator.unlock_blinks.load(Ordering::SeqCst), 1);
 }
 
 #[test]
@@ -206,8 +159,7 @@ fn access_controller_processes_ring_command_from_handle() {
     let handle = AccessControllerHandle::new(channel.sender());
     let door = MockDoorDriver::new();
     let reporter = MockReporter::new();
-    let indicator = MockIndicatorDriver::new();
-    let mut controller = AccessController::new(&door, &reporter, &indicator);
+    let mut controller = AccessController::new(&door, &reporter);
 
     // Act
     handle.trigger_ring();
@@ -215,7 +167,6 @@ fn access_controller_processes_ring_command_from_handle() {
 
     // Assert
     assert!(reporter.ring.load(Ordering::SeqCst));
-    assert_eq!(indicator.ring_blinks.load(Ordering::SeqCst), 1);
 }
 
 #[test]
@@ -244,7 +195,6 @@ fn app_compilation_and_mock_instantiation() {
     // Arrange
     let ring = MockRingDriver::new(false);
     let door = MockDoorDriver::new();
-    let indicator = MockIndicatorDriver::new();
     let reporter = MockReporter::new();
     let factory_reset = MockFactoryResetDriver::new(false);
     let reset = MockResetDriver::new();
@@ -253,7 +203,6 @@ fn app_compilation_and_mock_instantiation() {
     let _app = App::new(
         &ring,
         &door,
-        &indicator,
         &reporter,
         &factory_reset,
         &reset,
@@ -285,72 +234,52 @@ fn access_controller_handles_concurrent_ring_and_unlock() {
     let handle = AccessControllerHandle::new(channel.sender());
     let door = MockDoorDriver::new();
     let reporter = MockReporter::new();
-    let indicator = MockIndicatorDriver::new();
-    let mut controller = AccessController::new(&door, &reporter, &indicator);
+    let mut controller = AccessController::new(&door, &reporter);
 
     // Act - trigger ring first
     handle.trigger_ring();
     futures::executor::block_on(controller.next(&channel.receiver()));
 
-    // Assert - ring active, chime indicated
+    // Assert - ring active
     assert!(reporter.ring.load(Ordering::SeqCst));
-    assert_eq!(indicator.ring_blinks.load(Ordering::SeqCst), 1);
     assert_eq!(door.trigger_count.load(Ordering::SeqCst), 0);
 
     // Act - dispatch unlock while ring is active
     handle.request_unlock();
     futures::executor::block_on(controller.next(&channel.receiver()));
 
-    // Assert - door unlocked, unlock indicated, ring remains active
+    // Assert - door unlocked, ring remains active
     assert_eq!(door.trigger_count.load(Ordering::SeqCst), 1);
     assert_eq!(reporter.lock_state.load(Ordering::SeqCst), 2); // Unlocked
-    assert_eq!(indicator.unlock_blinks.load(Ordering::SeqCst), 1);
     assert!(reporter.ring.load(Ordering::SeqCst));
 }
 
 #[test]
-fn indicator_actor_routes_lifecycle_states_to_driver() {
+fn access_controller_dispatches_to_composite_reporters() {
     // Arrange
-    let watch = SystemStateWatch::new();
-    let state_sender = SystemStateSender::new(&watch);
-    let state_receiver = watch.receiver().unwrap();
-    let indicator = MockIndicatorDriver::new();
-    let actor = IndicatorActor::new(&indicator);
+    let channel = CommandChannel::new();
+    let handle = AccessControllerHandle::new(channel.sender());
+    let door = MockDoorDriver::new();
+    let rep1 = MockReporter::new();
+    let rep2 = MockReporter::new();
+    let composite = (&rep1, &rep2);
+    let mut controller = AccessController::new(&door, composite);
 
-    // Act - drive lifecycle states and verify driver commands
-    futures::executor::block_on(async {
-        use embassy_futures::select::{select, Either};
-        use embassy_futures::yield_now;
+    // Act - trigger ring
+    handle.trigger_ring();
+    futures::executor::block_on(controller.next(&channel.receiver()));
 
-        let runner = actor.run(state_receiver);
+    // Assert - both reporters in the composite received ring event
+    assert!(rep1.ring.load(Ordering::SeqCst));
+    assert!(rep2.ring.load(Ordering::SeqCst));
 
-        let driver_checks = async {
-            // Initializing / Connecting should blink
-            state_sender.connecting();
-            yield_now().await;
-            assert_eq!(indicator.blink_calls.load(Ordering::SeqCst), 1);
+    // Act - request unlock
+    handle.request_unlock();
+    futures::executor::block_on(controller.next(&channel.receiver()));
 
-            // Ready state should go solid
-            state_sender.ready();
-            yield_now().await;
-            assert_eq!(indicator.solid_count.load(Ordering::SeqCst), 1);
-
-            // Error state should burst
-            state_sender.error();
-            yield_now().await;
-            assert_eq!(indicator.burst_calls.load(Ordering::SeqCst), 1);
-        };
-
-        match select(runner, driver_checks).await {
-            Either::First(_) => unreachable!(),
-            Either::Second(()) => {}
-        }
-    });
-
-    // Assert
-    assert_eq!(indicator.blink_calls.load(Ordering::SeqCst), 1);
-    assert_eq!(indicator.solid_count.load(Ordering::SeqCst), 1);
-    assert_eq!(indicator.burst_calls.load(Ordering::SeqCst), 1);
+    // Assert - both reporters in the composite received lock state update
+    assert_eq!(rep1.lock_state.load(Ordering::SeqCst), 2);
+    assert_eq!(rep2.lock_state.load(Ordering::SeqCst), 2);
 }
 
 #[test]

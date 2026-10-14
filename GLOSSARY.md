@@ -8,12 +8,12 @@ Ubiquitous vocabulary and architectural concepts for the **Intercom Bridge** pro
 The overarching system that bridges building intercom systems to modern smart home ecosystems. It is protocol-agnostic and hardware-agnostic: any intercom hardware adapter (e.g. IR204E, Siedle, Comelit) can be bridged to any smart home protocol adapter (e.g. Matter over Wi-Fi/Thread, Home Assistant, MQTT).
 
 ### Intercom Core (`intercom-core`)
-The central, hardware-agnostic and protocol-agnostic domain and application orchestrator. Coordinates door unlocking, ring detection, indicator feedback, auto-relock timeouts, and factory reset routines. Zero dependencies on microcontroller peripherals or network stacks.
+The central, hardware-agnostic and protocol-agnostic domain and application orchestrator. Coordinates door unlocking, ring detection, domain event reporting, auto-relock timeouts, and factory reset routines. Zero dependencies on microcontroller peripherals, physical LEDs, or network stacks.
 
 ### Actor / Application Use Case
 An autonomous async task orchestrating domain rules and port interfaces:
-- **AccessController**: Deep application use case coordinating entrance door strike activation, auto-relock safety deadlines, and visitor ring announcements.
-- **IndicatorActor**: State machine mapping system lifecycle states and transient events to physical LED blink patterns.
+- **AccessController**: Deep application use case coordinating entrance door unlock actuation, auto-relock safety deadlines, and visitor ring announcements.
+- **RingActor**: Monitors physical ring triggers and dispatches them to the core domain via `AccessControllerHandle`.
 - **FactoryResetActor**: Monitors user maintenance button holds to trigger factory credential wiping.
 
 ### Lifecycle Watch
@@ -27,10 +27,9 @@ Primary driving contracts allowing external smart home adapters and hardware tri
 
 ### Outbound Ports
 Abstract traits defined by `intercom-core` representing required capabilities:
-- **IntercomReporter**: Reports visitor chime/ring activity and lock latch state (`LockState`) to external ecosystems (protocol-agnostic, zero Matter terms).
-- **DoorDriver**: Triggers the physical door relay unlock strike pulse.
+- **IntercomReporter**: Reports visitor chime/ring activity and lock latch state (`LockState`) to external ecosystems and local feedback adapters (protocol-agnostic, zero Matter or hardware terms).
+- **DoorDriver**: Triggers physical entrance door unlock actuation.
 - **RingDriver**: Blocks until a debounced hardware ring event occurs.
-- **IndicatorDriver**: Controls visual status LED patterns and transient blinks.
 - **FactoryResetDriver**: Waits for maintenance button hold triggers.
 - **SystemResetDriver**: Erases persistent credentials and triggers hardware reboot.
 
@@ -40,7 +39,7 @@ Abstract traits defined by `intercom-core` representing required capabilities:
 Concrete hardware drivers binding port traits to physical intercom lines and ESP32-C6 GPIO pins:
 - `GpioRingDriver` (optocoupler sensing ring voltage, e.g. IR204E AC/DC buzzer line)
 - `GpioDoorDriver` (PhotoMOS relay closing intercom door strike line)
-- `GpioLedDriver` (active-low status LED)
+- `GpioLedDriver` (active-low status LED; implements `IntercomReporter` for access blinks and observes `SystemStateReceiver` for lifecycle patterns)
 - `GpioBootButtonDriver` (active-low maintenance button)
 - `EspFlash` (ROM SPI flash persistence)
 

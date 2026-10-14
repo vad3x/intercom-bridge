@@ -11,16 +11,12 @@ use crate::ports::reporter::LockState;
 /// Side effects emitted by state transitions for the actor pump to execute.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct AccessEffects {
-    /// Whether the physical door strike relay should trigger.
-    pub trigger_relay: bool,
-    /// Updated lock state to report to external smart home ecosystems.
+    /// Whether the physical door unlock mechanism should trigger.
+    pub trigger_unlock: bool,
+    /// Updated lock state to report to outbound observers (smart home networks, feedback adapters).
     pub report_lock: Option<LockState>,
-    /// Updated chime/ring active state to report to external ecosystems.
+    /// Updated chime/ring active state to report to outbound observers.
     pub report_ring: Option<bool>,
-    /// Whether to show the unlock visual indicator pattern.
-    pub indicate_unlock: bool,
-    /// Whether to show the ring visual indicator pattern.
-    pub indicate_ring: bool,
 }
 
 /// Pure domain state machine for intercom access control.
@@ -49,30 +45,26 @@ impl AccessStateMachine {
         }
     }
 
-    /// Process an unlock request: triggers relay pulse, starts auto-relock, and indicates unlock.
+    /// Process an unlock request: triggers unlock actuation and schedules auto-relock.
     pub fn handle_unlock(&mut self, now_ms: u64) -> AccessEffects {
         self.relock_deadline_ms = Some(now_ms + (AUTO_RELOCK_SEC * 1000));
 
         AccessEffects {
-            trigger_relay: true,
+            trigger_unlock: true,
             report_lock: Some(LockState::Unlocked),
             report_ring: None,
-            indicate_unlock: true,
-            indicate_ring: false,
         }
     }
 
-    /// Process a ring trigger: marks ring active, schedules hold expiration, and indicates ring.
+    /// Process a ring trigger: marks ring active and schedules hold expiration.
     pub fn handle_ring(&mut self, now_ms: u64) -> AccessEffects {
         self.ring_active = true;
         self.ring_deadline_ms = Some(now_ms + RING_HOLD_MS);
 
         AccessEffects {
-            trigger_relay: false,
+            trigger_unlock: false,
             report_lock: None,
             report_ring: Some(true),
-            indicate_unlock: false,
-            indicate_ring: true,
         }
     }
 
@@ -128,7 +120,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn unlock_triggers_relay_and_reports_unlocked() {
+    fn unlock_triggers_actuation_and_reports_unlocked() {
         // Arrange
         let mut sm = AccessStateMachine::new();
 
@@ -136,9 +128,8 @@ mod tests {
         let effects = sm.handle_unlock(1000);
 
         // Assert
-        assert!(effects.trigger_relay);
+        assert!(effects.trigger_unlock);
         assert_eq!(effects.report_lock, Some(LockState::Unlocked));
-        assert!(effects.indicate_unlock);
         assert_eq!(sm.next_deadline(), Some(1000 + AUTO_RELOCK_SEC * 1000));
     }
 
@@ -175,7 +166,6 @@ mod tests {
 
         // Assert
         assert_eq!(effects.report_ring, Some(true));
-        assert!(effects.indicate_ring);
         assert!(sm.is_ring_active());
         assert_eq!(sm.next_deadline(), Some(2000 + RING_HOLD_MS));
 

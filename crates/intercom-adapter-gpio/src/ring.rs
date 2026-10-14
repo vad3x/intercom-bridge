@@ -6,7 +6,7 @@
 
 use embassy_time::{Duration, Instant, Timer};
 use esp_hal::gpio::{Input, InputConfig, Pull};
-use intercom_core::config;
+use crate::config;
 use intercom_core::ports::RingDriver;
 use log::info;
 

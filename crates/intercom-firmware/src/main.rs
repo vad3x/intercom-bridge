@@ -243,13 +243,13 @@ async fn main(_spawner: Spawner) {
     let indicator: &'static GpioLedDriver = &*INDICATOR.init(GpioLedDriver::new(peripherals.GPIO19));
 
     let access_driver = MatterAccessControlDriver::new(&door_lock, &occupancy);
+    let reporter = (access_driver, indicator);
     let boot_button = GpioBootButtonDriver::new(GpioBootButtonConfig::new(peripherals.GPIO9));
 
     let app = App::new(
         ring,
         door,
-        indicator,
-        access_driver,
+        reporter,
         boot_button,
         FirmwareResetDriver,
     );
@@ -260,11 +260,12 @@ async fn main(_spawner: Spawner) {
     // Run App actors + Matter stack concurrently
     // ========================================================================
 
-    let app_future = app.run(state_sender, &command_receiver, access_handle, state_receiver);
+    let app_future = app.run(state_sender, &command_receiver, access_handle);
     let matter_future = pin!(matter.run());
+    let led_future = indicator.run(state_receiver);
 
     info!("Matter Controller Running");
 
-    // Both run forever; join waits for both
-    embassy_futures::join::join(app_future, matter_future).await;
+    // All run forever; join3 waits for all
+    embassy_futures::join::join3(app_future, matter_future, led_future).await;
 }

@@ -8,7 +8,7 @@ Development guide for the **Intercom Bridge** — a bare-metal Rust firmware bri
 
 The firmware is designed with **Hexagonal Architecture** (Ports & Adapters) in a virtual Cargo workspace:
 
-- **`intercom-core`**: Universal domain logic (`no_std`), deterministic state machine (`AccessStateMachine`), async actors (`AccessController`, `RingActor`, `IndicatorActor`, `FactoryResetActor`), and port traits. Host-testable without hardware.
+- **`intercom-core`**: Universal domain logic (`no_std`), deterministic state machine (`AccessStateMachine`), async actors (`AccessController`, `RingActor`, `FactoryResetActor`), and port traits. Host-testable without hardware.
 - **`intercom-adapter-gpio`**: Hardware adapters implementing core ports using `esp-hal` (optocoupler ring debounce, PhotoMOS timed unlock pulse, non-blocking LED patterns, BOOT button reset).
 - **`intercom-adapter-matter`**: Smart home protocol adapters implementing Matter clusters (`DoorLock`, `OccupancySensing`) using `rs-matter` and Embassy networking via `rs-matter-embassy`.
 - **`intercom-firmware`**: Composition root binary (`intercom-bridge`). Initializes peripherals, instantiates adapters, binds them to actors, and joins async tasks.

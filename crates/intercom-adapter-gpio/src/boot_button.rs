@@ -2,11 +2,11 @@
 //!
 //! Monitors GPIO9 (BOOT button on DFRobot Beetle ESP32-C6) for a long press.
 //! When held for the configured duration, signals the factory reset trigger.
-//! The actual erase + reboot is handled by the MatterController.
+//! The actual credential erasure and reboot is coordinated by the domain FactoryResetActor.
 
 use embassy_time::{Duration, Instant, Timer};
 use esp_hal::gpio::{Input, InputConfig, Pull};
-use intercom_core::config;
+use crate::config;
 use intercom_core::ports::FactoryResetDriver;
 use log::info;
 

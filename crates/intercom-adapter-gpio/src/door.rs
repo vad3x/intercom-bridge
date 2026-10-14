@@ -5,7 +5,7 @@
 
 use embassy_time::{Duration, Timer};
 use esp_hal::gpio::{Level, Output, OutputConfig};
-use intercom_core::config;
+use crate::config;
 use intercom_core::ports::DoorDriver;
 use log::{info, warn};
 

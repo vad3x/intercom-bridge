@@ -43,16 +43,15 @@ The project is structured as a **Virtual Cargo Workspace** following the Ports a
 │                             intercom-core                                   │
 │                       (Universal Domain Logic)                              │
 │                                                                             │
-│  Ports (Traits):                                                            │
-│   ├── RingDriver              ├── IndicatorDriver                           │
-│   ├── DoorDriver              ├── FactoryResetDriver                        │
-│   └── AccessControlDriver                                                   │
+│  Inbound & Outbound Ports:                                                  │
+│   ├── AccessControllerHandle (Inbound)    ├── IntercomReporter (Outbound)    │
+│   ├── RingDriver (Outbound)               ├── FactoryResetDriver (Outbound)  │
+│   ├── DoorDriver (Outbound)               └── SystemResetDriver (Outbound)   │
 │                                                                             │
-│  Actors & Event Bus:                                                        │
-│   ├── EventBus (PubSubChannel fan-out)                                      │
-│   ├── RingActor               ├── IndicatorActor                            │
-│   ├── DoorActor               ├── FactoryResetActor                         │
-│   ├── AccessControlActor      └── MatterControllerActor                     │
+│  Actors & Domain Core:                                                      │
+│   ├── AccessController (AccessStateMachine)                                 │
+│   ├── RingActor                           ├── FactoryResetActor             │
+│   ├── SystemStateWatch (Lifecycle)        └── CommandChannel (MPSC)         │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 

@@ -11,26 +11,24 @@ use log::info;
 use crate::domain::access::{AccessEffects, AccessStateMachine};
 use crate::ports::inbound::CommandReceiver;
 use crate::ports::reporter::IntercomReporter;
-use crate::ports::{DoorDriver, IndicatorDriver};
+use crate::ports::DoorDriver;
 
 /// Access Controller application orchestrator.
 ///
-/// Owns the pure `AccessStateMachine` and coordinates the door strike relay,
-/// ecosystem status reporting, and visual feedback events.
-pub struct AccessController<D: DoorDriver, R: IntercomReporter, I: IndicatorDriver> {
+/// Owns the pure `AccessStateMachine` and coordinates door unlock actuation
+/// and domain status reporting.
+pub struct AccessController<D: DoorDriver, R: IntercomReporter> {
     door: D,
     reporter: R,
-    indicator: I,
     state: AccessStateMachine,
 }
 
-impl<D: DoorDriver, R: IntercomReporter, I: IndicatorDriver> AccessController<D, R, I> {
+impl<D: DoorDriver, R: IntercomReporter> AccessController<D, R> {
     /// Create a new Access Controller with the required outbound port drivers.
-    pub fn new(door: D, reporter: R, indicator: I) -> Self {
+    pub fn new(door: D, reporter: R) -> Self {
         Self {
             door,
             reporter,
-            indicator,
             state: AccessStateMachine::new(),
         }
     }
@@ -84,20 +82,10 @@ impl<D: DoorDriver, R: IntercomReporter, I: IndicatorDriver> AccessController<D,
             self.reporter.report_ring(ring);
         }
 
-        if effects.indicate_unlock {
-            info!("indicating unlock");
-            self.indicator.indicate_unlock();
-        }
-
-        if effects.indicate_ring {
-            info!("indicating ring");
-            self.indicator.indicate_ring();
-        }
-
-        if effects.trigger_relay {
-            info!("triggering door unlock relay");
+        if effects.trigger_unlock {
+            info!("triggering door unlock");
             self.door.trigger_unlock().await;
-            info!("door unlock relay complete");
+            info!("door unlock complete");
         }
     }
 }

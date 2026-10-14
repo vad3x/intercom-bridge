@@ -51,10 +51,11 @@ intercom-bridge/
 │   │   │   ├── config.rs           # Domain timing and indicator constants
 │   │   │   ├── events.rs           # Event enum + PubSubChannel event bus
 │   │   │   ├── ports/              # Abstract port traits (RingDriver, DoorDriver, etc.)
-│   │   │   └── actors/             # RingActor, DoorActor, IndicatorActor, etc.
+│   │   │   └── actors/             # RingActor, FactoryResetActor, AccessController
 │   │   └── tests/                  # Host unit tests with mock drivers
 │   ├── intercom-adapter-gpio/      # Hardware edge adapters (esp-hal)
 │   │   └── src/
+│   │       ├── config.rs           # Electrical timings and LED blink patterns
 │   │       ├── ring.rs             # GpioRingDriver (optocoupler, debounce)
 │   │       ├── door.rs             # GpioDoorDriver (PhotoMOS relay, timed pulse)
 │   │       ├── led.rs              # GpioLedDriver (active-low LED, blink patterns)
@@ -92,9 +93,9 @@ intercom-bridge/
 | `crates/intercom-core/src/ports/inbound.rs` | `AccessControllerHandle` & `CommandChannel` — idiomatic Inbound Port handle for driving access commands |
 | `crates/intercom-core/src/ports/reporter.rs` | `IntercomReporter` & `LockState` — protocol-agnostic domain reporting port |
 | `crates/intercom-core/src/ports/reset.rs` | `SystemResetDriver` — outbound port for credential erasure and system reboot |
-| `crates/intercom-core/src/ports/` | Abstract outbound port traits (`DoorDriver`, `RingDriver`, `IndicatorDriver`, `IntercomReporter`, `FactoryResetDriver`, `SystemResetDriver`) |
+| `crates/intercom-core/src/ports/` | Abstract outbound port traits (`DoorDriver`, `RingDriver`, `IntercomReporter`, `FactoryResetDriver`, `SystemResetDriver`) |
 | `crates/intercom-core/src/events.rs` | `SystemState` enum, `SystemStateWatch` (`Watch`), `SystemStateSender`, `SystemStateReceiver` |
-| `crates/intercom-core/src/config.rs` | Domain timing and indicator constants (protocol-agnostic) |
+| `crates/intercom-core/src/config.rs` | Domain access, relock, and reset timing policies (protocol- and hardware-agnostic) |
 | `crates/intercom-adapter-matter/src/config.rs` | Matter endpoint IDs and serial number formatting |
 | `crates/intercom-firmware/src/config.rs` | Hardware version, product identification, and flash memory layout |
 | `crates/intercom-adapter-matter/src/readiness.rs` | `ClusterReadinessBarrier` — internal Apple Home subscription readiness coordination |
@@ -123,8 +124,8 @@ let door_lock = IntercomDoorLock::new(IntercomDoorLockConfig {
 ### Actor Model with Directed Channels & Lifecycle Watch
 Actors communicate via Embassy channels and continuous state watch:
 - **`CommandChannel`**: Point-to-point MPSC command channel driving `AccessController`.
-- **`SystemStateWatch`**: Continuous lifecycle broadcast observed by `IndicatorActor` without queue overflow risk.
-- **Direct Port Effects**: `AccessController` directly drives `IndicatorDriver::indicate_ring()` and `IndicatorDriver::indicate_unlock()`.
+- **`SystemStateWatch`**: Continuous lifecycle broadcast observed by edge adapters (e.g. `GpioLedDriver`) without queue overflow risk.
+- **Direct Port Effects**: `AccessController` directly reports domain transitions to `IntercomReporter::report_ring()` and `IntercomReporter::report_lock_state()`. Edge adapters (such as `GpioLedDriver` or `MatterAccessControlDriver`) compose via tuples `(access_driver, indicator)` without intermediate core actors.
 
 ### Trait-Based Drivers
 
@@ -139,13 +140,9 @@ pub trait DoorDriver {
     async fn trigger_unlock(&mut self);
 }
 
-pub trait IndicatorDriver {
-    fn solid(&self);
-    fn blink(&self, on_ms: u64, off_ms: u64, count: Option<u8>);
-    fn burst(&self, on_ms: u64, off_ms: u64, burst_count: u8, pause_ms: u64);
-    async fn run(&self);
-    fn indicate_ring(&self);
-    fn indicate_unlock(&self);
+pub trait IntercomReporter {
+    fn report_ring(&self, ringing: bool);
+    fn report_lock_state(&self, state: LockState);
 }
 
 pub trait SystemResetDriver {
@@ -154,7 +151,7 @@ pub trait SystemResetDriver {
 }
 ```
 
-`App<R, D, REP, I, F, RST>` is generic over these traits.
+`App<R, D, REP, F, RST>` is generic over these traits.
 
 ### Matter Cluster Handlers
 
@@ -215,22 +212,27 @@ let indicator = INDICATOR.init(GpioLedDriver::new(peripherals.GPIO19));
 
 ### Changing Timing Constants
 
-Edit `crates/intercom-core/src/config.rs`:
+- **Domain Access & Lifecycle Policies:** Edit `crates/intercom-core/src/config.rs`:
+  ```rust
+  pub const RING_HOLD_MS: u64 = 15000;
+  pub const AUTO_RELOCK_SEC: u64 = 4;
+  pub const FACTORY_RESET_REBOOT_DELAY_MS: u64 = 2000;
+  ```
 
-```rust
-pub const UNLOCK_PULSE_MS: u64 = 5000;
-pub const RING_DEBOUNCE_MS: u64 = 30;
-pub const RING_COOLDOWN_MS: u64 = 2500;
-pub const RING_HOLD_MS: u64 = 15000;
-pub const AUTO_RELOCK_SEC: u64 = 4;
-```
+- **Hardware GPIO & Electrical Actuation Timings:** Edit `crates/intercom-adapter-gpio/src/config.rs`:
+  ```rust
+  pub const UNLOCK_PULSE_MS: u64 = 5000;
+  pub const RING_DEBOUNCE_MS: u64 = 30;
+  pub const RING_COOLDOWN_MS: u64 = 2500;
+  pub const FACTORY_RESET_HOLD_MS: u64 = 5000;
+  ```
 
 ## Code Style
 
 - `no_std` + `alloc` — no standard library
 - Use `log::info!`, `log::warn!`, `log::error!` for logging (via `esp-println`)
 - All drivers and actors are async (Embassy)
-- **Zero callbacks/closures across adapters and core** — communication flows through Inbound Handles (`AccessControllerHandle`, `SystemStateSender`) and Outbound Traits (`SystemResetDriver`, `IndicatorDriver`, `IntercomReporter`)
+- **Zero callbacks/closures across adapters and core** — communication flows through Inbound Handles (`AccessControllerHandle`, `SystemStateSender`) and Outbound Traits (`SystemResetDriver`, `DoorDriver`, `RingDriver`, `IntercomReporter`)
 - Traits for hardware abstraction, generics for composition
 
 ## Coding Standards
@@ -354,7 +356,7 @@ Key subsystems to monitor during debugging:
 - **Matter Exchange & MRP:** `rs_matter::transport::exchange` (`Too many retransmissions`, `Ack`, `Msg`)
 - **Wi-Fi Scanning & Association:** `wifi: Scan completed`, `wifi: AP[...]`, `wifi: Connected`, `DisconnectedInfo`
 - **BLE PASE & Commissioning:** `Starting BLE`, `PASE complete`, `CommissioningComplete`
-- **Actor Event Bus:** `RingActor`, `DoorActor`, `IndicatorActor` transitions
+- **App Actors & Edge Adapters:** `RingActor`, `AccessController`, `GpioLedDriver` transitions
 
 ---
 

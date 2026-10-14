@@ -1,7 +1,7 @@
 //! Smart Intercom - Inbound Driving Ports
 //!
 //! Defines commands and the `AccessControllerHandle` primary port.
-//! Inbound edge adapters (smart home protocols, GPIO interrupts) use this handle to drive the core.
+//! Inbound edge adapters (smart home protocols, hardware input signals) use this handle to drive the core.
 
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::{Channel, Receiver, Sender};

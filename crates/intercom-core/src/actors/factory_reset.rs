@@ -1,6 +1,6 @@
 //! Smart Intercom - Factory Reset Actor
 //!
-//! Monitors a factory reset trigger (e.g. BOOT button held for 5 seconds),
+//! Monitors a factory reset trigger via `FactoryResetDriver`,
 //! updates system lifecycle state to `FactoryReset`, erases persistent credentials
 //! via `SystemResetDriver`, and reboots the hardware.
 
@@ -29,7 +29,7 @@ impl<F: FactoryResetDriver, R: SystemResetDriver> FactoryResetActor<F, R> {
     /// Run the factory reset monitor (never returns — controller reboots).
     ///
     /// Waits for the driver to detect a factory reset trigger, notifies the
-    /// lifecycle watch sender, erases credentials, waits for LED feedback,
+    /// lifecycle watch sender, erases credentials, waits for reboot delay,
     /// and triggers reboot.
     pub async fn run(&mut self, state_sender: SystemStateSender<'_>) {
         info!("monitoring for factory reset trigger");

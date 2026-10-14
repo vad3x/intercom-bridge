@@ -6,9 +6,9 @@
 /// Domain-level lock state of the entrance door.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LockState {
-    /// Door strike relay is inactive, door is secured.
+    /// Entrance door is secured and locked.
     Locked,
-    /// Door strike relay is active or unlocked by user request.
+    /// Entrance door is unlocked or unlatched.
     Unlocked,
 }
 
@@ -21,4 +21,26 @@ pub trait IntercomReporter {
 
     /// Report current lock latch state.
     fn report_lock_state(&self, state: LockState);
+}
+
+impl<T: IntercomReporter> IntercomReporter for &T {
+    fn report_ring(&self, ringing: bool) {
+        (*self).report_ring(ringing);
+    }
+
+    fn report_lock_state(&self, state: LockState) {
+        (*self).report_lock_state(state);
+    }
+}
+
+impl<A: IntercomReporter, B: IntercomReporter> IntercomReporter for (A, B) {
+    fn report_ring(&self, ringing: bool) {
+        self.0.report_ring(ringing);
+        self.1.report_ring(ringing);
+    }
+
+    fn report_lock_state(&self, state: LockState) {
+        self.0.report_lock_state(state);
+        self.1.report_lock_state(state);
+    }
 }

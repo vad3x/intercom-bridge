@@ -7,6 +7,7 @@
 #![allow(async_fn_in_trait)]
 
 pub mod boot_button;
+pub mod config;
 pub mod door;
 pub mod flash;
 pub mod led;
