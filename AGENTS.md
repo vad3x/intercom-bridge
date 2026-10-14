@@ -20,7 +20,6 @@ For accessing rust/cargo CLI, use `mise`. The project uses a nightly Rust toolch
 - **Matter:** `rs-matter` + `rs-matter-embassy` (bare-metal Matter over WiFi)
 - **Protocol:** Matter over WiFi (BLE for commissioning)
 
-**Legacy C++ code** lives in `main/` (ESP-IDF + ESP-Matter SDK). The active codebase is Rust in `crates/`.
 
 ## Build, Test & Flash
 
@@ -77,8 +76,7 @@ intercom-bridge/
 ├── Cargo.toml                      # Virtual workspace root manifest
 ├── rust-toolchain.toml             # Nightly toolchain + riscv32imac target
 ├── .cargo/config.toml              # Build target, runner, build-std
-├── partitions.csv                  # Flash partition layout
-└── sdkconfig.defaults*             # Legacy ESP-IDF config (referenced for pin/timing values)
+└── partitions.csv                  # Flash partition layout
 ```
 
 ## Key Files to Understand

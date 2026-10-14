@@ -1,189 +1,138 @@
 # Smart Intercom Development Guide
 
-This document summarizes the project setup from the initial conversation.
+Development guide for the **Intercom Bridge** — a bare-metal Rust firmware bridging analog intercom systems (IR204E) to smart home networks (Matter over Wi-Fi / Apple Home) on the ESP32-C6.
 
-## Project Overview
+---
 
-ESP32-C6 Matter controller for IR204E analog intercom, providing:
-- **Door Lock** - Unlock via Apple Home (Matter)
-- **Contact Sensor** - Ring/buzz notification to HomeKit
+## Architecture Overview
 
-## Architecture
+The firmware is designed with **Hexagonal Architecture** (Ports & Adapters) in a virtual Cargo workspace:
 
-```
-┌────────────────────────────────────────────────────────────────┐
-│                      Matter Device                              │
-│                                                                 │
-│  Endpoint 1: Door Lock              Endpoint 2: Contact Sensor │
-│  ┌─────────────────────┐            ┌─────────────────────┐    │
-│  │ - Unlock → GPIO3    │            │ - GPIO2 interrupt   │    │
-│  │ - Lock = no-op      │            │ - Shows "Open" when │    │
-│  │ - Auto-relock 1s    │            │   someone rings     │    │
-│  └─────────────────────┘            └─────────────────────┘    │
-└────────────────────────────────────────────────────────────────┘
-```
+- **`intercom-core`**: Universal domain logic (`no_std`), deterministic state machine (`AccessStateMachine`), async actors (`AccessController`, `RingActor`, `IndicatorActor`, `FactoryResetActor`), and port traits. Host-testable without hardware.
+- **`intercom-adapter-gpio`**: Hardware adapters implementing core ports using `esp-hal` (optocoupler ring debounce, PhotoMOS timed unlock pulse, non-blocking LED patterns, BOOT button reset).
+- **`intercom-adapter-matter`**: Smart home protocol adapters implementing Matter clusters (`DoorLock`, `OccupancySensing`) using `rs-matter` and Embassy networking via `rs-matter-embassy`.
+- **`intercom-firmware`**: Composition root binary (`intercom-bridge`). Initializes peripherals, instantiates adapters, binds them to actors, and joins async tasks.
+
+---
 
 ## Hardware Configuration
 
-| Pin | Function | Hardware |
-|-----|----------|----------|
-| GPIO2 | Buzz input (pull-up, active LOW) | Optocoupler HCPL-817 |
-| GPIO3 | Unlock output (active HIGH) | PhotoMOS AQY212EHA |
+| Pin | Function | Hardware | Logic |
+|-----|----------|----------|-------|
+| **GPIO2** | Intercom Call / Buzz Input | Optocoupler (HCPL-817-000E) | Active LOW (internal pull-up) |
+| **GPIO3** | Door Unlock Relay | PhotoMOS Relay (AQY212EHA) | Active HIGH (timed 700ms pulse) |
+| **GPIO9** | Boot / Maintenance Button | Onboard Button | Active LOW (hold 10s for factory reset) |
+| **GPIO15** | Status LED | Onboard Blue LED | Active LOW |
+
+See [HARDWARE.md](HARDWARE.md) for complete schematics, BOM, and wiring diagrams.
+
+---
 
 ## Timing Constants
 
-Defined in `main/config/app_config.h`:
+Defined in [`crates/intercom-core/src/config.rs`](crates/intercom-core/src/config.rs):
 
 | Constant | Value | Purpose |
 |----------|-------|---------|
-| `UNLOCK_PULSE_MS` | 700 | Relay activation duration |
-| `DEBOUNCE_MS` | 30 | Buzz signal filtering |
-| `BUZZ_COOLDOWN_MS` | 2500 | Min time between ring events |
-| `BUZZ_ACTIVE_MS` | 2000 | How long sensor stays "open" |
+| `UNLOCK_PULSE_MS` | 700 ms | PhotoMOS relay activation duration |
+| `AUTO_RELOCK_SEC` | 4 s | Apple Home lock status auto-relock timeout |
+| `RING_DEBOUNCE_MS` | 30 ms | Optocoupler ring debounce filter |
+| `RING_COOLDOWN_MS` | 2,500 ms | Minimum cooldown between consecutive ring events |
+| `RING_HOLD_MS` | 15,000 ms | Occupancy sensor active hold duration in HomeKit |
 
-## First-Time Setup (ESP-Matter SDK)
+---
 
-The project requires ESP-Matter SDK. Run this once in your Dev Container:
+## Prerequisites
+
+1. **Toolchain Manager:** [mise](https://mise.jdx.dev/) manages the pinned nightly Rust toolchain and RISC-V target:
+   ```bash
+   mise install
+   ```
+2. **Flasher Utility:** [espflash](https://github.com/esp-rs/espflash):
+   ```bash
+   cargo install espflash
+   ```
+3. **Python 3:** With `pyserial` installed (for the non-reset serial monitor):
+   ```bash
+   pip3 install pyserial
+   ```
+
+---
+
+## Build, Test & Flash
+
+### 1. Run Host Unit Tests
+
+Runs all core domain state machine and actor tests on your local machine in under 1 second without hardware:
 
 ```bash
-# Clone ESP-Matter (takes a few minutes)
-cd /opt/esp
-git clone --recursive https://github.com/espressif/esp-matter.git
+# macOS host:
+mise exec -- cargo test -p intercom-core --target x86_64-apple-darwin
 
-# Install Matter dependencies
-cd /opt/esp/esp-matter
-./install.sh
-
-# Set environment (add to ~/.bashrc for persistence)
-export ESP_MATTER_PATH=/opt/esp/esp-matter
-source $ESP_MATTER_PATH/export.sh
+# Linux host:
+mise exec -- cargo test -p intercom-core --target x86_64-unknown-linux-gnu
 ```
 
-## Build Commands
+### 2. Build Firmware Binary
+
+Compiles the RISC-V bare-metal firmware (`target/riscv32imac-unknown-none-elf/debug/intercom-bridge`):
 
 ```bash
-# Inside Dev Container (after ESP-Matter setup):
-
-# Make sure environment is set
-export ESP_MATTER_PATH=/opt/esp/esp-matter
-source $ESP_MATTER_PATH/export.sh
-
-# Set target (first time only)
-cd /workspaces/intercom-matter
-idf.py set-target esp32c6
-
-# Build
-idf.py build
-
-# Flash (with device connected)
-idf.py flash
-
-# Monitor serial output
-idf.py monitor
-
-# Build, flash, and monitor
-idf.py flash monitor
-
-# Clean build
-idf.py fullclean
+mise exec -- cargo build -p intercom-firmware
 ```
 
-## Key Files
+### 3. Build, Flash & Monitor
 
-| File | Purpose |
-|------|---------|
-| `main/app_main.cpp` | Creates Matter node with lock + contact sensor endpoints |
-| `main/app_driver.cpp` | GPIO control, unlock pulse, buzz detection interrupt |
-| `main/config/app_config.h` | Pin definitions, timing constants |
-| `main/lock/door_lock_manager.cpp` | Simplified lock/unlock logic |
-| `main/lock/door_lock_callbacks.cpp` | Matter Door Lock cluster callbacks |
+Builds and flashes using cargo runner (configured in `.cargo/config.toml`):
 
-## How It Works
-
-### Unlock Flow
-1. User taps "Unlock" in Home app
-2. Matter stack calls `emberAfPluginDoorLockOnDoorUnlockCommand()`
-3. `BoltLockMgr().Unlock()` calls `app_driver_unlock_pulse()`
-4. GPIO3 goes HIGH for 700ms
-5. PhotoMOS relay closes, door latch releases
-6. Auto-relock timer returns state to "Locked" after 1s
-
-### Buzz Detection Flow
-1. Visitor presses intercom button
-2. Optocoupler pulls GPIO2 LOW
-3. ISR triggers, debounce timer starts
-4. After 30ms, if still LOW → valid ring
-5. Contact sensor state → `true` (HomeKit: "Open")
-6. After 2s, state → `false` (HomeKit: "Closed")
-
-## Commissioning
-
-1. Build and flash firmware
-2. Device enters commissioning mode automatically
-3. Open Apple Home → "+" → "Add Accessory"
-4. Scan QR code from serial output, or use manual code
-5. Device appears as "Door Lock" + "Contact Sensor"
-
-### Get QR Code
 ```bash
-# In monitor, or use command:
-matter esp qrcode
+mise exec -- cargo run
 ```
 
-### Factory Reset
+Or flash directly to a specific port:
+
 ```bash
-matter esp factoryreset
+./flash.sh /dev/cu.usbmodem14201
 ```
 
-## Simplified Design Decisions
+### 4. Non-Intrusive Serial Monitor
 
-| Removed Feature | Reason |
-|-----------------|--------|
-| PIN credentials | Intercom has no keypad |
-| User management | Single household use |
-| Schedules | Unnecessary for door release |
-| Lock command hardware action | Door auto-locks by spring |
+> [!WARNING]
+> Standard terminal monitors (`screen`, `picocom`, `espflash monitor`) toggle DTR/RTS when opening, which **reboots the ESP32-C6** and destroys in-memory Matter session state.
 
-## Troubleshooting
+Use the custom non-intrusive monitor script:
 
-### Build Errors
 ```bash
-# Clean and rebuild
-idf.py fullclean
-idf.py build
+./attach.sh /dev/cu.usbmodem14201
+# Or directly:
+python3 scripts/monitor.py --port /dev/cu.usbmodem14201 --no-reset
 ```
 
-### Missing Dependencies
-```bash
-# Update ESP-IDF components
-idf.py reconfigure
-```
+Logs are mirrored in real time to `/tmp/intercom_serial.log`.
 
-### Serial Monitor Issues
-- Use `/dev/ttyUSB0` or `/dev/ttyACM0` on Linux
-- Use `/dev/cu.usbserial-*` on macOS
-- Check `idf.py -p PORT flash` to specify port
+---
 
-## Original Requirements
+## Commissioning & Reset
 
-From initial conversation:
-- IR204E analog intercom integration
-- ESP32-C6 (DFRobot Beetle, DigiKey DFR1117)
-- PhotoMOS relay AQY212EHA for door unlock
-- Optocoupler HCPL-817-000E for ring detection
-- WAGO 221 connectors for non-destructive wiring
-- Safe optical isolation (never direct GPIO to intercom)
-- Matter/HomeKit integration
-- 700ms unlock pulse, 30ms debounce, 2.5s cooldown
+### Apple Home Pairing Flow
 
-## Next Steps
+1. Flash firmware and monitor serial output.
+2. The device advertises via Bluetooth LE (`Starting BLE advertising...`).
+3. Open **Apple Home** → **+** → **Add Accessory**.
+4. Scan the Matter QR code or enter the manual pairing code printed in the serial logs.
+5. Once paired, Apple Home will show:
+   - **Intercom Lock** (Endpoint 1, `DoorLock` cluster): tap to unlock the door latch.
+   - **Ring Sensor** (Endpoint 2, `OccupancySensing` cluster): triggers instant push notifications on incoming calls.
 
-1. ✅ Build firmware in Dev Container
-2. ⬜ Flash to ESP32-C6
-3. ⬜ Commission to Apple Home
-4. ⬜ Wire optocoupler circuit
-5. ⬜ Wire PhotoMOS relay circuit
-6. ⬜ Connect to IR204E intercom
-7. ⬜ Test unlock and ring detection
+### Factory Reset (Re-Commissioning)
 
+To wipe Matter pairing credentials so the device returns to pairing mode without re-flashing:
 
+1. **Hardware Method:** Press and hold the BOOT button (GPIO9) for **10 seconds** until the LED blinks rapidly.
+2. **CLI Method:**
+   ```bash
+   espflash erase-parts --port /dev/cu.usbmodem14201 matter_kvs nvs
+   ```
+   Then reboot the board.
+
+For Wi-Fi, IPv6, or router/AP troubleshooting, consult [docs/commissioning_troubleshooting.md](docs/commissioning_troubleshooting.md).
