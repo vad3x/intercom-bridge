@@ -9,6 +9,9 @@ description = "Smart Home Matter protocol adapter for Intercom Bridge"
 intercom-core = { path = "../intercom-core" }
 log = "0.4"
 portable-atomic = "1"
+embassy-sync = "0.8"
+embassy-futures = "0.1"
+embassy-time = { version = "0.5", features = ["generic-queue-8"] }
 rs-matter = { version = "0.4", default-features = false }
 rs-matter-embassy = { path = "../../../rs-matter-embassy/rs-matter-embassy", default-features = false, features = ["esp", "trouble", "embassy-net", "log", "rustcrypto", "kv-blob-store-8192", "mld-v1-compat", "nd-learn-from-frames"] }
 esp-radio = { version = "1.0.0-beta.1", features = ["ble", "coex", "log-04", "unstable", "esp32c6"] }
