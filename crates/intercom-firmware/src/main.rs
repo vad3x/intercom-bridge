@@ -188,6 +188,12 @@ async fn main(_spawner: Spawner) {
         },
         || event_bus.connecting(),
         || event_bus.connected(),
+        || {
+            info!("Decommissioning detected — wiping Matter storage and rebooting into pairing mode");
+            #[cfg(not(feature = "dummy-persist"))]
+            erase_matter_kvs(&config::MATTER_KVS_RANGE);
+            esp_hal::system::software_reset();
+        },
     )
     .register(&door_lock)
     .register(&occupancy);

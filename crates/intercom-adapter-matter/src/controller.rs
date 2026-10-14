@@ -120,29 +120,46 @@ struct EndpointMeta {
 /// Starts above the cluster handler datavers (which use 1, 2, …).
 static DESC_DATAVER_COUNTER: portable_atomic::AtomicU32 = portable_atomic::AtomicU32::new(100);
 
-pub struct MatterController<S: KvBlobStore, OnConnecting, OnConnected, H = EmptyHandler>
-where
+/// Vendor ID for Apple Inc. HomeKit Accessory Protocol / Home Hub (HomePod, Apple TV).
+///
+/// In Apple Home, the commissioning iOS device installs a primary fabric (`0x1349` / 4937),
+/// then invites the resident Home Hub as an operational admin on a secondary fabric (`0x1384` / 4996).
+/// When an accessory is removed from Apple Home, iOS removes its primary fabric (`4937`),
+/// but leaves the Home Hub fabric (`4996`) orphaned on the accessory.
+pub const APPLE_HOME_HUB_VENDOR_ID: u16 = 4996;
+
+pub struct MatterController<
+    S: KvBlobStore,
+    OnConnecting,
+    OnConnected,
+    OnDecommissioned,
+    H = EmptyHandler,
+> where
     OnConnecting: Fn(),
     OnConnected: Fn(),
+    OnDecommissioned: Fn(),
 {
     handler: H,
     endpoint_metas: Vec<EndpointMeta>,
     config: MatterControllerConfig<S>,
     on_connecting: OnConnecting,
     on_connected: OnConnected,
+    on_decommissioned: OnDecommissioned,
 }
 
-impl<S: KvBlobStore, OnConnecting: Fn(), OnConnected: Fn()>
-    MatterController<S, OnConnecting, OnConnected>
+impl<S: KvBlobStore, OnConnecting: Fn(), OnConnected: Fn(), OnDecommissioned: Fn()>
+    MatterController<S, OnConnecting, OnConnected, OnDecommissioned>
 {
     /// Start building a new Matter WiFi node with an empty handler chain.
     ///
     /// `on_connecting` is called when the WiFi/CASE handshake starts.
     /// `on_connected` is called each time the operational network comes up.
+    /// `on_decommissioned` is called when all primary controller fabrics have been removed.
     pub fn new(
         config: MatterControllerConfig<S>,
         on_connecting: OnConnecting,
         on_connected: OnConnected,
+        on_decommissioned: OnDecommissioned,
     ) -> Self {
         Self {
             handler: EmptyHandler,
@@ -150,13 +167,18 @@ impl<S: KvBlobStore, OnConnecting: Fn(), OnConnected: Fn()>
             config,
             on_connecting,
             on_connected,
+            on_decommissioned,
         }
     }
 }
 
-impl<S: KvBlobStore, OnConnecting: Fn(), OnConnected: Fn(), H: AsyncHandler>
-    MatterController<S, OnConnecting, OnConnected, H>
-{
+impl<
+    S: KvBlobStore,
+    OnConnecting: Fn(),
+    OnConnected: Fn(),
+    OnDecommissioned: Fn(),
+    H: AsyncHandler,
+> MatterController<S, OnConnecting, OnConnected, OnDecommissioned, H> {
     /// Register a cluster handler.
     ///
     /// The endpoint ID is obtained from `C::ENDPOINT_ID` (the [`MatterCluster`] trait).
@@ -166,12 +188,13 @@ impl<S: KvBlobStore, OnConnecting: Fn(), OnConnected: Fn(), H: AsyncHandler>
     pub fn register<'b, C: MatterCluster>(
         mut self,
         cluster: &'b C,
-    ) -> MatterController<S, OnConnecting, OnConnected, impl AsyncHandler + 'b>
+    ) -> MatterController<S, OnConnecting, OnConnected, OnDecommissioned, impl AsyncHandler + 'b>
     where
         H: 'b,
         S: 'b,
         OnConnecting: 'b,
         OnConnected: 'b,
+        OnDecommissioned: 'b,
     {
         let endpoint_id = C::ENDPOINT_ID;
 
@@ -195,12 +218,13 @@ impl<S: KvBlobStore, OnConnecting: Fn(), OnConnected: Fn(), H: AsyncHandler>
             ),
         );
 
-        MatterController::<S, _, _, _> {
+        MatterController::<S, _, _, _, _> {
             handler: new_handler,
             endpoint_metas: self.endpoint_metas,
             config: self.config,
             on_connecting: self.on_connecting,
             on_connected: self.on_connected,
+            on_decommissioned: self.on_decommissioned,
         }
     }
 
@@ -319,6 +343,7 @@ impl<S: KvBlobStore, OnConnecting: Fn(), OnConnected: Fn(), H: AsyncHandler>
         let mut monitor = ConnectionMonitor {
             on_connecting: self.on_connecting,
             on_connected: self.on_connected,
+            on_decommissioned: self.on_decommissioned,
             matter: stack.matter(),
         };
         stack
@@ -343,30 +368,56 @@ impl<S: KvBlobStore, OnConnecting: Fn(), OnConnected: Fn(), H: AsyncHandler>
 // ConnectionMonitor — watches netif state and signals connect/disconnect
 // ============================================================================
 
+/// Check if the Matter node has at least one active, user-facing controller fabric.
+///
+/// Returns `false` if either:
+/// - There are no fabrics at all (`state.fabrics` is empty).
+/// - The only remaining fabric is an orphaned Apple Home Hub (`0x1384` / 4996) whose
+///   controlling iOS device has already removed the accessory.
+fn has_active_controller_fabric(matter: &rs_matter::Matter<'_>) -> bool {
+    matter.with_state(|state| {
+        state
+            .fabrics
+            .iter()
+            .any(|fabric| fabric.vendor_id() != APPLE_HOME_HUB_VENDOR_ID)
+    })
+}
+
 /// Watches the network interface and signals connectivity changes.
-/// Also monitors for decommissioning (all fabrics removed from Apple Home)
-/// and reboots the device to re-enter commissioning mode.
+/// Also monitors for decommissioning (primary controller fabric removed in Apple Home)
+/// and triggers `on_decommissioned` to wipe storage and re-enter commissioning mode.
 ///
 /// Implements `UserTask`: runs alongside the Matter stack from startup.
 /// Uses `NetifDiag` to check if any interface is operational, and
 /// `NetChangeNotif` to wait for state changes. Signals `on_connected`
 /// when WiFi becomes operational and `on_connecting` when it drops.
-struct ConnectionMonitor<'a, OnConnecting: Fn(), OnConnected: Fn()> {
+struct ConnectionMonitor<'a, OnConnecting: Fn(), OnConnected: Fn(), OnDecommissioned: Fn()> {
     on_connecting: OnConnecting,
     on_connected: OnConnected,
+    on_decommissioned: OnDecommissioned,
     matter: &'a rs_matter::Matter<'a>,
 }
 
-impl<OnConnecting: Fn(), OnConnected: Fn()> UserTask
-    for ConnectionMonitor<'_, OnConnecting, OnConnected>
+impl<OnConnecting: Fn(), OnConnected: Fn(), OnDecommissioned: Fn()> UserTask
+    for ConnectionMonitor<'_, OnConnecting, OnConnected, OnDecommissioned>
 {
     async fn run<S, N>(&mut self, _net_stack: S, netif: N) -> Result<(), rs_matter::error::Error>
     where
         S: rs_matter_embassy::stack::nal::NetStack,
         N: rs_matter::dm::clusters::gen_diag::NetifDiag + rs_matter::dm::networks::NetChangeNotif,
     {
+        // Startup check: if the device booted with ONLY an orphaned Apple Home Hub fabric,
+        // trigger decommissioning immediately to clear storage and start BLE advertising.
+        let has_any_fabrics = self.matter.has_fabrics();
+        let has_primary_fabric = has_active_controller_fabric(self.matter);
+        if has_any_fabrics && !has_primary_fabric {
+            warn!("Device booted with only an orphaned hub fabric — triggering decommission reset");
+            (self.on_decommissioned)();
+            return Ok(());
+        }
+
         let mut was_operational = false;
-        let mut was_commissioned = self.matter.has_fabrics();
+        let mut was_commissioned = has_primary_fabric;
 
         loop {
             // Check if any network interface is operational
@@ -390,23 +441,18 @@ impl<OnConnecting: Fn(), OnConnected: Fn()> UserTask
             was_operational = is_operational;
 
             // Wait for a network state change OR a periodic tick.
-            // The tick lets us detect decommissioning (all fabrics removed)
-            // without stealing the persist notification from MatterPersist
-            // (embassy Notification supports only one waiter).
             let net_changed = pin!(netif.wait_changed());
-            let tick = pin!(Timer::after(Duration::from_secs(5)));
+            let tick = pin!(Timer::after(Duration::from_secs(3)));
 
             select(net_changed, tick).await;
 
             // Detect transition from commissioned → uncommissioned
-            // (all fabrics removed via RemoveFabric, i.e. device removed
-            // from Apple Home). By the time the timer fires the persist task
-            // has already saved the empty state to flash, so the reboot will
-            // correctly enter commissioning mode.
-            let is_commissioned = self.matter.has_fabrics();
+            // (all controller fabrics removed via RemoveFabric in Apple Home / Google Home).
+            let is_commissioned = has_active_controller_fabric(self.matter);
             if was_commissioned && !is_commissioned {
-                warn!("All fabrics removed — device decommissioned, rebooting to re-enter commissioning mode");
-                esp_hal::system::software_reset();
+                warn!("Primary controller fabric removed — device decommissioned, triggering reset");
+                (self.on_decommissioned)();
+                return Ok(());
             }
             was_commissioned = is_commissioned;
         }
