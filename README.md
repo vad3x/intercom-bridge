@@ -1,257 +1,169 @@
-# Smart Intercom
+# Intercom Bridge
 
-ESP32-C6 Matter controller for IR204E analog intercom with HomeKit integration.
+Universal smart intercom controller built with **Hexagonal Architecture** (Ports & Adapters) for the ESP32-C6 in bare-metal Rust (`no_std` + Embassy async).
+
+Connects analog intercom systems (such as the IR204E) to modern smart home ecosystems like Apple Home (HomeKit) via the Matter standard.
+
+---
 
 ## Features
 
-- 🔐 **Door Lock** - Unlock intercom door from Apple Home
-- 🔔 **Ring Detection** - Get notified when someone rings (Motion Sensor)
-- 🏠 **Matter/HomeKit** - Native Apple Home support via Matter
-- ⚡ **Safe Design** - Optical isolation protects your ESP32
+- 🔐 **Door Lock & Auto-Relock** — Unlock intercom door latch from Apple Home or any Matter controller.
+- 🔔 **Ring Detection** — Get notified in Apple Home when a visitor rings (exposed as an Occupancy/Motion sensor for instant push notifications and automations).
+- 🧩 **Hexagonal Architecture** — Core business domain is completely isolated from hardware peripherals and smart home protocols. Easily swap or add new adapters (e.g. Home Assistant / MQTT, different intercom hardware).
+- ⚡ **Host-Testable Core** — Run unit tests for actors, state machines, and event bus in ~0.7 seconds on your development machine (macOS/Linux) without flashing or hardware simulators.
+- 💡 **Status Indicator** — Non-blocking LED patterns indicating WiFi connecting, connected, ringing, and unlocking states.
+- 🔘 **Hardware Factory Reset** — Hold the BOOT button (GPIO9) for 10 seconds to wipe Matter commissioning credentials and restart pairing mode.
 
-## Architecture
+---
+
+## Hexagonal Architecture
+
+The project is structured as a **Virtual Cargo Workspace** following the Ports and Adapters pattern:
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         Matter Device                                │
-│                                                                      │
-│  Endpoint 1: Door Lock              Endpoint 2: Occupancy Sensor    │
-│  ┌─────────────────────┐            ┌─────────────────────┐         │
-│  │ Door Lock Cluster   │            │ Occupancy Sensing   │         │
-│  │ - Unlock command    │            │ - Occupancy bitmap  │         │
-│  │ - Auto-relock (1s)  │            │ (appears as Motion  │         │
-│  └──────────┬──────────┘            │  Sensor in HomeKit) │         │
-│             │                       └──────────┬──────────┘         │
-└─────────────┼──────────────────────────────────┼────────────────────┘
-              │                                  │
-              ▼                                  ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                         Event Bus                                    │
-│                                                                      │
-│  RingingEvent ──────────────────► AccessControlActor ──► Matter     │
-│       ▲                                    │                         │
-│       │                           UnlockDispatchedEvent              │
-│       │                                    │                         │
-│  RingActor ◄── GpioRingDriver              ▼                         │
-│                                       DoorActor ──► GpioDoorDriver   │
-└─────────────────────────────────────────────────────────────────────┘
-              │                                  │
-              ▼                                  ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                     IR204E Intercom                                  │
-│                                                                      │
-│  GPIO2 (input)                       GPIO3 (output)                 │
-│  └─► HCPL-817 optocoupler            └─► AQY212EHA PhotoMOS         │
-│      detects ring signal                 releases door latch        │
-└─────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                            intercom-firmware                                │
+│                     (Composition Root / App Runner)                         │
+└──────────────┬───────────────────────────────────────────────┬──────────────┘
+               │                                               │
+               ▼                                               ▼
+┌──────────────────────────────┐               ┌──────────────────────────────┐
+│    intercom-adapter-gpio     │               │   intercom-adapter-matter    │
+│       (Hardware Port)        │               │       (Protocol Port)        │
+│  - GpioRingDriver (HCPL-817) │               │  - IntercomDoorLock (Lock)   │
+│  - GpioDoorDriver (AQY212)   │               │  - IntercomOccupancy (Motion)│
+│  - GpioLedDriver             │               │  - MatterAccessControlDriver │
+│  - GpioBootButtonDriver      │               │  - MatterController (WiFi)   │
+└──────────────┬───────────────┘               └───────────────┬──────────────┘
+               │                                               │
+               │ implements                                    │ implements
+               ▼                                               ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                             intercom-core                                   │
+│                       (Universal Domain Logic)                              │
+│                                                                             │
+│  Ports (Traits):                                                            │
+│   ├── RingDriver              ├── IndicatorDriver                           │
+│   ├── DoorDriver              ├── FactoryResetDriver                        │
+│   └── AccessControlDriver                                                   │
+│                                                                             │
+│  Actors & Event Bus:                                                        │
+│   ├── EventBus (PubSubChannel fan-out)                                      │
+│   ├── RingActor               ├── IndicatorActor                            │
+│   ├── DoorActor               ├── FactoryResetActor                         │
+│   ├── AccessControlActor      └── MatterControllerActor                     │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-## HomeKit Integration
+See [GLOSSARY.md](GLOSSARY.md) for domain terminology and architecture definitions.
 
-After pairing, your Home app will show:
+---
 
-| Accessory | Type | Function |
-|-----------|------|----------|
-| 🔐 Intercom Lock | Door Lock | Tap to unlock door |
-| 🚶 Ring Sensor | Motion Sensor | Detects when someone rings |
+## Workspace Crates
 
-### Why Motion Sensor?
+| Crate | Target | Purpose |
+|-------|--------|---------|
+| [`intercom-core`](crates/intercom-core) | Universal (`no_std`, host + embedded) | Pure domain logic, event bus, actor loops, and port trait definitions. Has **zero** hardware or protocol dependencies. |
+| [`intercom-adapter-gpio`](crates/intercom-adapter-gpio) | RISC-V (`esp32c6`) | Hardware edge adapter implementing core ports using `esp-hal` (optocoupler debounce, PhotoMOS timed pulse, LED patterns, button press detection). |
+| [`intercom-adapter-matter`](crates/intercom-adapter-matter) | RISC-V (`esp32c6`) | Smart home protocol adapter implementing Matter clusters (`DoorLock`, `OccupancySensing`) using `rs-matter` and bare-metal WiFi/BLE via `rs-matter-embassy`. |
+| [`intercom-firmware`](crates/intercom-firmware) | RISC-V (`esp32c6`) | Composition root. Initializes chip peripherals, constructs drivers, wires callbacks to `EventBus`, and builds the final `intercom-bridge` ELF binary. |
 
-The ring detection appears as a Motion Sensor in HomeKit because:
-- Native notification support ("Motion detected")
-- Better automation triggers than Contact Sensor
-- 4-second auto-clear matches typical ring duration
+---
 
-### Example Automations
-
-- "When motion detected → Send notification"
-- "When motion detected → Flash porch lights"
-- "When motion detected → Announce on HomePod"
-
-## Hardware
-
-| Component | Part Number | Purpose |
-|-----------|-------------|---------|
-| Controller | DFRobot Beetle ESP32-C6 | Matter-capable MCU |
-| Optocoupler | HCPL-817-000E | Ring detection (isolated) |
-| PhotoMOS Relay | AQY212EHA | Door unlock (isolated) |
-| Connectors | WAGO 221 | Non-destructive wiring |
-
-See [HARDWARE.md](HARDWARE.md) for wiring diagrams.
-
-## Configuration
-
-All hardware settings are in `main/config/app_config.h`:
-
-```cpp
-// GPIO Configuration
-#define RING_GPIO 2    // Input: Optocoupler output (active LOW)
-#define UNLOCK_GPIO 3  // Output: PhotoMOS relay control (active HIGH)
-
-// Timing Constants (milliseconds)
-#define UNLOCK_PULSE_MS 700    // Duration of relay activation
-#define RING_DEBOUNCE_MS 30    // Ring signal debounce time
-#define RING_COOLDOWN_MS 2500  // Minimum time between ring events
-#define RING_HOLD_MS 4000      // How long motion stays active in HomeKit
-```
-
-## Building
+## Quick Start
 
 ### Prerequisites
 
-- ESP-IDF v5.x
-- ESP-Matter SDK
+- [mise](https://mise.jdx.dev/) (manages nightly Rust toolchain for RISC-V `riscv32imac-unknown-none-elf`)
+- [espflash](https://github.com/esp-rs/espflash) (`cargo install espflash`)
 
-### Build Commands
+### 1. Run Host Unit Tests
 
-```bash
-# Set target
-idf.py set-target esp32c6
-
-# Build
-idf.py build
-
-# Flash and monitor
-idf.py flash monitor
-```
-
-### Dev Commands
+Core domain logic, actors, and state transitions are tested on your local host (macOS / Linux) in under a second:
 
 ```bash
-# Format all C++ files
-find main \( -name "*.cpp" -o -name "*.h" \) -exec clang-format -i {} +
+mise exec -- cargo test -p intercom-core --target x86_64-apple-darwin
+# Or on Linux:
+# mise exec -- cargo test -p intercom-core --target x86_64-unknown-linux-gnu
 ```
 
-## Commissioning
+### 2. Build Firmware
 
-1. Power on the device
-2. Open Apple Home app
-3. Tap "+" → "Add Accessory"
-4. Scan QR code or enter manual code
-5. Device appears as Door Lock + Motion Sensor
-
-### Commission via CLI (optional)
+Compile the RISC-V bare-metal binary:
 
 ```bash
-# Get QR code
-matter esp qrcode
-
-# Factory reset
-matter esp factoryreset
+mise exec -- cargo build -p intercom-firmware
 ```
 
-## Project Structure
+The resulting binary is located at `target/riscv32imac-unknown-none-elf/debug/intercom-bridge`.
 
-```
-intercom-matter/
-├── main/
-│   ├── app_main.cpp              # Entry point, initializes App
-│   ├── app.cpp/h                 # Application class, wires actors
-│   │
-│   ├── config/
-│   │   └── app_config.h          # GPIO pins, timing constants
-│   │
-│   ├── events/
-│   │   ├── events.h              # RingingEvent, UnlockDispatchedEvent
-│   │   └── listener.h            # Event subscription template
-│   │
-│   ├── actors/
-│   │   ├── ring_actor.h          # Hardware ring → RingingEvent
-│   │   ├── access_control_actor.h # Business logic, Matter bridge
-│   │   └── door_actor.h          # UnlockDispatchedEvent → hardware
-│   │
-│   └── drivers/
-│       ├── gpio_ring_driver.cpp/h      # Optocoupler input
-│       ├── gpio_door_driver.cpp/h      # PhotoMOS relay output
-│       └── matter_access_control_driver.cpp/h  # Matter endpoints
-│
-├── CMakeLists.txt
-├── sdkconfig.defaults
-├── partitions.csv
-├── README.md
-└── HARDWARE.md
+### 3. Flash & Monitor
+
+Build, flash to the connected ESP32-C6, and open the serial monitor in one command:
+
+```bash
+mise exec -- cargo run
 ```
 
-## How It Works
+Or flash directly to a specific serial port:
 
-### Actor Model
-
-The firmware uses an event-driven actor architecture:
-
-| Actor | Responsibility |
-|-------|----------------|
-| `RingActor` | Listens to hardware, emits `RingingEvent` |
-| `AccessControlActor` | Business logic, bridges events ↔ Matter |
-| `DoorActor` | Listens to `UnlockDispatchedEvent`, triggers hardware |
-
-Actors communicate via an `EventBus` with typed events.
-
-### Driver Pattern
-
-Hardware drivers use config structs for dependency injection:
-
-```cpp
-// Config passed at construction
-GpioRingDriver ringDriver_({
-    .gpioPin = RING_GPIO,
-    .debounceMs = RING_DEBOUNCE_MS,
-    .cooldownMs = RING_COOLDOWN_MS
-});
-
-// Timer callbacks use FreeRTOS timer ID pattern
-xTimerCreate("timer", period, false, this, callback);
-auto* self = static_cast<Driver*>(pvTimerGetTimerID(timer));
+```bash
+./flash.sh /dev/cu.usbmodem14201
 ```
 
-### Unlock Flow
+### 4. Non-Intrusive Serial Monitor
 
-1. User taps "Unlock" in Home app
-2. Matter sends unlock command
-3. `MatterAccessControlDriver` receives callback
-4. Emits `UnlockDispatchedEvent` via `AccessControlActor`
-5. `DoorActor` triggers `GpioDoorDriver::triggerUnlock()`
-6. PhotoMOS relay closes for 700ms
-7. Door latch releases, person can enter
-8. Auto-relock timer fires after 1s (Matter state only)
+To view live serial logs without resetting the chip (standard serial monitors toggle DTR/RTS which resets the ESP32 and wipes in-memory Matter exchange sessions):
 
-### Ring Detection Flow
+```bash
+./attach.sh /dev/cu.usbmodem14201
+```
 
-1. Visitor presses intercom button
-2. Optocoupler pulls GPIO2 LOW
-3. GPIO ISR fires, starts debounce timer
-4. After 30ms, `GpioRingDriver` validates signal
-5. Invokes callback → `RingActor` emits `RingingEvent`
-6. `AccessControlActor` calls `MatterAccessControlDriver::ringing()`
-7. Occupancy sensor set to "occupied" (motion detected)
-8. After 4s, auto-clears to "unoccupied"
+Logs are also mirrored to `/tmp/intercom_serial.log`.
 
-## Simplified Design
+---
 
-This implementation removes complex features not needed for intercoms:
+## Apple Home & Matter Integration
 
-| Removed | Reason |
-|---------|--------|
-| PIN credentials | No keypad on intercom |
-| User management | Single household use |
-| Schedules | Overkill for door release |
-| Credential OTA | Not applicable |
+Once commissioned, the bridge exposes two endpoints:
 
-The Lock command is a **no-op** - the intercom door is always locked by its spring mechanism. Only Unlock triggers hardware.
+| Accessory in HomeKit | Matter Endpoint | Matter Cluster | Function |
+|----------------------|-----------------|----------------|----------|
+| 🔐 **Intercom Lock** | Endpoint 1 | `DoorLock` (0x0101) | Tap to release intercom latch (700ms pulse, 4s auto-relock) |
+| 🚶 **Ring Sensor** | Endpoint 2 | `OccupancySensing` (0x0406) | Triggers on visitor call (displayed as Motion Sensor for immediate push notifications) |
 
-## Safety Notes
+For troubleshooting WiFi, IPv6, or Apple Home hub connectivity issues, see [docs/commissioning_troubleshooting.md](docs/commissioning_troubleshooting.md).
 
-⚠️ **Electrical Safety**
+---
 
-- Never connect intercom wires directly to ESP32
-- Always use optical isolation (optocoupler + PhotoMOS)
-- Power ESP32 from separate USB supply
+## Hardware Reference
 
-⚠️ **Building Security**
+| Component | Part Number | Purpose |
+|-----------|-------------|---------|
+| Controller | DFRobot Beetle ESP32-C6 | Matter-capable RISC-V MCU with onboard antenna |
+| Optocoupler | HCPL-817-000E | Optically isolated call signal detection (GPIO2) |
+| PhotoMOS Relay | AQY212EHA | Optically isolated door unlock latch release (GPIO3) |
+| Status LED | Onboard Blue LED | System state and activity indicator (GPIO15, active-low) |
+| Boot Button | Onboard BOOT Button | Maintenance & 10-second factory reset (GPIO9) |
 
-- This modification affects building access
-- Consult building management before installation
-- Keep manual intercom button functional
+See [HARDWARE.md](HARDWARE.md) for full electrical wiring and schematics.
+
+---
+
+## Resetting Matter Pairing
+
+To clear Matter fabric and WiFi credentials without re-flashing firmware:
+
+1. **Via Hardware Button:** Press and hold the BOOT button (GPIO9) for **10 seconds** until the LED blinks rapidly.
+2. **Via CLI:**
+   ```bash
+   espflash erase-parts --port /dev/cu.usbmodem14201 matter_kvs nvs
+   ```
+Then reboot the device to enter Bluetooth commissioning advertising.
+
+---
 
 ## License
 
-MIT License - See LICENSE for details.
+MIT License — see [LICENSE](LICENSE) for details.

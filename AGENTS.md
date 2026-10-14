@@ -8,30 +8,34 @@ For accessing rust/cargo CLI, use `mise`. The project uses a nightly Rust toolch
 
 ## Project Overview
 
-ESP32-C6 Matter controller for IR204E analog intercom. Provides door lock control and ring detection via Apple Home (HomeKit) using the Matter protocol.
+**Intercom Bridge** — ESP32-C6 controller bridging analog intercom systems (IR204E) to smart home networks (Matter over Wi-Fi / Apple Home). Designed with Hexagonal Architecture (Ports & Adapters) to keep universal domain logic completely decoupled from hardware and protocol implementations.
 
 **Tech Stack:**
 
 - **Hardware:** ESP32-C6 (DFRobot Beetle)
 - **Language:** Rust (`no_std`, bare-metal)
+- **Architecture:** Hexagonal Architecture (Ports & Adapters) Virtual Workspace
 - **Async Runtime:** Embassy (replaces FreeRTOS)
 - **HAL:** `esp-hal` + `esp-radio` (WiFi/BLE)
 - **Matter:** `rs-matter` + `rs-matter-embassy` (bare-metal Matter over WiFi)
 - **Protocol:** Matter over WiFi (BLE for commissioning)
 
-**Legacy C++ code** lives in `main/` (ESP-IDF + ESP-Matter SDK). The active codebase is Rust in `src/`.
+**Legacy C++ code** lives in `main/` (ESP-IDF + ESP-Matter SDK). The active codebase is Rust in `crates/`.
 
-## Build & Flash
+## Build, Test & Flash
 
 ```bash
-# Build binary
-mise exec -- cargo build
+# Run host unit tests (runs in ~1s on macOS/Linux without hardware)
+cargo test -p intercom-core --target x86_64-apple-darwin
+
+# Build firmware binary (intercom-bridge)
+mise exec -- cargo build -p intercom-firmware
 
 # Build + flash + monitor (via cargo runner in .cargo/config.toml)
 mise exec -- cargo run
 
 # Flash directly to specific port
-espflash flash target/riscv32imac-unknown-none-elf/debug/intercom-matter --port /dev/cu.usbmodem14201
+espflash flash target/riscv32imac-unknown-none-elf/debug/intercom-bridge --port /dev/cu.usbmodem14201
 ```
 
 The `.cargo/config.toml` configures the RISC-V target (`riscv32imac-unknown-none-elf`), `build-std`, and the `espflash` runner. USB ports are typically `/dev/cu.usbmodem*` (native ESP32-C6 USB) or `/dev/cu.usbserial*` (UART bridge).
@@ -39,36 +43,38 @@ The `.cargo/config.toml` configures the RISC-V target (`riscv32imac-unknown-none
 ## Project Structure
 
 ```
-intercom-matter/
-├── src/
-│   ├── main.rs                     # Entry point, hardware init, callback wiring
-│   ├── app.rs                      # App struct, wires actors + runs them
-│   ├── config.rs                   # Timing constants, endpoint IDs
-│   ├── events.rs                   # Event enum + PubSubChannel event bus
-│   ├── utils/
-│   │   ├── mod.rs
-│   │   └── uptime_logger.rs        # Custom HH:MM:SS.mmm logger
-│   ├── actors/
-│   │   ├── mod.rs
-│   │   ├── ring.rs                 # Publishes Ringing events from hardware
-│   │   ├── door.rs                 # Subscribes to UnlockDispatched, triggers relay
-│   │   ├── indicator.rs            # Subscribes to all events, drives status LED
-│   │   └── access_control.rs       # Bridges events ↔ Matter state (occupancy, relock)
-│   └── drivers/
-│       ├── mod.rs                  # Re-exports driver traits from gpio/
-│       ├── gpio/
-│       │   ├── mod.rs              # Re-exports GPIO drivers
-│       │   ├── ring.rs             # GpioRingDriver (optocoupler, debounce)
-│       │   ├── door.rs             # GpioDoorDriver (PhotoMOS relay, timed pulse)
-│       │   └── led.rs              # GpioLedDriver (active-low LED, blink patterns)
-│       └── matter/
-│           ├── mod.rs              # MatterCluster trait, cluster codegen, re-exports
-│           ├── door_lock.rs        # IntercomDoorLock (DoorLock cluster handler)
-│           ├── occupancy.rs        # IntercomOccupancy (OccupancySensing cluster handler)
-│           ├── access_control.rs   # MatterAccessControlDriver (bridges actors ↔ clusters)
-│           └── controller.rs       # MatterController builder+runner (WiFi stack)
-├── main/                           # Legacy C++ codebase (ESP-IDF)
-├── Cargo.toml                      # Dependencies, features, patch overrides
+intercom-bridge/
+├── crates/
+│   ├── intercom-core/              # Pure no_std universal domain logic (host-testable)
+│   │   ├── src/
+│   │   │   ├── lib.rs
+│   │   │   ├── app.rs              # App coordinator generic over port traits
+│   │   │   ├── config.rs           # Timing constants, endpoint IDs
+│   │   │   ├── events.rs           # Event enum + PubSubChannel event bus
+│   │   │   ├── ports/              # Abstract port traits (RingDriver, DoorDriver, etc.)
+│   │   │   └── actors/             # RingActor, DoorActor, IndicatorActor, etc.
+│   │   └── tests/                  # Host unit tests with mock drivers
+│   ├── intercom-adapter-gpio/      # Hardware edge adapters (esp-hal)
+│   │   └── src/
+│   │       ├── ring.rs             # GpioRingDriver (optocoupler, debounce)
+│   │       ├── door.rs             # GpioDoorDriver (PhotoMOS relay, timed pulse)
+│   │       ├── led.rs              # GpioLedDriver (active-low LED, blink patterns)
+│   │       ├── boot_button.rs      # GpioBootButtonDriver (maintenance button)
+│   │       └── flash.rs            # EspFlash (ROM SPI flash persistence)
+│   ├── intercom-adapter-matter/    # Smart home protocol adapters (rs-matter)
+│   │   └── src/
+│   │       ├── door_lock.rs        # IntercomDoorLock (DoorLock cluster handler)
+│   │       ├── occupancy.rs        # IntercomOccupancy (OccupancySensing cluster handler)
+│   │       ├── access_control.rs   # MatterAccessControlDriver (bridges actors ↔ clusters)
+│   │       ├── commissioning.rs    # Commissioning helpers
+│   │       └── controller.rs       # MatterController builder + runner (WiFi stack)
+│   └── intercom-firmware/          # Composition root binary (intercom-bridge)
+│       └── src/
+│           ├── main.rs             # Hardware init, peripheral allocation, joins actors
+│           └── utils/
+│               └── uptime_logger.rs# Custom HH:MM:SS.mmm logger
+├── GLOSSARY.md                     # Ubiquitous domain vocabulary
+├── Cargo.toml                      # Virtual workspace root manifest
 ├── rust-toolchain.toml             # Nightly toolchain + riscv32imac target
 ├── .cargo/config.toml              # Build target, runner, build-std
 ├── partitions.csv                  # Flash partition layout
@@ -79,15 +85,16 @@ intercom-matter/
 
 | File | Purpose |
 |------|---------|
-| `src/main.rs` | Entry point: hardware init, creates `EventBus` locally, wires driver callbacks to bus, runs `App` + `MatterController` via `join` |
-| `src/app.rs` | `App<R, D, I, A>` generic over driver traits, owns actors, runs them via `join4` |
-| `src/events.rs` | `Event` enum (`Ringing`, `UnlockDispatched`, `SystemState`), `SystemState` enum, `EventBus` (Embassy `PubSubChannel`) |
-| `src/config.rs` | Timing constants, Matter endpoint IDs |
-| `src/drivers/matter/controller.rs` | `MatterController` — builder pattern for registering clusters + running the Matter stack; accepts `on_connecting`/`on_connected` callbacks at construction |
-| `src/drivers/matter/door_lock.rs` | `IntercomDoorLock` — Matter DoorLock cluster, calls `on_unlock` callback |
-| `src/drivers/matter/occupancy.rs` | `IntercomOccupancy` — Matter OccupancySensing cluster |
-| `src/drivers/matter/access_control.rs` | `MatterAccessControlDriver` — bridges actors ↔ Matter cluster state |
-| `src/actors/indicator.rs` | `IndicatorActor` + `IndicatorDriver` trait — handles LED blink patterns including connecting blink |
+| `crates/intercom-firmware/src/main.rs` | Composition root: hardware init, creates `EventBus`, instantiates adapters, wires them into `App` + `MatterController`, runs via `join` |
+| `crates/intercom-core/src/app.rs` | `App<R, D, I, A, F>` generic over port driver traits, owns actors, runs them via `join` |
+| `crates/intercom-core/src/ports/` | Abstract outbound port traits (`DoorDriver`, `RingDriver`, `IndicatorDriver`, `AccessControlDriver`, `FactoryResetDriver`) |
+| `crates/intercom-core/src/events.rs` | `Event` enum (`Ringing`, `UnlockDispatched`, `SystemState`), `SystemState` enum, `EventBus` (`PubSubChannel`) |
+| `crates/intercom-core/src/config.rs` | Timing constants, Matter endpoint IDs |
+| `crates/intercom-adapter-matter/src/controller.rs` | `MatterController` — builder pattern for registering clusters + running the Matter stack |
+| `crates/intercom-adapter-matter/src/door_lock.rs` | `IntercomDoorLock` — Matter DoorLock cluster, calls `on_unlock` callback |
+| `crates/intercom-adapter-matter/src/occupancy.rs` | `IntercomOccupancy` — Matter OccupancySensing cluster |
+| `crates/intercom-adapter-matter/src/access_control.rs` | `MatterAccessControlDriver` — implements `AccessControlDriver` port |
+| `crates/intercom-adapter-gpio/src/` | GPIO implementations of port traits using `esp-hal` |
 
 ## Architecture Patterns
 
@@ -179,23 +186,23 @@ matter.run().await;
 
 ### Adding a New GPIO Driver
 
-1. Define an async trait in `src/actors/<name>.rs` (trait lives with the actor)
-2. Create implementation in `src/drivers/gpio/<name>.rs`
-3. Add the new actor in `src/actors/<name>.rs`
-4. Wire into `App` struct in `src/app.rs`
-5. Instantiate with concrete GPIO pin in `src/main.rs`
+1. Define an async trait in `crates/intercom-core/src/ports/`
+2. Create implementation in `crates/intercom-adapter-gpio/src/`
+3. Add the new actor in `crates/intercom-core/src/actors/`
+4. Wire into `App` struct in `crates/intercom-core/src/app.rs`
+5. Instantiate with concrete GPIO pin in `crates/intercom-firmware/src/main.rs`
 
 ### Adding a New Matter Cluster
 
-1. Add the cluster to `rs_matter::import!()` in `src/drivers/matter/mod.rs`
-2. Create a handler struct in `src/drivers/matter/<name>.rs` implementing `AsyncHandler` + `MatterCluster`
-3. Use callbacks (`&dyn Fn()`) for outbound events — **never import EventBus in drivers**
-4. Register with `MatterController::register()` in `src/main.rs`
-5. Wire callbacks to event bus in `src/main.rs`
+1. Add the cluster to `rs_matter::import!()` in `crates/intercom-adapter-matter/`
+2. Create a handler struct in `crates/intercom-adapter-matter/src/` implementing `AsyncHandler` + `MatterCluster`
+3. Use callbacks (`&dyn Fn()`) for outbound events — **never import EventBus in adapters**
+4. Register with `MatterController::register()` in `crates/intercom-firmware/src/main.rs`
+5. Wire callbacks to event bus in `crates/intercom-firmware/src/main.rs`
 
 ### Changing GPIO Pins
 
-Edit `src/main.rs` — pins are selected via ESP-HAL peripheral tokens:
+Edit `crates/intercom-firmware/src/main.rs` — pins are selected via ESP-HAL peripheral tokens:
 
 ```rust
 let ring = GpioRingDriver::new(peripherals.GPIO2, GpioRingConfig::default());
@@ -205,7 +212,7 @@ let indicator = GpioLedDriver::new(peripherals.GPIO19, GpioLedConfig::default())
 
 ### Changing Timing Constants
 
-Edit `src/config.rs`:
+Edit `crates/intercom-core/src/config.rs`:
 
 ```rust
 pub const UNLOCK_PULSE_MS: u64 = 5000;
@@ -335,10 +342,10 @@ python3 scripts/monitor.py
 
 ### Log Levels & Subsystems
 
-Adjust logging level in `src/main.rs`:
+Adjust logging level in `crates/intercom-firmware/src/main.rs`:
 
 ```rust
-// In src/main.rs:
+// In crates/intercom-firmware/src/main.rs:
 uptime_logger::init(log::LevelFilter::Debug); // Options: Info, Debug, Trace
 ```
 
@@ -394,8 +401,8 @@ espflash erase-flash --port /dev/cu.usbserial-210
 | Device not enumerating on USB | Enter download mode (BOOT+RST) or switch to UART bridge |
 | Apple Home "Unable to add" | See [docs/commissioning_troubleshooting.md](docs/commissioning_troubleshooting.md) for Omada/IPv6/Wi-Fi fixes |
 | Device already paired elsewhere | Erase Matter credentials: `espflash erase-parts --port <PORT> matter_kvs nvs` |
-| Stack overflow / alloc failure | Increase `HEAP_SIZE` in `src/main.rs` |
-| Commissioning unreliable | Increase `BUMP_SIZE` in `src/drivers/matter/mod.rs` |
+| Stack overflow / alloc failure | Increase `HEAP_SIZE` in `crates/intercom-firmware/src/main.rs` |
+| Commissioning unreliable | Increase `BUMP_SIZE` in `crates/intercom-adapter-matter/src/` |
 
 ## Dependencies
 

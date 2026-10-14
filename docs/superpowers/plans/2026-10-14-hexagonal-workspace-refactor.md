@@ -369,7 +369,7 @@ portable-atomic = { version = "1", features = ["critical-section"] }
 rs-matter-embassy = { path = "../../../rs-matter-embassy/rs-matter-embassy", default-features = false, features = ["esp", "trouble", "embassy-net", "log", "rustcrypto", "kv-blob-store-8192", "mld-v1-compat", "nd-learn-from-frames"] }
 ```
 
-- [ ] **Step 2: Update `main.rs` imports to use the adapter boundaries**
+- [x] **Step 2: Update `main.rs` imports to use the adapter boundaries**
 ```rust
 use intercom_core::app::App;
 use intercom_core::config;
@@ -385,17 +385,17 @@ use intercom_adapter_matter::{
 };
 ```
 
-- [ ] **Step 3: Remove old root `src/` directory**
+- [x] **Step 3: Remove old root `src/` directory**
 ```bash
 rm -rf src/
 ```
 
-- [ ] **Step 4: Verify `intercom-bridge` builds for target**
+- [x] **Step 4: Verify `intercom-bridge` builds for target**
 ```bash
 mise exec -- cargo build -p intercom-firmware --target riscv32imac-unknown-none-elf
 ```
 
-- [ ] **Step 5: Commit `intercom-firmware`**
+- [x] **Step 5: Commit `intercom-firmware`**
 ```bash
 git add crates/intercom-firmware/ src/
 git commit -m "feat(firmware): wire composition root in intercom-firmware and build intercom-bridge binary"
@@ -416,17 +416,17 @@ git commit -m "feat(firmware): wire composition root in intercom-firmware and bu
 - Consumes: Binary name `intercom-bridge`.
 - Produces: Working developer runners, flash scripts, and documentation.
 
-- [ ] **Step 1: Update `.cargo/config.toml` to target `intercom-bridge` binary**
+- [x] **Step 1: Update `.cargo/config.toml` to target `intercom-bridge` binary**
 Ensure `cargo run` defaults to running `intercom-bridge`.
 
-- [ ] **Step 2: Update `flash.sh` and `espflash.toml`**
+- [x] **Step 2: Update `flash.sh` and `espflash.toml`**
 Update binary path to:
 `target/riscv32imac-unknown-none-elf/debug/intercom-bridge`
 
-- [ ] **Step 3: Update `AGENTS.md` and `README.md`**
+- [x] **Step 3: Update `AGENTS.md` and `README.md`**
 Update project name to `intercom-bridge` and document the new 4-crate architecture and commands.
 
-- [ ] **Step 4: Execute full test and build verification**
+- [x] **Step 4: Execute full test and build verification**
 ```bash
 # 1. Host unit tests for core domain logic
 cargo test -p intercom-core
@@ -435,7 +435,7 @@ cargo test -p intercom-core
 mise exec -- cargo build -p intercom-firmware --target riscv32imac-unknown-none-elf
 ```
 
-- [ ] **Step 5: Commit tooling and documentation updates**
+- [x] **Step 5: Commit tooling and documentation updates**
 ```bash
 git add .cargo/config.toml flash.sh espflash.toml AGENTS.md README.md
 git commit -m "docs: update project documentation and tooling for intercom-bridge"
