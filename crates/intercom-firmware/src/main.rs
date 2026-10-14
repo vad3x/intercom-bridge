@@ -1,4 +1,4 @@
-//! Smart Intercom - ESP32-C6 Matter Controller
+//! Intercom Bridge - ESP32-C6 Firmware Composition Root
 //!
 //! Door lock control and ring detection via Apple Home (HomeKit)
 //! using the Matter protocol over WiFi with BLE commissioning.
@@ -12,43 +12,39 @@
 
 extern crate alloc;
 
-mod actors;
-mod app;
-mod config;
-mod drivers;
-mod events;
 mod utils;
 
 use core::pin::pin;
 
 use embassy_executor::Spawner;
-
 use esp_alloc::heap_allocator;
 use esp_backtrace as _;
 use esp_hal::ram;
 use esp_hal::timer::timg::TimerGroup;
 use esp_metadata_generated::memory_range;
-
 use log::{info, warn};
+
 #[cfg(not(feature = "dummy-persist"))]
 use rs_matter_embassy::persist::SeqMapKvBlobStore;
 #[cfg(feature = "dummy-persist")]
 use rs_matter_embassy::matter::persist::DummyKvBlobStore;
 
-use crate::actors::matter_controller::MatterControllerActorConfig;
-use crate::app::App;
-#[cfg(not(feature = "dummy-persist"))]
-use crate::drivers::flash::EspFlash;
-use crate::drivers::gpio::boot_button::{GpioBootButtonConfig, GpioBootButtonDriver};
-use crate::drivers::gpio::door::{GpioDoorConfig, GpioDoorDriver};
-use crate::drivers::gpio::led::GpioLedDriver;
-use crate::drivers::gpio::ring::{GpioRingConfig, GpioRingDriver};
-use crate::drivers::matter::{
+use intercom_core::actors::MatterControllerActorConfig;
+use intercom_core::app::App;
+use intercom_core::config;
+use intercom_core::events::{Event, EventBus, EventBusExt};
+
+use intercom_adapter_gpio::boot_button::{GpioBootButtonConfig, GpioBootButtonDriver};
+use intercom_adapter_gpio::door::{GpioDoorConfig, GpioDoorDriver};
+use intercom_adapter_gpio::flash::EspFlash;
+use intercom_adapter_gpio::led::GpioLedDriver;
+use intercom_adapter_gpio::ring::{GpioRingConfig, GpioRingDriver};
+
+use intercom_adapter_matter::{
     DeviceInfo, IntercomDoorLock, IntercomDoorLockConfig, IntercomOccupancy,
     IntercomOccupancyConfig, MatterAccessControlDriver, MatterController, MatterControllerConfig,
     MatterPeripherals,
 };
-use crate::events::{Event, EventBus, EventBusExt};
 
 // ============================================================================
 // Memory configuration
@@ -68,7 +64,7 @@ esp_bootloader_esp_idf::esp_app_desc!();
 /// Called by `esp-backtrace` after printing the backtrace on panic.
 /// Triggers a software reset so the device recovers automatically.
 #[unsafe(no_mangle)]
-fn custom_halt() -> ! {
+pub fn custom_halt() -> ! {
     esp_hal::system::software_reset();
 }
 
@@ -217,6 +213,7 @@ async fn main(_spawner: Spawner) {
             on_factory_reset: || erase_matter_kvs(&config::MATTER_KVS_RANGE),
             #[cfg(feature = "dummy-persist")]
             on_factory_reset: || info!("Factory reset skipped (dummy-persist)"),
+            on_reboot: || esp_hal::system::software_reset(),
         },
     );
 

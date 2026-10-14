@@ -10,6 +10,9 @@ name = "intercom-bridge"
 path = "src/main.rs"
 harness = false
 
+[features]
+dummy-persist = []
+
 [dependencies]
 intercom-core = { path = "../intercom-core" }
 intercom-adapter-gpio = { path = "../intercom-adapter-gpio" }
@@ -18,6 +21,8 @@ intercom-adapter-matter = { path = "../intercom-adapter-matter" }
 log = "0.4"
 embassy-executor = "0.10"
 embassy-futures = "0.1"
+embassy-sync = "0.8"
+embassy-time = { version = "0.5", features = ["generic-queue-8"] }
 esp-backtrace = { version = "0.20", features = ["panic-handler", "println", "custom-halt", "esp32c6"] }
 esp-hal = { version = "~1.2", features = ["log-04", "unstable", "exception-handler", "esp32c6"] }
 esp-rtos = { version = "0.4", features = ["esp-radio", "embassy", "esp32c6"] }

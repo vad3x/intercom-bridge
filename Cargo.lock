@@ -1253,6 +1253,7 @@ dependencies = [
  "critical-section",
  "document-features",
  "embassy-time-driver",
+ "embassy-time-queue-utils",
  "embedded-hal 0.2.7",
  "embedded-hal 1.0.0",
  "embedded-hal-async",
@@ -2024,6 +2025,7 @@ checksum = "8b147ee9d1f6d097cef9ce628cd2ee62288d963e16fb287bd9286455b241382d"
 dependencies = [
  "futures-channel",
  "futures-core",
+ "futures-executor",
  "futures-io",
  "futures-sink",
  "futures-task",
@@ -2045,6 +2047,17 @@ name = "futures-core"
 version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7e3450815272ef58cec6d564423f6e755e25379b217b0bc688e295ba24df6b1d"
+
+[[package]]
+name = "futures-executor"
+version = "0.3.32"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "baf29c38818342a3b26b5b923639e7b1f4a61fc5e76102d4b1981c6dc7a7579d"
+dependencies = [
+ "futures-core",
+ "futures-task",
+ "futures-util",
+]
 
 [[package]]
 name = "futures-intrusive"
@@ -2091,10 +2104,13 @@ version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "389ca41296e6190b48053de0321d02a77f32f8a5d2461dd38762c0593805c6d6"
 dependencies = [
+ "futures-channel",
  "futures-core",
+ "futures-io",
  "futures-macro",
  "futures-sink",
  "futures-task",
+ "memchr",
  "pin-project-lite",
  "slab",
 ]
@@ -2321,29 +2337,75 @@ dependencies = [
 ]
 
 [[package]]
-name = "intercom-matter"
+name = "intercom-adapter-gpio"
 version = "0.1.0"
 dependencies = [
- "embassy-executor",
+ "embassy-futures",
+ "embassy-sync 0.8.0",
+ "embassy-time",
+ "embedded-storage",
+ "embedded-storage-async",
+ "esp-hal",
+ "intercom-core",
+ "log",
+]
+
+[[package]]
+name = "intercom-adapter-matter"
+version = "0.1.0"
+dependencies = [
  "embassy-futures",
  "embassy-sync 0.8.0",
  "embassy-time",
  "embedded-storage",
  "embedded-storage-async",
  "esp-alloc",
- "esp-backtrace",
- "esp-bootloader-esp-idf",
  "esp-hal",
- "esp-metadata-generated",
- "esp-println",
  "esp-radio",
  "esp-rtos",
+ "intercom-core",
  "log",
  "portable-atomic",
  "rs-matter",
  "rs-matter-embassy",
  "static_cell",
  "tinyrlibc",
+]
+
+[[package]]
+name = "intercom-core"
+version = "0.1.0"
+dependencies = [
+ "critical-section",
+ "embassy-futures",
+ "embassy-sync 0.8.0",
+ "embassy-time",
+ "futures",
+ "log",
+ "portable-atomic",
+]
+
+[[package]]
+name = "intercom-firmware"
+version = "0.1.0"
+dependencies = [
+ "embassy-executor",
+ "embassy-futures",
+ "embassy-sync 0.8.0",
+ "embassy-time",
+ "esp-alloc",
+ "esp-backtrace",
+ "esp-bootloader-esp-idf",
+ "esp-hal",
+ "esp-metadata-generated",
+ "esp-println",
+ "esp-rtos",
+ "intercom-adapter-gpio",
+ "intercom-adapter-matter",
+ "intercom-core",
+ "log",
+ "portable-atomic",
+ "rs-matter-embassy",
 ]
 
 [[package]]
