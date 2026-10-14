@@ -1,7 +1,7 @@
 //! Outbound port traits for Smart Intercom core.
 //!
 //! In Hexagonal Architecture, ports define the contracts required by the core
-//! application. Adapters (e.g. GPIO, Matter) implement these traits.
+//! application. Adapters (e.g. GPIO, smart home protocols) implement these traits.
 
 pub mod inbound;
 pub mod reporter;

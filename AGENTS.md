@@ -48,7 +48,7 @@ intercom-bridge/
 │   │   ├── src/
 │   │   │   ├── lib.rs
 │   │   │   ├── app.rs              # App coordinator generic over port traits
-│   │   │   ├── config.rs           # Timing constants, endpoint IDs
+│   │   │   ├── config.rs           # Domain timing and indicator constants
 │   │   │   ├── events.rs           # Event enum + PubSubChannel event bus
 │   │   │   ├── ports/              # Abstract port traits (RingDriver, DoorDriver, etc.)
 │   │   │   └── actors/             # RingActor, DoorActor, IndicatorActor, etc.
@@ -62,6 +62,7 @@ intercom-bridge/
 │   │       └── flash.rs            # EspFlash (ROM SPI flash persistence)
 │   ├── intercom-adapter-matter/    # Smart home protocol adapters (rs-matter)
 │   │   └── src/
+│   │       ├── config.rs           # Matter endpoint IDs and serial format
 │   │       ├── door_lock.rs        # IntercomDoorLock (DoorLock cluster handler)
 │   │       ├── occupancy.rs        # IntercomOccupancy (OccupancySensing cluster handler)
 │   │       ├── access_control.rs   # MatterAccessControlDriver (bridges actors ↔ clusters)
@@ -69,7 +70,9 @@ intercom-bridge/
 │   │       └── controller.rs       # MatterController builder + runner (WiFi stack)
 │   └── intercom-firmware/          # Composition root binary (intercom-bridge)
 │       └── src/
+│           ├── config.rs           # Hardware version, device info, flash partition layout
 │           ├── main.rs             # Hardware init, peripheral allocation, joins actors
+│           ├── version.rs          # Git and compile-time software versioning
 │           └── utils/
 │               └── uptime_logger.rs# Custom HH:MM:SS.mmm logger
 ├── GLOSSARY.md                     # Ubiquitous domain vocabulary
@@ -91,7 +94,9 @@ intercom-bridge/
 | `crates/intercom-core/src/ports/reset.rs` | `SystemResetDriver` — outbound port for credential erasure and system reboot |
 | `crates/intercom-core/src/ports/` | Abstract outbound port traits (`DoorDriver`, `RingDriver`, `IndicatorDriver`, `IntercomReporter`, `FactoryResetDriver`, `SystemResetDriver`) |
 | `crates/intercom-core/src/events.rs` | `SystemState` enum, `SystemStateWatch` (`Watch`), `SystemStateSender`, `SystemStateReceiver` |
-| `crates/intercom-core/src/config.rs` | Timing constants, Matter endpoint IDs |
+| `crates/intercom-core/src/config.rs` | Domain timing and indicator constants (protocol-agnostic) |
+| `crates/intercom-adapter-matter/src/config.rs` | Matter endpoint IDs and serial number formatting |
+| `crates/intercom-firmware/src/config.rs` | Hardware version, product identification, and flash memory layout |
 | `crates/intercom-adapter-matter/src/readiness.rs` | `ClusterReadinessBarrier` — internal Apple Home subscription readiness coordination |
 | `crates/intercom-adapter-matter/src/controller.rs` | `MatterController` — builder pattern for registering clusters + running the Matter stack |
 | `crates/intercom-adapter-matter/src/door_lock.rs` | `IntercomDoorLock` — Matter DoorLock cluster, triggers `AccessControllerHandle` on unlock |

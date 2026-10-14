@@ -38,6 +38,11 @@ pub const TEST_DISCRIMINATOR: u16 = 3840;
 // Public Functions
 // ============================================================================
 
+/// Derives a standard serial number buffer `"IC-XXXXXXXXXXXX"` from a 6-byte MAC address.
+pub const fn serial_no_from_mac(mac: &[u8; 6]) -> [u8; crate::config::MAC_SERIAL_NO_LEN] {
+    crate::config::format_serial_no(mac)
+}
+
 /// Derives `BasicCommData` from a 6-byte hardware MAC address.
 pub fn comm_data_from_mac(mac: &[u8; 6]) -> BasicCommData {
     let passcode = passcode_from_mac(mac);

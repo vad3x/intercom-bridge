@@ -104,7 +104,7 @@ pub struct IntercomDoorLockConfig {
 }
 
 impl MatterCluster for IntercomDoorLock {
-    const ENDPOINT_ID: u16 = intercom_core::config::DOOR_LOCK_ENDPOINT_ID;
+    const ENDPOINT_ID: u16 = crate::config::DOOR_LOCK_ENDPOINT_ID;
     const CLUSTER_DEF: Cluster<'static> = Self::CLUSTER;
     /// Door Lock device type (Matter spec 0x000A, rev 3)
     const DEVICE_TYPE: DeviceType = DeviceType {

@@ -97,7 +97,7 @@ pub struct IntercomOccupancyConfig {
 }
 
 impl MatterCluster for IntercomOccupancy {
-    const ENDPOINT_ID: u16 = intercom_core::config::OCCUPANCY_SENSOR_ENDPOINT_ID;
+    const ENDPOINT_ID: u16 = crate::config::OCCUPANCY_SENSOR_ENDPOINT_ID;
     const CLUSTER_DEF: Cluster<'static> = Self::CLUSTER;
     /// Occupancy Sensor device type (Matter spec 0x0107, rev 3)
     const DEVICE_TYPE: DeviceType = DeviceType {

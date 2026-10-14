@@ -94,8 +94,8 @@ pub struct DeviceInfo {
     pub sw_ver: u32,
     /// Human-readable software version string (e.g. `"0.1.0"`).
     pub sw_ver_str: &'static str,
-    /// Device serial number.
-    pub serial_no: &'static str,
+    /// Device serial number override (if None, derived from hardware MAC).
+    pub serial_no: Option<&'static str>,
     /// Vendor name shown in Matter/HomeKit.
     pub vendor_name: &'static str,
     /// Product name shown in Matter/HomeKit.
@@ -242,6 +242,9 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
             endpoints: &endpoints,
         };
 
+        let mac = esp_hal::efuse::base_mac_address();
+        let mac_bytes: [u8; 6] = mac.as_bytes().try_into().unwrap();
+
         let comm_data = if let Some(custom_comm) = config.comm_data {
             info!(
                 "Using custom commissioning parameters (discriminator: {})",
@@ -249,8 +252,6 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
             );
             custom_comm
         } else {
-            let mac = esp_hal::efuse::base_mac_address();
-            let mac_bytes: [u8; 6] = mac.as_bytes().try_into().unwrap();
             let data = commissioning::comm_data_from_mac(&mac_bytes);
             let passcode = commissioning::passcode_from_mac(&mac_bytes);
             info!(
@@ -260,10 +261,22 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
             data
         };
 
+        let serial_no: &'static str = if let Some(custom_serial) = config.device_info.serial_no {
+            info!("Using custom serial number: {}", custom_serial);
+            custom_serial
+        } else {
+            static SERIAL_CELL: static_cell::StaticCell<[u8; crate::config::MAC_SERIAL_NO_LEN]> =
+                static_cell::StaticCell::new();
+            let serial_buf = SERIAL_CELL.init(commissioning::serial_no_from_mac(&mac_bytes));
+            let s = core::str::from_utf8(serial_buf).unwrap();
+            info!("Generated serial number from MAC {}: {}", mac, s);
+            s
+        };
+
         // Allocate device identity + stack in static cells (safe: run() is called exactly once)
         static DEV_DET_CELL: static_cell::StaticCell<BasicInfoConfig> =
             static_cell::StaticCell::new();
-        let dev_det = DEV_DET_CELL.init(dev_det(&config.device_info));
+        let dev_det = DEV_DET_CELL.init(dev_det(&config.device_info, serial_no));
 
         static STACK_CELL: static_cell::StaticCell<EmbassyWifiMatterStack<BUMP_SIZE, ()>> =
             static_cell::StaticCell::new();
@@ -434,7 +447,7 @@ impl<R: SystemResetDriver> UserTask for ConnectionMonitor<'_, R> {
 }
 
 /// Build device identity for the Basic Information cluster.
-fn dev_det(info: &DeviceInfo) -> BasicInfoConfig<'static> {
+fn dev_det(info: &DeviceInfo, serial_no: &'static str) -> BasicInfoConfig<'static> {
     BasicInfoConfig {
         vid: VID,
         pid: PID,
@@ -442,7 +455,7 @@ fn dev_det(info: &DeviceInfo) -> BasicInfoConfig<'static> {
         hw_ver_str: info.hw_ver_str,
         sw_ver: info.sw_ver,
         sw_ver_str: info.sw_ver_str,
-        serial_no: info.serial_no,
+        serial_no,
         vendor_name: info.vendor_name,
         product_name: info.product_name,
         device_name: info.device_name,

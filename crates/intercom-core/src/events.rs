@@ -13,13 +13,13 @@ pub enum SystemState {
     Initializing,
     /// App actors running, hardware initialized
     Initialized,
-    /// Matter stack is connecting to the hub (WiFi + CASE)
+    /// Network stack is establishing connection to ecosystem controller
     Connecting,
-    /// Connected to Matter hub (WiFi up)
+    /// Connected to network and controller session active
     Connected,
-    /// All Matter clusters available in Apple Home
+    /// All endpoints and services fully online and operational
     Ready,
-    /// Factory reset triggered (erasing Matter KVS, rebooting)
+    /// Factory reset triggered (erasing persistent credentials, rebooting)
     FactoryReset,
     /// Something went wrong
     Error,

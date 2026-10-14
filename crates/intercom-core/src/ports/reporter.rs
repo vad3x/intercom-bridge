@@ -1,7 +1,7 @@
 //! Smart Intercom - Outbound Domain Reporting Port
 //!
 //! Defines the protocol-agnostic reporting interface for smart home ecosystems.
-//! Edge adapters (e.g. Matter, Home Assistant) implement this port.
+//! Outbound adapters (e.g. smart home protocols, network broadcasters) implement this port.
 
 /// Domain-level lock state of the entrance door.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -14,7 +14,7 @@ pub enum LockState {
 
 /// Outbound capability: notifies external smart home ecosystems of intercom events.
 ///
-/// Decoupled from protocol details (e.g. Matter clusters, HomeKit, MQTT).
+/// Decoupled from protocol details (e.g. device clusters, attributes, network messages).
 pub trait IntercomReporter {
     /// Report whether the intercom chime/ring is actively ringing.
     fn report_ring(&self, ringing: bool);

@@ -12,7 +12,9 @@
 
 extern crate alloc;
 
+mod config;
 mod utils;
+mod version;
 
 use core::pin::pin;
 
@@ -31,7 +33,6 @@ use rs_matter_embassy::persist::SeqMapKvBlobStore;
 use rs_matter_embassy::matter::persist::DummyKvBlobStore;
 
 use intercom_core::app::App;
-use intercom_core::config;
 use intercom_core::events::{SystemStateSender, SystemStateWatch};
 use intercom_core::ports::inbound::{AccessControllerHandle, CommandChannel};
 use intercom_core::ports::SystemResetDriver;
@@ -57,7 +58,17 @@ const HEAP_SIZE: usize = 210 * 1024;
 const RECLAIMED_RAM: usize =
     memory_range!("DRAM2_UNINIT").end - memory_range!("DRAM2_UNINIT").start;
 
-esp_bootloader_esp_idf::esp_app_desc!();
+esp_bootloader_esp_idf::esp_app_desc!(
+    version::SW_VER_STR,
+    "intercom-bridge",
+    esp_bootloader_esp_idf::BUILD_TIME,
+    version::BUILD_DATE,
+    esp_bootloader_esp_idf::ESP_IDF_COMPATIBLE_VERSION,
+    esp_bootloader_esp_idf::MMU_PAGE_SIZE,
+    0,
+    u16::MAX,
+    esp_bootloader_esp_idf::SECURE_VERSION
+);
 
 // ============================================================================
 // Panic handler: reboot instead of hanging
@@ -140,7 +151,13 @@ impl SystemResetDriver for FirmwareResetDriver {
 async fn main(_spawner: Spawner) {
     utils::uptime_logger::init(log::LevelFilter::Debug);
 
-    info!("Smart Intercom Starting");
+    info!(
+        "Smart Intercom v{} (build: {}, date: {}, rev: {})",
+        version::SW_VER_STR,
+        if version::IS_DIRTY { "dirty" } else { "clean" },
+        version::BUILD_DATE,
+        version::SW_VER
+    );
 
     heap_allocator!(size: HEAP_SIZE - RECLAIMED_RAM);
     heap_allocator!(#[ram(reclaimed)] size: RECLAIMED_RAM);
@@ -196,9 +213,9 @@ async fn main(_spawner: Spawner) {
             device_info: DeviceInfo {
                 hw_ver: config::HW_VER,
                 hw_ver_str: config::HW_VER_STR,
-                sw_ver: config::SW_VER,
-                sw_ver_str: config::SW_VER_STR,
-                serial_no: config::SERIAL_NO,
+                sw_ver: version::SW_VER,
+                sw_ver_str: version::SW_VER_STR,
+                serial_no: None,
                 vendor_name: config::VENDOR_NAME,
                 product_name: config::PRODUCT_NAME,
                 device_name: config::DEVICE_NAME,

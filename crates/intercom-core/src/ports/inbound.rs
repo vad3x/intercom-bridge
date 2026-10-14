@@ -1,7 +1,7 @@
 //! Smart Intercom - Inbound Driving Ports
 //!
 //! Defines commands and the `AccessControllerHandle` primary port.
-//! Edge adapters (Matter, GPIO interrupts) use this handle to drive the core.
+//! Inbound edge adapters (smart home protocols, GPIO interrupts) use this handle to drive the core.
 
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::{Channel, Receiver, Sender};
@@ -41,7 +41,7 @@ impl<'a> AccessControllerHandle<'a> {
         Self { sender }
     }
 
-    /// External request to unlock the door (from Matter, HomeKit, or keypad).
+    /// External request to unlock the door (from smart home protocols, remote apps, or keypads).
     pub fn request_unlock(&self) {
         if self.sender.try_send(AccessCommand::Unlock).is_err() {
             warn!("Unlock command dropped: command queue full");

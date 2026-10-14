@@ -1,8 +1,8 @@
 [package]
 name = "intercom-core"
-version = "0.1.0"
-edition = "2021"
-license = "MIT OR Apache-2.0"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 description = "Universal domain logic, actors, events, and port definitions for Intercom Bridge"
 
 [dependencies]
