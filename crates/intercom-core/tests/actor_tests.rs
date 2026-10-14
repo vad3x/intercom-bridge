@@ -3,6 +3,7 @@
 //! Follows the Arrange -> Act -> Assert pattern strictly.
 
 use intercom_core::actors::access_controller::AccessController;
+use intercom_core::actors::indicator::IndicatorActor;
 use intercom_core::actors::ring::RingActor;
 use intercom_core::app::App;
 use intercom_core::events::{SystemState, SystemStateSender, SystemStateWatch};
@@ -58,6 +59,8 @@ impl RingDriver for &MockRingDriver {
 
 struct MockIndicatorDriver {
     solid_count: AtomicU32,
+    blink_calls: AtomicU32,
+    burst_calls: AtomicU32,
     ring_blinks: AtomicU32,
     unlock_blinks: AtomicU32,
 }
@@ -66,6 +69,8 @@ impl MockIndicatorDriver {
     fn new() -> Self {
         Self {
             solid_count: AtomicU32::new(0),
+            blink_calls: AtomicU32::new(0),
+            burst_calls: AtomicU32::new(0),
             ring_blinks: AtomicU32::new(0),
             unlock_blinks: AtomicU32::new(0),
         }
@@ -77,9 +82,13 @@ impl IndicatorDriver for &MockIndicatorDriver {
         self.solid_count.fetch_add(1, Ordering::SeqCst);
     }
 
-    fn blink(&self, _on_ms: u64, _off_ms: u64, _count: Option<u8>) {}
+    fn blink(&self, _on_ms: u64, _off_ms: u64, _count: Option<u8>) {
+        self.blink_calls.fetch_add(1, Ordering::SeqCst);
+    }
 
-    fn burst(&self, _on_ms: u64, _off_ms: u64, _burst_count: u8, _pause_ms: u64) {}
+    fn burst(&self, _on_ms: u64, _off_ms: u64, _burst_count: u8, _pause_ms: u64) {
+        self.burst_calls.fetch_add(1, Ordering::SeqCst);
+    }
 
     fn indicate_ring(&self) {
         self.ring_blinks.fetch_add(1, Ordering::SeqCst);
@@ -267,4 +276,108 @@ fn system_state_watch_sender_and_receiver() {
 
     // Assert
     assert_eq!(state, SystemState::Ready);
+}
+
+#[test]
+fn access_controller_handles_concurrent_ring_and_unlock() {
+    // Arrange
+    let channel = CommandChannel::new();
+    let handle = AccessControllerHandle::new(channel.sender());
+    let door = MockDoorDriver::new();
+    let reporter = MockReporter::new();
+    let indicator = MockIndicatorDriver::new();
+    let mut controller = AccessController::new(&door, &reporter, &indicator);
+
+    // Act - trigger ring first
+    handle.trigger_ring();
+    futures::executor::block_on(controller.next(&channel.receiver()));
+
+    // Assert - ring active, chime indicated
+    assert!(reporter.ring.load(Ordering::SeqCst));
+    assert_eq!(indicator.ring_blinks.load(Ordering::SeqCst), 1);
+    assert_eq!(door.trigger_count.load(Ordering::SeqCst), 0);
+
+    // Act - dispatch unlock while ring is active
+    handle.request_unlock();
+    futures::executor::block_on(controller.next(&channel.receiver()));
+
+    // Assert - door unlocked, unlock indicated, ring remains active
+    assert_eq!(door.trigger_count.load(Ordering::SeqCst), 1);
+    assert_eq!(reporter.lock_state.load(Ordering::SeqCst), 2); // Unlocked
+    assert_eq!(indicator.unlock_blinks.load(Ordering::SeqCst), 1);
+    assert!(reporter.ring.load(Ordering::SeqCst));
+}
+
+#[test]
+fn indicator_actor_routes_lifecycle_states_to_driver() {
+    // Arrange
+    let watch = SystemStateWatch::new();
+    let state_sender = SystemStateSender::new(&watch);
+    let state_receiver = watch.receiver().unwrap();
+    let indicator = MockIndicatorDriver::new();
+    let actor = IndicatorActor::new(&indicator);
+
+    // Act - drive lifecycle states and verify driver commands
+    futures::executor::block_on(async {
+        use embassy_futures::select::{select, Either};
+        use embassy_futures::yield_now;
+
+        let runner = actor.run(state_receiver);
+
+        let driver_checks = async {
+            // Initializing / Connecting should blink
+            state_sender.connecting();
+            yield_now().await;
+            assert_eq!(indicator.blink_calls.load(Ordering::SeqCst), 1);
+
+            // Ready state should go solid
+            state_sender.ready();
+            yield_now().await;
+            assert_eq!(indicator.solid_count.load(Ordering::SeqCst), 1);
+
+            // Error state should burst
+            state_sender.error();
+            yield_now().await;
+            assert_eq!(indicator.burst_calls.load(Ordering::SeqCst), 1);
+        };
+
+        match select(runner, driver_checks).await {
+            Either::First(_) => unreachable!(),
+            Either::Second(()) => {}
+        }
+    });
+
+    // Assert
+    assert_eq!(indicator.blink_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(indicator.solid_count.load(Ordering::SeqCst), 1);
+    assert_eq!(indicator.burst_calls.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn system_state_watch_broadcasts_to_multiple_receivers() {
+    // Arrange
+    let watch = SystemStateWatch::new();
+    let sender = SystemStateSender::new(&watch);
+    let mut rx1 = watch.receiver().unwrap();
+    let mut rx2 = watch.receiver().unwrap();
+
+    // Act
+    sender.connecting();
+    let (s1, s2) = futures::executor::block_on(async {
+        embassy_futures::join::join(rx1.changed(), rx2.changed()).await
+    });
+
+    // Assert - both independent receivers observed the state transition
+    assert_eq!(s1, SystemState::Connecting);
+    assert_eq!(s2, SystemState::Connecting);
+
+    // Act - second transition
+    sender.ready();
+    let (s3, s4) = futures::executor::block_on(async {
+        embassy_futures::join::join(rx1.changed(), rx2.changed()).await
+    });
+
+    // Assert
+    assert_eq!(s3, SystemState::Ready);
+    assert_eq!(s4, SystemState::Ready);
 }

@@ -187,4 +187,90 @@ mod tests {
         assert!(!sm.is_ring_active());
         assert_eq!(sm.next_deadline(), None);
     }
+
+    #[test]
+    fn concurrent_ring_and_unlock_deadlines_expire_independently() {
+        // Arrange
+        let mut sm = AccessStateMachine::new();
+
+        // Act - ring at t=1000, unlock at t=2000
+        sm.handle_ring(1000); // Ring deadline = 1000 + 15000 = 16000
+        sm.handle_unlock(2000); // Relock deadline = 2000 + 4000 = 6000
+
+        // Assert - earliest deadline is the relock at t=6000
+        assert_eq!(sm.next_deadline(), Some(6000));
+
+        // Act - advance time to relock deadline (t=6000)
+        let relock_effects = sm.poll_deadlines(6000);
+
+        // Assert - door relocked, ring still active, next deadline is ring hold expiry (t=16000)
+        assert_eq!(relock_effects.report_lock, Some(LockState::Locked));
+        assert_eq!(relock_effects.report_ring, None);
+        assert!(sm.is_ring_active());
+        assert!(!sm.is_unlock_pending());
+        assert_eq!(sm.next_deadline(), Some(16000));
+
+        // Act - advance time to ring hold expiration (t=16000)
+        let ring_effects = sm.poll_deadlines(16000);
+
+        // Assert - ring cleared, no further deadlines
+        assert_eq!(ring_effects.report_ring, Some(false));
+        assert_eq!(ring_effects.report_lock, None);
+        assert!(!sm.is_ring_active());
+        assert_eq!(sm.next_deadline(), None);
+    }
+
+    #[test]
+    fn repeated_unlock_command_extends_relock_deadline() {
+        // Arrange
+        let mut sm = AccessStateMachine::new();
+        sm.handle_unlock(1000); // Initial deadline = 1000 + 4000 = 5000
+
+        // Act - user taps unlock again at t=3000
+        sm.handle_unlock(3000); // Extended deadline = 3000 + 4000 = 7000
+
+        // Assert - deadline was pushed back
+        assert_eq!(sm.next_deadline(), Some(7000));
+
+        // Act - check at original expiration time (t=5000)
+        let mid_effects = sm.poll_deadlines(5000);
+
+        // Assert - door remains unlocked
+        assert_eq!(mid_effects.report_lock, None);
+        assert!(sm.is_unlock_pending());
+
+        // Act - check at new extended expiration time (t=7000)
+        let final_effects = sm.poll_deadlines(7000);
+
+        // Assert - door locks at the extended deadline
+        assert_eq!(final_effects.report_lock, Some(LockState::Locked));
+        assert!(!sm.is_unlock_pending());
+    }
+
+    #[test]
+    fn repeated_ring_command_extends_chime_hold() {
+        // Arrange
+        let mut sm = AccessStateMachine::new();
+        sm.handle_ring(1000); // Initial deadline = 1000 + 15000 = 16000
+
+        // Act - visitor rings again at t=5000
+        sm.handle_ring(5000); // Extended deadline = 5000 + 15000 = 20000
+
+        // Assert - deadline was pushed back
+        assert_eq!(sm.next_deadline(), Some(20000));
+
+        // Act - check at original expiration time (t=16000)
+        let mid_effects = sm.poll_deadlines(16000);
+
+        // Assert - chime remains active
+        assert_eq!(mid_effects.report_ring, None);
+        assert!(sm.is_ring_active());
+
+        // Act - check at extended expiration time (t=20000)
+        let final_effects = sm.poll_deadlines(20000);
+
+        // Assert - chime hold clears at extended deadline
+        assert_eq!(final_effects.report_ring, Some(false));
+        assert!(!sm.is_ring_active());
+    }
 }
