@@ -3,7 +3,19 @@
 //! In Hexagonal Architecture, ports define the contracts required by the core
 //! application. Adapters (e.g. GPIO, Matter) implement these traits.
 
+pub mod inbound;
+pub mod reporter;
+pub mod reset;
 
+pub use inbound::{
+    AccessCommand, AccessControllerHandle, CommandChannel, CommandReceiver, CommandSender,
+};
+pub use reporter::{IntercomReporter, LockState};
+pub use reset::SystemResetDriver;
+
+use crate::config::{
+    RING_BLINK_COUNT, RING_BLINK_MS, UNLOCK_BLINK_COUNT, UNLOCK_BLINK_MS,
+};
 
 /// Door unlock port.
 ///
@@ -40,18 +52,42 @@ pub trait IndicatorDriver {
     /// Driver event loop — processes commands and drives hardware.
     /// Must run concurrently with the actor.
     async fn run(&self);
+
+    /// Indicate ring detection with a transient blink pattern.
+    fn indicate_ring(&self) {
+        self.blink(RING_BLINK_MS, RING_BLINK_MS, Some(RING_BLINK_COUNT));
+    }
+
+    /// Indicate unlock dispatch with a transient blink pattern.
+    fn indicate_unlock(&self) {
+        self.blink(UNLOCK_BLINK_MS, UNLOCK_BLINK_MS, Some(UNLOCK_BLINK_COUNT));
+    }
 }
 
-/// Access control port.
-///
-/// Bridges core access control rules (auto-relock, occupancy hold)
-/// to the external ecosystem or cluster handlers.
-pub trait AccessControlDriver {
-    /// Update occupancy state (ring detected / hold expired).
-    fn set_occupancy(&self, occupied: bool);
+impl<T: IndicatorDriver> IndicatorDriver for &T {
+    fn solid(&self) {
+        (*self).solid();
+    }
 
-    /// Lock the door (auto-relock timer expired).
-    fn lock(&self);
+    fn blink(&self, on_ms: u64, off_ms: u64, count: Option<u8>) {
+        (*self).blink(on_ms, off_ms, count);
+    }
+
+    fn burst(&self, on_ms: u64, off_ms: u64, burst_count: u8, pause_ms: u64) {
+        (*self).burst(on_ms, off_ms, burst_count, pause_ms);
+    }
+
+    fn indicate_ring(&self) {
+        (*self).indicate_ring();
+    }
+
+    fn indicate_unlock(&self) {
+        (*self).indicate_unlock();
+    }
+
+    async fn run(&self) {
+        (*self).run().await;
+    }
 }
 
 /// Factory reset detection port.

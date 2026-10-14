@@ -1,31 +1,22 @@
-//! Smart Intercom - Matter Access Control Driver
+//! Smart Intercom - Matter Access Control Driver & Ecosystem Reporter
 //!
 //! Composite driver wrapping `IntercomDoorLock` and `IntercomOccupancy`,
-//! implementing the `AccessControlDriver` trait defined by the actor layer.
-//!
-//! C++ equivalent: `MatterAccessControlDriver`
+//! implementing the `IntercomReporter` domain port.
 
-use intercom_core::ports::AccessControlDriver;
+use intercom_core::ports::{IntercomReporter, LockState};
 
 use super::door_lock::IntercomDoorLock;
 use super::occupancy::IntercomOccupancy;
 
-/// Composite Matter access control driver.
-///
-/// Wraps references to both Matter cluster handlers and delegates
-/// `AccessControlDriver` trait methods to their respective methods.
-pub struct MatterAccessControlDriver<'a, OnUnlock: Fn(), OnDoorReady: Fn(), OnOccReady: Fn()> {
-    door_lock: &'a IntercomDoorLock<OnUnlock, OnDoorReady>,
-    occupancy: &'a IntercomOccupancy<OnOccReady>,
+/// Composite Matter access control driver and ecosystem reporter.
+pub struct MatterAccessControlDriver<'a> {
+    door_lock: &'a IntercomDoorLock,
+    occupancy: &'a IntercomOccupancy,
 }
 
-impl<'a, OnUnlock: Fn(), OnDoorReady: Fn(), OnOccReady: Fn()>
-    MatterAccessControlDriver<'a, OnUnlock, OnDoorReady, OnOccReady>
-{
-    pub fn new(
-        door_lock: &'a IntercomDoorLock<OnUnlock, OnDoorReady>,
-        occupancy: &'a IntercomOccupancy<OnOccReady>,
-    ) -> Self {
+impl<'a> MatterAccessControlDriver<'a> {
+    /// Create a new Matter access control driver wrapping the door lock and occupancy clusters.
+    pub fn new(door_lock: &'a IntercomDoorLock, occupancy: &'a IntercomOccupancy) -> Self {
         Self {
             door_lock,
             occupancy,
@@ -33,14 +24,15 @@ impl<'a, OnUnlock: Fn(), OnDoorReady: Fn(), OnOccReady: Fn()>
     }
 }
 
-impl<OnUnlock: Fn(), OnDoorReady: Fn(), OnOccReady: Fn()> AccessControlDriver
-    for MatterAccessControlDriver<'_, OnUnlock, OnDoorReady, OnOccReady>
-{
-    fn set_occupancy(&self, occupied: bool) {
-        self.occupancy.set_occupancy(occupied);
+impl IntercomReporter for MatterAccessControlDriver<'_> {
+    fn report_ring(&self, ringing: bool) {
+        self.occupancy.set_occupancy(ringing);
     }
 
-    fn lock(&self) {
-        self.door_lock.lock();
+    fn report_lock_state(&self, state: LockState) {
+        match state {
+            LockState::Locked => self.door_lock.lock(),
+            LockState::Unlocked => {} // Handled upon command invoke
+        }
     }
 }

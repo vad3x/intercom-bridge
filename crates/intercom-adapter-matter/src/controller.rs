@@ -42,6 +42,9 @@ use rs_matter_embassy::stack::UserTask;
 use rs_matter_embassy::wireless::esp::EspWifiDriver;
 use rs_matter_embassy::wireless::{EmbassyWifi, EmbassyWifiMatterStack};
 
+use intercom_core::events::SystemStateSender;
+use intercom_core::ports::SystemResetDriver;
+
 use super::{commissioning, MatterCluster, BUMP_SIZE};
 
 // ============================================================================
@@ -128,57 +131,35 @@ static DESC_DATAVER_COUNTER: portable_atomic::AtomicU32 = portable_atomic::Atomi
 /// but leaves the Home Hub fabric (`4996`) orphaned on the accessory.
 pub const APPLE_HOME_HUB_VENDOR_ID: u16 = 4996;
 
-pub struct MatterController<
-    S: KvBlobStore,
-    OnConnecting,
-    OnConnected,
-    OnDecommissioned,
-    H = EmptyHandler,
-> where
-    OnConnecting: Fn(),
-    OnConnected: Fn(),
-    OnDecommissioned: Fn(),
-{
+pub struct MatterController<S: KvBlobStore, R: SystemResetDriver, H = EmptyHandler> {
     handler: H,
     endpoint_metas: Vec<EndpointMeta>,
     config: MatterControllerConfig<S>,
-    on_connecting: OnConnecting,
-    on_connected: OnConnected,
-    on_decommissioned: OnDecommissioned,
+    state_sender: SystemStateSender<'static>,
+    reset: R,
 }
 
-impl<S: KvBlobStore, OnConnecting: Fn(), OnConnected: Fn(), OnDecommissioned: Fn()>
-    MatterController<S, OnConnecting, OnConnected, OnDecommissioned>
-{
+impl<S: KvBlobStore, R: SystemResetDriver> MatterController<S, R> {
     /// Start building a new Matter WiFi node with an empty handler chain.
     ///
-    /// `on_connecting` is called when the WiFi/CASE handshake starts.
-    /// `on_connected` is called each time the operational network comes up.
-    /// `on_decommissioned` is called when all primary controller fabrics have been removed.
+    /// Lifecycle state transitions are dispatched to `state_sender`.
+    /// Hardware reset/erasure is dispatched to `reset`.
     pub fn new(
         config: MatterControllerConfig<S>,
-        on_connecting: OnConnecting,
-        on_connected: OnConnected,
-        on_decommissioned: OnDecommissioned,
+        state_sender: SystemStateSender<'static>,
+        reset: R,
     ) -> Self {
         Self {
             handler: EmptyHandler,
             endpoint_metas: Vec::new(),
             config,
-            on_connecting,
-            on_connected,
-            on_decommissioned,
+            state_sender,
+            reset,
         }
     }
 }
 
-impl<
-    S: KvBlobStore,
-    OnConnecting: Fn(),
-    OnConnected: Fn(),
-    OnDecommissioned: Fn(),
-    H: AsyncHandler,
-> MatterController<S, OnConnecting, OnConnected, OnDecommissioned, H> {
+impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, R, H> {
     /// Register a cluster handler.
     ///
     /// The endpoint ID is obtained from `C::ENDPOINT_ID` (the [`MatterCluster`] trait).
@@ -188,13 +169,11 @@ impl<
     pub fn register<'b, C: MatterCluster>(
         mut self,
         cluster: &'b C,
-    ) -> MatterController<S, OnConnecting, OnConnected, OnDecommissioned, impl AsyncHandler + 'b>
+    ) -> MatterController<S, R, impl AsyncHandler + 'b>
     where
         H: 'b,
         S: 'b,
-        OnConnecting: 'b,
-        OnConnected: 'b,
-        OnDecommissioned: 'b,
+        R: 'b,
     {
         let endpoint_id = C::ENDPOINT_ID;
 
@@ -218,13 +197,12 @@ impl<
             ),
         );
 
-        MatterController::<S, _, _, _, _> {
+        MatterController::<S, R, _> {
             handler: new_handler,
             endpoint_metas: self.endpoint_metas,
             config: self.config,
-            on_connecting: self.on_connecting,
-            on_connected: self.on_connected,
-            on_decommissioned: self.on_decommissioned,
+            state_sender: self.state_sender,
+            reset: self.reset,
         }
     }
 
@@ -333,7 +311,7 @@ impl<
         info!("Matter stack initialized, starting concurrent commissioning (BLE + WiFi coex)");
 
         // Signal that WiFi/CASE negotiation is starting
-        (self.on_connecting)();
+        self.state_sender.connecting();
 
         // Run the Matter stack forever.
         // Concurrent mode (`run_coex`): BLE and WiFi run simultaneously
@@ -341,9 +319,8 @@ impl<
         // (BLE then WiFi) breaks WiFi on ESP32-C6 — the radio doesn't
         // properly transition from BLE-only to WiFi-only.
         let mut monitor = ConnectionMonitor {
-            on_connecting: self.on_connecting,
-            on_connected: self.on_connected,
-            on_decommissioned: self.on_decommissioned,
+            state_sender: self.state_sender,
+            reset: self.reset,
             matter: stack.matter(),
         };
         stack
@@ -385,22 +362,19 @@ fn has_active_controller_fabric(matter: &rs_matter::Matter<'_>) -> bool {
 
 /// Watches the network interface and signals connectivity changes.
 /// Also monitors for decommissioning (primary controller fabric removed in Apple Home)
-/// and triggers `on_decommissioned` to wipe storage and re-enter commissioning mode.
+/// and triggers credential erasure and reboot.
 ///
 /// Implements `UserTask`: runs alongside the Matter stack from startup.
 /// Uses `NetifDiag` to check if any interface is operational, and
-/// `NetChangeNotif` to wait for state changes. Signals `on_connected`
-/// when WiFi becomes operational and `on_connecting` when it drops.
-struct ConnectionMonitor<'a, OnConnecting: Fn(), OnConnected: Fn(), OnDecommissioned: Fn()> {
-    on_connecting: OnConnecting,
-    on_connected: OnConnected,
-    on_decommissioned: OnDecommissioned,
+/// `NetChangeNotif` to wait for state changes. Signals `connected`
+/// when WiFi becomes operational and `connecting` when it drops.
+struct ConnectionMonitor<'a, R: SystemResetDriver> {
+    state_sender: SystemStateSender<'static>,
+    reset: R,
     matter: &'a rs_matter::Matter<'a>,
 }
 
-impl<OnConnecting: Fn(), OnConnected: Fn(), OnDecommissioned: Fn()> UserTask
-    for ConnectionMonitor<'_, OnConnecting, OnConnected, OnDecommissioned>
-{
+impl<R: SystemResetDriver> UserTask for ConnectionMonitor<'_, R> {
     async fn run<S, N>(&mut self, _net_stack: S, netif: N) -> Result<(), rs_matter::error::Error>
     where
         S: rs_matter_embassy::stack::nal::NetStack,
@@ -412,8 +386,8 @@ impl<OnConnecting: Fn(), OnConnected: Fn(), OnDecommissioned: Fn()> UserTask
         let has_primary_fabric = has_active_controller_fabric(self.matter);
         if has_any_fabrics && !has_primary_fabric {
             warn!("Device booted with only an orphaned hub fabric — triggering decommission reset");
-            (self.on_decommissioned)();
-            return Ok(());
+            self.reset.erase_credentials();
+            self.reset.reboot();
         }
 
         let mut was_operational = false;
@@ -432,10 +406,10 @@ impl<OnConnecting: Fn(), OnConnected: Fn(), OnDecommissioned: Fn()> UserTask
             // Signal state transitions
             if is_operational && !was_operational {
                 info!("network up → connected");
-                (self.on_connected)();
+                self.state_sender.connected();
             } else if !is_operational && was_operational {
                 info!("network down → reconnecting");
-                (self.on_connecting)();
+                self.state_sender.connecting();
             }
 
             was_operational = is_operational;
@@ -451,8 +425,8 @@ impl<OnConnecting: Fn(), OnConnected: Fn(), OnDecommissioned: Fn()> UserTask
             let is_commissioned = has_active_controller_fabric(self.matter);
             if was_commissioned && !is_commissioned {
                 warn!("Primary controller fabric removed — device decommissioned, triggering reset");
-                (self.on_decommissioned)();
-                return Ok(());
+                self.reset.erase_credentials();
+                self.reset.reboot();
             }
             was_commissioned = is_commissioned;
         }

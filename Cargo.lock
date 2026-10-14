@@ -2406,6 +2406,7 @@ dependencies = [
  "log",
  "portable-atomic",
  "rs-matter-embassy",
+ "static_cell",
 ]
 
 [[package]]

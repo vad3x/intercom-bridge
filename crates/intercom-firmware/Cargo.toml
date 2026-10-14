@@ -31,4 +31,5 @@ esp-println = { version = "0.18", features = ["log-04", "esp32c6"] }
 esp-bootloader-esp-idf = { version = "0.6", features = ["log-04", "esp32c6"] }
 esp-metadata-generated = { version = "0.5", features = ["esp32c6"] }
 portable-atomic = { version = "1", features = ["critical-section"] }
+static_cell = "2"
 rs-matter-embassy = { path = "../../../rs-matter-embassy/rs-matter-embassy", default-features = false, features = ["esp", "trouble", "embassy-net", "log", "rustcrypto", "kv-blob-store-8192", "mld-v1-compat", "nd-learn-from-frames"] }

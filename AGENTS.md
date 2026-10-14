@@ -85,54 +85,43 @@ intercom-bridge/
 
 | File | Purpose |
 |------|---------|
-| `crates/intercom-firmware/src/main.rs` | Composition root: hardware init, creates `EventBus`, instantiates adapters, wires them into `App` + `MatterController`, runs via `join` |
-| `crates/intercom-core/src/app.rs` | `App<R, D, I, A, F>` generic over port driver traits, owns actors, runs them via `join` |
-| `crates/intercom-core/src/ports/` | Abstract outbound port traits (`DoorDriver`, `RingDriver`, `IndicatorDriver`, `AccessControlDriver`, `FactoryResetDriver`) |
-| `crates/intercom-core/src/events.rs` | `Event` enum (`Ringing`, `UnlockDispatched`, `SystemState`), `SystemState` enum, `EventBus` (`PubSubChannel`) |
+| `crates/intercom-firmware/src/main.rs` | Composition root: hardware init, creates channels & `SystemStateWatch`, instantiates adapters, wires them into `App` + `MatterController`, runs via `join` |
+| `crates/intercom-core/src/domain/access.rs` | `AccessStateMachine` — pure, deterministic domain state machine (zero async/runtime dependencies) |
+| `crates/intercom-core/src/actors/access_controller.rs` | `AccessController` — deep application use case orchestrating strike relay, auto-relock, and ring announcements |
+| `crates/intercom-core/src/ports/inbound.rs` | `AccessControllerHandle` & `CommandChannel` — idiomatic Inbound Port handle for driving access commands |
+| `crates/intercom-core/src/ports/reporter.rs` | `IntercomReporter` & `LockState` — protocol-agnostic domain reporting port |
+| `crates/intercom-core/src/ports/reset.rs` | `SystemResetDriver` — outbound port for credential erasure and system reboot |
+| `crates/intercom-core/src/ports/` | Abstract outbound port traits (`DoorDriver`, `RingDriver`, `IndicatorDriver`, `IntercomReporter`, `FactoryResetDriver`, `SystemResetDriver`) |
+| `crates/intercom-core/src/events.rs` | `SystemState` enum, `SystemStateWatch` (`Watch`), `SystemStateSender`, `SystemStateReceiver` |
 | `crates/intercom-core/src/config.rs` | Timing constants, Matter endpoint IDs |
+| `crates/intercom-adapter-matter/src/readiness.rs` | `ClusterReadinessBarrier` — internal Apple Home subscription readiness coordination |
 | `crates/intercom-adapter-matter/src/controller.rs` | `MatterController` — builder pattern for registering clusters + running the Matter stack |
-| `crates/intercom-adapter-matter/src/door_lock.rs` | `IntercomDoorLock` — Matter DoorLock cluster, calls `on_unlock` callback |
+| `crates/intercom-adapter-matter/src/door_lock.rs` | `IntercomDoorLock` — Matter DoorLock cluster, triggers `AccessControllerHandle` on unlock |
 | `crates/intercom-adapter-matter/src/occupancy.rs` | `IntercomOccupancy` — Matter OccupancySensing cluster |
-| `crates/intercom-adapter-matter/src/access_control.rs` | `MatterAccessControlDriver` — implements `AccessControlDriver` port |
+| `crates/intercom-adapter-matter/src/access_control.rs` | `MatterAccessControlDriver` — implements `IntercomReporter` port |
 | `crates/intercom-adapter-gpio/src/` | GPIO implementations of port traits using `esp-hal` |
 
 ## Architecture Patterns
 
-### Actor Model with PubSubChannel
-
-Actors are separate structs with async `run()` methods. They communicate through an Embassy `PubSubChannel` event bus (fan-out to all subscribers):
-
-```rust
-// RingActor publishes:
-publisher.publish(Event::Ringing).await;
-
-// DoorActor subscribes:
-if let Event::UnlockDispatched = subscriber.next_message_pure().await { ... }
-```
-
-Events:
-
-- `Event::Ringing` — Someone pressed the intercom button
-- `Event::UnlockDispatched` — Unlock command received from Matter/HomeKit
-- `Event::SystemState(state)` — Lifecycle state change (Initializing, Ready, Connecting, Connected, Error)
-
-### Callback Pattern for Drivers
-
-**Drivers MUST NOT depend on `EventBus`.** Instead, drivers accept sync callbacks (`&dyn Fn()`) for outbound notifications. `main.rs` wires callbacks to the event bus. This keeps drivers decoupled and testable:
+### Inbound Actor Handle Pattern
+Inbound commands to the core domain flow through the **`AccessControllerHandle`**:
+- Value semantics: cheap `Copy`, owns no heap memory, zero lifetime annotations in adapters.
+- Encapsulates non-blocking bounded channel dispatch (`AccessCommand::{Unlock, Ring}`).
+- Eliminates raw closure boilerplate in the composition root (`main.rs`).
 
 ```rust
-// Driver accepts a callback (no EventBus dependency):
-let on_unlock = || {
-    event_bus.immediate_publisher()
-        .publish_immediate(Event::UnlockDispatched);
-};
-let door_lock = IntercomDoorLock::new(&on_unlock);
-
-// MatterController accepts connection state callbacks at construction:
-let matter = MatterController::new(options, &on_connecting, &on_connected);
+// Adapters hold the handle directly:
+let door_lock = IntercomDoorLock::new(IntercomDoorLockConfig {
+    access: access_handle,
+    readiness: &readiness_barrier,
+});
 ```
 
-All event bus wiring happens exclusively in `main.rs`.
+### Actor Model with Directed Channels & Lifecycle Watch
+Actors communicate via Embassy channels and continuous state watch:
+- **`CommandChannel`**: Point-to-point MPSC command channel driving `AccessController`.
+- **`SystemStateWatch`**: Continuous lifecycle broadcast observed by `IndicatorActor` without queue overflow risk.
+- **Direct Port Effects**: `AccessController` directly drives `IndicatorDriver::indicate_ring()` and `IndicatorDriver::indicate_unlock()`.
 
 ### Trait-Based Drivers
 
@@ -148,30 +137,42 @@ pub trait DoorDriver {
 }
 
 pub trait IndicatorDriver {
-    async fn set_state(&mut self, state: SystemState);
-    async fn indicate_ring(&mut self);
-    async fn indicate_unlock(&mut self);
-    async fn off(&mut self);
+    fn solid(&self);
+    fn blink(&self, on_ms: u64, off_ms: u64, count: Option<u8>);
+    fn burst(&self, on_ms: u64, off_ms: u64, burst_count: u8, pause_ms: u64);
+    async fn run(&self);
+    fn indicate_ring(&self);
+    fn indicate_unlock(&self);
+}
+
+pub trait SystemResetDriver {
+    fn erase_credentials(&self);
+    fn reboot(&self) -> !;
 }
 ```
 
-`App<R: RingDriver, D: DoorDriver, I: IndicatorDriver, A: AccessControlDriver>` is generic over these traits.
+`App<R, D, REP, I, F, RST>` is generic over these traits.
 
 ### Matter Cluster Handlers
 
 Cluster handlers implement `rs_matter::dm::AsyncHandler` and the `MatterCluster` trait. They are registered with `MatterController` via a builder pattern:
 
 ```rust
-let door_lock = IntercomDoorLock::new(&on_unlock);
-let occupancy = IntercomOccupancy::new();
+let door_lock = IntercomDoorLock::new(IntercomDoorLockConfig {
+    access: access_handle,
+    readiness: &readiness_barrier,
+});
+let occupancy = IntercomOccupancy::new(IntercomOccupancyConfig {
+    readiness: &readiness_barrier,
+});
 
 let matter = MatterController::new(
-    MatterControllerOptions { wifi, bt, rng, adc1 },
-    &on_connecting,
-    &on_connected,
+    config,
+    state_sender,
+    FirmwareResetDriver,
 )
-.register(DOOR_LOCK_ENDPOINT_ID, &door_lock)
-.register(OCCUPANCY_SENSOR_ENDPOINT_ID, &occupancy);
+.register(&door_lock)
+.register(&occupancy);
 
 matter.run().await;
 ```
@@ -196,18 +197,17 @@ matter.run().await;
 
 1. Add the cluster to `rs_matter::import!()` in `crates/intercom-adapter-matter/`
 2. Create a handler struct in `crates/intercom-adapter-matter/src/` implementing `AsyncHandler` + `MatterCluster`
-3. Use callbacks (`&dyn Fn()`) for outbound events — **never import EventBus in adapters**
+3. Wire to domain ports or inbound handles (`AccessControllerHandle`, `SystemStateSender`) — **never use raw closures or callbacks**
 4. Register with `MatterController::register()` in `crates/intercom-firmware/src/main.rs`
-5. Wire callbacks to event bus in `crates/intercom-firmware/src/main.rs`
 
 ### Changing GPIO Pins
 
 Edit `crates/intercom-firmware/src/main.rs` — pins are selected via ESP-HAL peripheral tokens:
 
 ```rust
-let ring = GpioRingDriver::new(peripherals.GPIO2, GpioRingConfig::default());
-let door = GpioDoorDriver::new(peripherals.GPIO18, GpioDoorConfig::default());
-let indicator = GpioLedDriver::new(peripherals.GPIO19, GpioLedConfig::default());
+let ring = GpioRingDriver::new(GpioRingConfig::new(peripherals.GPIO2));
+let door = GpioDoorDriver::new(GpioDoorConfig::new(peripherals.GPIO18));
+let indicator = INDICATOR.init(GpioLedDriver::new(peripherals.GPIO19));
 ```
 
 ### Changing Timing Constants
@@ -227,10 +227,8 @@ pub const AUTO_RELOCK_SEC: u64 = 4;
 - `no_std` + `alloc` — no standard library
 - Use `log::info!`, `log::warn!`, `log::error!` for logging (via `esp-println`)
 - All drivers and actors are async (Embassy)
-- **Drivers use callbacks (`&dyn Fn()`) for outbound events — never `EventBus`**
-- **Only `main.rs` wires callbacks to the event bus**
+- **Zero callbacks/closures across adapters and core** — communication flows through Inbound Handles (`AccessControllerHandle`, `SystemStateSender`) and Outbound Traits (`SystemResetDriver`, `IndicatorDriver`, `IntercomReporter`)
 - Traits for hardware abstraction, generics for composition
-- Actors receive `&EventBus` as `run()` parameter
 
 ## Coding Standards
 

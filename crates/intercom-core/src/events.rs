@@ -1,10 +1,10 @@
-//! Smart Intercom - Event System
+//! Smart Intercom - Lifecycle Event System
 //!
-//! Embassy `PubSubChannel` event bus with fan-out to all subscribers.
-//! Defines system lifecycle states and events flowing through the core.
+//! Embassy `Watch` channel for continuous system lifecycle state.
+//! Replaces legacy broadcast event buses with typed, bounded state observation.
 
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::pubsub::{PubSubChannel, Publisher, Subscriber};
+use embassy_sync::watch::{Receiver as WatchReceiver, Watch};
 
 /// System lifecycle states
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -25,96 +25,62 @@ pub enum SystemState {
     Error,
 }
 
-/// All events that flow through the system.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Event {
-    /// System lifecycle state changed
-    SystemState(SystemState),
-    /// Ring detected from hardware (optocoupler)
-    Ringing,
-    /// Unlock command dispatched from Matter/HomeKit
-    UnlockDispatched,
-    /// Door Lock cluster is being actively read (subscription primed)
-    DoorLockReady,
-    /// Occupancy Sensing cluster is being actively read (subscription primed)
-    RingReady,
-}
-
 // ============================================================================
-// Event bus type aliases
+// Lifecycle Watch type aliases & sender
 // ============================================================================
 
-/// Buffer capacity for the event bus
-pub const BUS_CAP: usize = 4;
-/// Maximum concurrent subscribers
-pub const BUS_SUBS: usize = 5;
-/// Maximum concurrent publishers
-pub const BUS_PUBS: usize = 4;
+/// Maximum concurrent receivers for system lifecycle state.
+pub const STATE_WATCH_RECEIVERS: usize = 3;
 
-/// The event bus — `PubSubChannel` with fan-out to all subscribers.
-pub type EventBus = PubSubChannel<CriticalSectionRawMutex, Event, BUS_CAP, BUS_SUBS, BUS_PUBS>;
+/// Continuous lifecycle state watch signal (zero-allocation, zero queue overflow).
+pub type SystemStateWatch = Watch<CriticalSectionRawMutex, SystemState, STATE_WATCH_RECEIVERS>;
 
-/// Subscriber type alias matching `EventBus` parameters.
-pub type EventBusSubscriber<'a> =
-    Subscriber<'a, CriticalSectionRawMutex, Event, BUS_CAP, BUS_SUBS, BUS_PUBS>;
+/// Watch receiver for observing system lifecycle transitions.
+pub type SystemStateReceiver<'a> =
+    WatchReceiver<'a, CriticalSectionRawMutex, SystemState, STATE_WATCH_RECEIVERS>;
 
-/// Publisher type alias matching `EventBus` parameters.
-pub type EventBusPublisher<'a> =
-    Publisher<'a, CriticalSectionRawMutex, Event, BUS_CAP, BUS_SUBS, BUS_PUBS>;
+/// Lightweight, Copy handle for sending system lifecycle state updates.
+#[derive(Clone, Copy)]
+pub struct SystemStateSender<'a>(&'a SystemStateWatch);
 
-// ============================================================================
-// Event bus convenience methods
-// ============================================================================
-
-/// Extension trait adding convenience publish methods to `EventBus`.
-pub trait EventBusExt {
-    /// Publish `SystemState::Initialized` synchronously (immediate).
-    fn initialized(&self);
-
-    /// Publish `SystemState::Connecting` synchronously (immediate).
-    fn connecting(&self);
-
-    /// Publish `SystemState::Connected` synchronously (immediate).
-    fn connected(&self);
-
-    /// Publish `SystemState::Ready` synchronously (immediate).
-    fn ready(&self);
-
-    /// Publish `Event::DoorLockReady` synchronously (immediate).
-    fn door_lock_ready(&self);
-
-    /// Publish `Event::RingReady` synchronously (immediate).
-    fn ring_ready(&self);
-}
-
-impl EventBusExt for EventBus {
-    fn initialized(&self) {
-        self.immediate_publisher()
-            .publish_immediate(Event::SystemState(SystemState::Initialized));
+impl<'a> SystemStateSender<'a> {
+    /// Create a new sender handle wrapping a `SystemStateWatch`.
+    pub const fn new(watch: &'a SystemStateWatch) -> Self {
+        Self(watch)
     }
 
-    fn connecting(&self) {
-        self.immediate_publisher()
-            .publish_immediate(Event::SystemState(SystemState::Connecting));
+    /// Send a new system lifecycle state.
+    pub fn send(&self, state: SystemState) {
+        self.0.sender().send(state);
     }
 
-    fn connected(&self) {
-        self.immediate_publisher()
-            .publish_immediate(Event::SystemState(SystemState::Connected));
+    /// Convenience helper to transition to `SystemState::Initialized`.
+    pub fn initialized(&self) {
+        self.send(SystemState::Initialized);
     }
 
-    fn ready(&self) {
-        self.immediate_publisher()
-            .publish_immediate(Event::SystemState(SystemState::Ready));
+    /// Convenience helper to transition to `SystemState::Connecting`.
+    pub fn connecting(&self) {
+        self.send(SystemState::Connecting);
     }
 
-    fn door_lock_ready(&self) {
-        self.immediate_publisher()
-            .publish_immediate(Event::DoorLockReady);
+    /// Convenience helper to transition to `SystemState::Connected`.
+    pub fn connected(&self) {
+        self.send(SystemState::Connected);
     }
 
-    fn ring_ready(&self) {
-        self.immediate_publisher()
-            .publish_immediate(Event::RingReady);
+    /// Convenience helper to transition to `SystemState::Ready`.
+    pub fn ready(&self) {
+        self.send(SystemState::Ready);
+    }
+
+    /// Convenience helper to transition to `SystemState::FactoryReset`.
+    pub fn factory_reset(&self) {
+        self.send(SystemState::FactoryReset);
+    }
+
+    /// Convenience helper to transition to `SystemState::Error`.
+    pub fn error(&self) {
+        self.send(SystemState::Error);
     }
 }

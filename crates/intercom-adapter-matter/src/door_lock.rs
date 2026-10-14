@@ -1,11 +1,8 @@
-//! Smart Intercom - Door Lock Cluster Handler
+//! Smart Intercom - Matter Door Lock Cluster Handler
 //!
-//! Handles lock/unlock commands from HomeKit via the Matter DoorLock cluster.
-//! Calls `on_unlock` callback when an unlock command is received from Matter.
-//!
-//! Uses `notify_attribute_changed()` to wake the Matter subscription system
-//! so HomeKit receives prompt state updates (without it, the app stays on
-//! "Unlocking…" until the periodic subscription timer fires).
+//! Exposes a Matter DoorLock cluster on Endpoint 1 (HomeKit lock accessory).
+//! Handles lock/unlock commands, pushes subscription reports when state changes,
+//! and notifies readiness via the `ClusterReadinessBarrier`.
 
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
@@ -24,55 +21,39 @@ use rs_matter::with;
 use rs_matter::dm::clusters::decl::door_lock::{
     self, DlLockState, DlLockType, DlSupportedOperatingModes, OperatingModeEnum,
 };
+use super::readiness::ClusterReadinessBarrier;
 use super::MatterCluster;
+use intercom_core::ports::AccessControllerHandle;
 
 // ============================================================================
 // Door Lock handler
 // ============================================================================
 
-/// Configuration for `IntercomDoorLock`.
-///
-/// Groups callbacks passed at construction time, keeping the constructor
-/// signature stable as new callbacks are added.
-pub struct IntercomDoorLockConfig<OnUnlock: Fn(), OnReady: Fn()> {
-    /// Called when HomeKit sends an unlock command.
-    pub on_unlock: OnUnlock,
-    /// Called when the cluster is first read (subscription primed in Apple Home).
-    pub on_ready: OnReady,
-}
-
 /// Door Lock cluster handler — handles lock/unlock commands from HomeKit.
 ///
 /// Owns its lock state internally (no external atomics).
-/// Calls `on_unlock` callback when an unlock command is received,
-/// allowing the app layer to bridge to the event bus.
+/// Dispatches unlock requests to `AccessControllerHandle`.
+/// Coordinates cluster subscription readiness via `ClusterReadinessBarrier`.
 ///
 /// Out-of-band state changes (e.g. auto-relock via `lock()`) signal the
 /// internal `state_changed` signal, which wakes the `run()` background task.
 /// That task then calls `ctx.notify_attr_changed()` to push a
 /// subscription report to HomeKit.
-pub struct IntercomDoorLock<OnUnlock: Fn(), OnReady: Fn()> {
-    config: IntercomDoorLockConfig<OnUnlock, OnReady>,
+pub struct IntercomDoorLock {
+    config: IntercomDoorLockConfig,
     dataver: Dataver,
     lock_state: AtomicU8,
     /// Signal used to wake the `run()` background task when an out-of-band
     /// state change (e.g. auto-relock) needs to push a subscription report.
     state_changed: Signal<NoopRawMutex, ()>,
-    /// Guards `on_ready` so it fires only once per connection cycle
+    /// Guards `readiness` so it fires only once per connection cycle
     /// (on the first subscription priming read from Apple Home).
     ready_notified: AtomicBool,
 }
 
-impl<OnUnlock: Fn(), OnReady: Fn()> IntercomDoorLock<OnUnlock, OnReady> {
+impl IntercomDoorLock {
     /// Create a new Door Lock handler.
-    ///
-    /// `config.on_unlock` is called (from sync Matter context) when HomeKit
-    /// sends an unlock command. Typically wired to publish
-    /// `Event::UnlockDispatched` to the event bus.
-    ///
-    /// `config.on_ready` is called when the cluster is first read by Apple Home,
-    /// signalling that subscriptions have been primed.
-    pub fn new(config: IntercomDoorLockConfig<OnUnlock, OnReady>) -> Self {
+    pub fn new(config: IntercomDoorLockConfig) -> Self {
         Self {
             config,
             dataver: Dataver::new(1),
@@ -94,9 +75,7 @@ impl<OnUnlock: Fn(), OnReady: Fn()> IntercomDoorLock<OnUnlock, OnReady> {
         self.dataver.changed();
         self.state_changed.signal(());
     }
-}
 
-impl<OnUnlock: Fn(), OnReady: Fn()> IntercomDoorLock<OnUnlock, OnReady> {
     /// The subset of the DoorLock cluster we support.
     ///
     /// Mandatory attributes: LockState, LockType, ActuatorEnabled,
@@ -116,7 +95,15 @@ impl<OnUnlock: Fn(), OnReady: Fn()> IntercomDoorLock<OnUnlock, OnReady> {
         ));
 }
 
-impl<OnUnlock: Fn(), OnReady: Fn()> MatterCluster for IntercomDoorLock<OnUnlock, OnReady> {
+/// Configuration for `IntercomDoorLock`.
+pub struct IntercomDoorLockConfig {
+    /// Inbound driving port handle to dispatch access requests.
+    pub access: AccessControllerHandle<'static>,
+    /// Cluster readiness barrier to signal Apple Home subscription priming.
+    pub readiness: &'static ClusterReadinessBarrier,
+}
+
+impl MatterCluster for IntercomDoorLock {
     const ENDPOINT_ID: u16 = intercom_core::config::DOOR_LOCK_ENDPOINT_ID;
     const CLUSTER_DEF: Cluster<'static> = Self::CLUSTER;
     /// Door Lock device type (Matter spec 0x000A, rev 3)
@@ -126,10 +113,10 @@ impl<OnUnlock: Fn(), OnReady: Fn()> MatterCluster for IntercomDoorLock<OnUnlock,
     };
 }
 
-impl<OnUnlock: Fn(), OnReady: Fn()> AsyncHandler for IntercomDoorLock<OnUnlock, OnReady> {
+impl AsyncHandler for IntercomDoorLock {
     async fn read(&self, ctx: impl ReadContext, reply: impl ReadReply) -> Result<(), Error> {
         if !self.ready_notified.swap(true, Ordering::Relaxed) {
-            (self.config.on_ready)();
+            self.config.readiness.mark_door_lock_ready();
         }
 
         if let Some(writer) = reply.with_dataver(self.dataver.get())? {
@@ -201,16 +188,14 @@ impl<OnUnlock: Fn(), OnReady: Fn()> AsyncHandler for IntercomDoorLock<OnUnlock, 
                 self.dataver.changed();
 
                 // Wake subscription system → push LockState report to HomeKit
-                // Without this, the app stays on "Unlocking…" until the periodic
-                // subscription timer fires (could be 60+ seconds).
                 ctx.notify_attr_changed(
                     ctx.cmd().endpoint_id,
                     ctx.cmd().cluster_id,
                     door_lock::AttributeId::LockState as _,
                 );
 
-                // Notify app layer (sync context — non-blocking)
-                (self.config.on_unlock)();
+                // Dispatch to inbound driving port handle
+                self.config.access.request_unlock();
 
                 Ok(())
             }

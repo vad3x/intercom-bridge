@@ -3,92 +3,83 @@
 //! Wires trait-based drivers into actor structs and runs them concurrently
 //! via Embassy async combinators.
 //!
-//! All dependencies are injected: event bus, driver instances.
+//! All dependencies are injected: port drivers, state watch/sender, command receiver.
 //! No statics are accessed here — fully testable.
 
 use log::info;
 
-use crate::actors::access_control::AccessControlActor;
-use crate::actors::door::DoorActor;
+use crate::actors::access_controller::AccessController;
 use crate::actors::factory_reset::FactoryResetActor;
 use crate::actors::indicator::IndicatorActor;
-use crate::actors::matter_controller::{MatterControllerActor, MatterControllerActorConfig};
 use crate::actors::ring::RingActor;
-use crate::events::{EventBus, EventBusExt};
-use crate::ports::{
-    AccessControlDriver, DoorDriver, FactoryResetDriver, IndicatorDriver, RingDriver,
-};
+use crate::events::{SystemStateReceiver, SystemStateSender};
+use crate::ports::inbound::{AccessControllerHandle, CommandReceiver};
+use crate::ports::reporter::IntercomReporter;
+use crate::ports::{DoorDriver, FactoryResetDriver, IndicatorDriver, RingDriver, SystemResetDriver};
 
 /// The Smart Intercom application.
 ///
 /// Generic over port driver implementations.
 /// Owns all actors, runs them concurrently.
-pub struct App<R, D, I, A, F>
+pub struct App<R, D, REP, I, F, RST>
 where
     R: RingDriver,
     D: DoorDriver,
-    I: IndicatorDriver,
-    A: AccessControlDriver,
+    REP: IntercomReporter,
+    I: IndicatorDriver + Clone,
     F: FactoryResetDriver,
+    RST: SystemResetDriver,
 {
     ring_actor: RingActor<R>,
-    door_actor: DoorActor<D>,
+    access_controller: AccessController<D, REP, I>,
     indicator_actor: IndicatorActor<I>,
-    access_control_actor: AccessControlActor<A>,
-    factory_reset_actor: FactoryResetActor<F>,
-    matter_controller_actor: MatterControllerActor,
+    factory_reset_actor: FactoryResetActor<F, RST>,
 }
 
-impl<R, D, I, A, F> App<R, D, I, A, F>
+impl<R, D, REP, I, F, RST> App<R, D, REP, I, F, RST>
 where
     R: RingDriver,
     D: DoorDriver,
-    I: IndicatorDriver,
-    A: AccessControlDriver,
+    REP: IntercomReporter,
+    I: IndicatorDriver + Clone,
     F: FactoryResetDriver,
+    RST: SystemResetDriver,
 {
     /// Create the application from port driver implementations.
-    ///
-    /// Each driver is wrapped in its corresponding actor.
     pub fn new(
         ring: R,
         door: D,
         indicator: I,
-        access_control: A,
+        reporter: REP,
         factory_reset: F,
-        matter_controller_config: MatterControllerActorConfig,
+        reset: RST,
     ) -> Self {
         Self {
             ring_actor: RingActor::new(ring),
-            door_actor: DoorActor::new(door),
+            access_controller: AccessController::new(door, reporter, indicator.clone()),
             indicator_actor: IndicatorActor::new(indicator),
-            access_control_actor: AccessControlActor::new(access_control),
-            factory_reset_actor: FactoryResetActor::new(factory_reset),
-            matter_controller_actor: MatterControllerActor::new(matter_controller_config),
+            factory_reset_actor: FactoryResetActor::new(factory_reset, reset),
         }
     }
 
     /// Run all actors concurrently (never returns).
-    ///
-    /// Each actor creates its own publisher/subscriber from the bus.
-    pub async fn run(mut self, bus: &EventBus) {
+    pub async fn run(
+        mut self,
+        state_sender: SystemStateSender<'_>,
+        receiver: &CommandReceiver<'_>,
+        access_handle: AccessControllerHandle<'_>,
+        state_receiver: SystemStateReceiver<'_>,
+    ) {
         info!("publishing Initialized state");
-
-        // Publish Initialized state before actors start their loops
-        bus.initialized();
+        state_sender.initialized();
 
         info!("starting actors");
 
-        // Run all actors concurrently — each creates its own bus handle
-        embassy_futures::join::join3(
-            embassy_futures::join::join4(
-                self.ring_actor.run(bus),
-                self.door_actor.run(bus),
-                self.indicator_actor.run(bus),
-                self.access_control_actor.run(bus),
-            ),
-            self.factory_reset_actor.run(bus),
-            self.matter_controller_actor.run(bus),
+        embassy_futures::join::join4(
+            self.ring_actor.run(access_handle),
+            self.access_controller.run(receiver),
+            self.indicator_actor.run(state_receiver),
+            self.factory_reset_actor.run(state_sender),
         )
         .await;
     }

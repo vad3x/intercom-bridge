@@ -18,6 +18,7 @@ pub mod commissioning;
 mod controller;
 mod door_lock;
 mod occupancy;
+pub mod readiness;
 
 use rs_matter::dm::{AsyncHandler, Cluster, DeviceType};
 
@@ -27,6 +28,7 @@ pub use commissioning::{comm_data_from_mac, discriminator_from_mac, passcode_fro
 pub use controller::{DeviceInfo, MatterController, MatterControllerConfig, MatterPeripherals};
 pub use door_lock::{IntercomDoorLock, IntercomDoorLockConfig};
 pub use occupancy::{IntercomOccupancy, IntercomOccupancyConfig};
+pub use readiness::ClusterReadinessBarrier;
 
 /// Bump allocator size for the Matter protocol stack.
 ///

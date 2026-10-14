@@ -23,16 +23,18 @@ use esp_hal::ram;
 use esp_hal::timer::timg::TimerGroup;
 use esp_metadata_generated::memory_range;
 use log::{info, warn};
+use static_cell::StaticCell;
 
 #[cfg(not(feature = "dummy-persist"))]
 use rs_matter_embassy::persist::SeqMapKvBlobStore;
 #[cfg(feature = "dummy-persist")]
 use rs_matter_embassy::matter::persist::DummyKvBlobStore;
 
-use intercom_core::actors::MatterControllerActorConfig;
 use intercom_core::app::App;
 use intercom_core::config;
-use intercom_core::events::{Event, EventBus, EventBusExt};
+use intercom_core::events::{SystemStateSender, SystemStateWatch};
+use intercom_core::ports::inbound::{AccessControllerHandle, CommandChannel};
+use intercom_core::ports::SystemResetDriver;
 
 use intercom_adapter_gpio::boot_button::{GpioBootButtonConfig, GpioBootButtonDriver};
 use intercom_adapter_gpio::door::{GpioDoorConfig, GpioDoorDriver};
@@ -41,9 +43,9 @@ use intercom_adapter_gpio::led::GpioLedDriver;
 use intercom_adapter_gpio::ring::{GpioRingConfig, GpioRingDriver};
 
 use intercom_adapter_matter::{
-    DeviceInfo, IntercomDoorLock, IntercomDoorLockConfig, IntercomOccupancy,
-    IntercomOccupancyConfig, MatterAccessControlDriver, MatterController, MatterControllerConfig,
-    MatterPeripherals,
+    ClusterReadinessBarrier, DeviceInfo, IntercomDoorLock, IntercomDoorLockConfig,
+    IntercomOccupancy, IntercomOccupancyConfig, MatterAccessControlDriver, MatterController,
+    MatterControllerConfig, MatterPeripherals,
 };
 
 // ============================================================================
@@ -69,7 +71,7 @@ pub fn custom_halt() -> ! {
 }
 
 // ============================================================================
-// Matter persistence + factory reset
+// Matter persistence + factory reset driver
 // ============================================================================
 
 /// Create the Matter persistence layer for the given flash range.
@@ -114,6 +116,22 @@ fn erase_matter_kvs(range: &core::ops::Range<u32>) {
     info!("Matter KVS erased successfully");
 }
 
+/// Outbound reset driver implementing persistent credential erasure and hardware reboot.
+struct FirmwareResetDriver;
+
+impl SystemResetDriver for FirmwareResetDriver {
+    fn erase_credentials(&self) {
+        #[cfg(not(feature = "dummy-persist"))]
+        erase_matter_kvs(&config::MATTER_KVS_RANGE);
+        #[cfg(feature = "dummy-persist")]
+        info!("Factory reset skipped (dummy-persist)");
+    }
+
+    fn reboot(&self) -> ! {
+        esp_hal::system::software_reset()
+    }
+}
+
 // ============================================================================
 // Main entry point
 // ============================================================================
@@ -137,25 +155,30 @@ async fn main(_spawner: Spawner) {
     info!("Hardware initialized");
 
     // ========================================================================
-    // Event bus — local to main, passed by reference
+    // Channels and synchronization primitives
     // ========================================================================
 
-    let event_bus = EventBus::new();
+    static STATE_WATCH: SystemStateWatch = SystemStateWatch::new();
+    let state_sender = SystemStateSender::new(&STATE_WATCH);
+    let state_receiver = STATE_WATCH.receiver().unwrap();
+
+    static COMMAND_CHANNEL: CommandChannel = CommandChannel::new();
+    let access_handle = AccessControllerHandle::new(COMMAND_CHANNEL.sender());
+    let command_receiver = COMMAND_CHANNEL.receiver();
+
+    static READINESS: StaticCell<ClusterReadinessBarrier> = StaticCell::new();
+    let readiness = READINESS.init(ClusterReadinessBarrier::new(state_sender));
 
     // ========================================================================
     // Matter drivers — own their state internally
     // ========================================================================
 
     let door_lock = IntercomDoorLock::new(IntercomDoorLockConfig {
-        on_unlock: || {
-            event_bus
-                .immediate_publisher()
-                .publish_immediate(Event::UnlockDispatched);
-        },
-        on_ready: || event_bus.door_lock_ready(),
+        access: access_handle,
+        readiness,
     });
     let occupancy = IntercomOccupancy::new(IntercomOccupancyConfig {
-        on_ready: || event_bus.ring_ready(),
+        readiness,
     });
 
     // ========================================================================
@@ -186,14 +209,8 @@ async fn main(_spawner: Spawner) {
             store: DummyKvBlobStore,
             comm_data: None,
         },
-        || event_bus.connecting(),
-        || event_bus.connected(),
-        || {
-            info!("Decommissioning detected — wiping Matter storage and rebooting into pairing mode");
-            #[cfg(not(feature = "dummy-persist"))]
-            erase_matter_kvs(&config::MATTER_KVS_RANGE);
-            esp_hal::system::software_reset();
-        },
+        state_sender,
+        FirmwareResetDriver,
     )
     .register(&door_lock)
     .register(&occupancy);
@@ -204,7 +221,10 @@ async fn main(_spawner: Spawner) {
 
     let ring = GpioRingDriver::new(GpioRingConfig::new(peripherals.GPIO2));
     let door = GpioDoorDriver::new(GpioDoorConfig::new(peripherals.GPIO18));
-    let indicator = GpioLedDriver::new(peripherals.GPIO19);
+
+    static INDICATOR: StaticCell<GpioLedDriver> = StaticCell::new();
+    let indicator: &'static GpioLedDriver = &*INDICATOR.init(GpioLedDriver::new(peripherals.GPIO19));
+
     let access_driver = MatterAccessControlDriver::new(&door_lock, &occupancy);
     let boot_button = GpioBootButtonDriver::new(GpioBootButtonConfig::new(peripherals.GPIO9));
 
@@ -214,13 +234,7 @@ async fn main(_spawner: Spawner) {
         indicator,
         access_driver,
         boot_button,
-        MatterControllerActorConfig {
-            #[cfg(not(feature = "dummy-persist"))]
-            on_factory_reset: || erase_matter_kvs(&config::MATTER_KVS_RANGE),
-            #[cfg(feature = "dummy-persist")]
-            on_factory_reset: || info!("Factory reset skipped (dummy-persist)"),
-            on_reboot: || esp_hal::system::software_reset(),
-        },
+        FirmwareResetDriver,
     );
 
     info!("Smart Intercom Ready");
@@ -229,7 +243,7 @@ async fn main(_spawner: Spawner) {
     // Run App actors + Matter stack concurrently
     // ========================================================================
 
-    let app_future = app.run(&event_bus);
+    let app_future = app.run(state_sender, &command_receiver, access_handle, state_receiver);
     let matter_future = pin!(matter.run());
 
     info!("Matter Controller Running");

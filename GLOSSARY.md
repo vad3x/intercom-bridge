@@ -10,29 +10,29 @@ The overarching system that bridges building intercom systems to modern smart ho
 ### Intercom Core (`intercom-core`)
 The central, hardware-agnostic and protocol-agnostic domain and application orchestrator. Coordinates door unlocking, ring detection, indicator feedback, auto-relock timeouts, and factory reset routines. Zero dependencies on microcontroller peripherals or network stacks.
 
-### Actor
-An autonomous async task communicating exclusively via the event bus and port interfaces:
-- **RingActor**: Listens to ring trigger events, applies debounce and cooldown policies, and announces ring events.
-- **DoorActor**: Subscribes to unlock dispatch events and drives the door unlock pulse duration.
+### Actor / Application Use Case
+An autonomous async task orchestrating domain rules and port interfaces:
+- **AccessController**: Deep application use case coordinating entrance door strike activation, auto-relock safety deadlines, and visitor ring announcements.
 - **IndicatorActor**: State machine mapping system lifecycle states and transient events to physical LED blink patterns.
-- **AccessControlActor**: Coordinates security timing rules: auto-relock timers and occupancy sensor state holding.
 - **FactoryResetActor**: Monitors user maintenance button holds to trigger factory credential wiping.
 
-### Event Bus
-The broadcast communication channel (`PubSubChannel`) providing event fan-out between actors without direct coupling.
+### Lifecycle Watch
+The continuous state broadcast (`Watch`) providing zero-drop, zero-allocation system lifecycle updates to observers without queue limits.
 
 ## Ports (Seams)
 
-### Outbound Ports
-Abstract async traits defined by `intercom-core` representing required capabilities:
-- **RingDriver**: Waits for hardware ring signal detection.
-- **DoorDriver**: Triggers the hardware relay unlock pulse.
-- **IndicatorDriver**: Controls hardware visual status indicators.
-- **AccessControlDriver**: Bridges cluster/ecosystem state (occupancy bit, lock status).
-- **FactoryResetDriver**: Waits for factory reset button hold triggers.
-
 ### Inbound Ports
-Entry points or commands dispatched from external smart home protocols into the core (e.g., Matter `Unlock` command calling the unlock trigger).
+Primary driving contracts allowing external smart home adapters and hardware triggers to drive the core:
+- **AccessControllerHandle**: The idiomatic actor handle wrapping a typed command channel (`AccessCommand`), enabling external adapters to trigger unlocks and rings with value semantics.
+
+### Outbound Ports
+Abstract traits defined by `intercom-core` representing required capabilities:
+- **IntercomReporter**: Reports visitor chime/ring activity and lock latch state (`LockState`) to external ecosystems (protocol-agnostic, zero Matter terms).
+- **DoorDriver**: Triggers the physical door relay unlock strike pulse.
+- **RingDriver**: Blocks until a debounced hardware ring event occurs.
+- **IndicatorDriver**: Controls visual status LED patterns and transient blinks.
+- **FactoryResetDriver**: Waits for maintenance button hold triggers.
+- **SystemResetDriver**: Erases persistent credentials and triggers hardware reboot.
 
 ## Adapters (Edge Implementations)
 

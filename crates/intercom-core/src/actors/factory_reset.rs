@@ -1,47 +1,49 @@
 //! Smart Intercom - Factory Reset Actor
 //!
-//! Monitors a factory reset trigger (e.g. BOOT button held for 5 seconds)
-//! and publishes `SystemState::FactoryReset` to the event bus.
+//! Monitors a factory reset trigger (e.g. BOOT button held for 5 seconds),
+//! updates system lifecycle state to `FactoryReset`, erases persistent credentials
+//! via `SystemResetDriver`, and reboots the hardware.
 
 use embassy_time::{Duration, Timer};
 use log::info;
 
-use crate::events::{Event, EventBus, SystemState};
-use crate::ports::FactoryResetDriver;
+use crate::config::FACTORY_RESET_REBOOT_DELAY_MS;
+use crate::events::SystemStateSender;
+use crate::ports::{FactoryResetDriver, SystemResetDriver};
 
 /// Factory reset actor.
 ///
-/// Generic over any `FactoryResetDriver` port implementation.
-/// Waits for the trigger, then publishes `SystemState::FactoryReset`
-/// to the event bus.
-pub struct FactoryResetActor<F: FactoryResetDriver> {
+/// Generic over `FactoryResetDriver` (inbound trigger) and `SystemResetDriver`
+/// (outbound reset effect).
+pub struct FactoryResetActor<F: FactoryResetDriver, R: SystemResetDriver> {
     driver: F,
+    reset: R,
 }
 
-impl<F: FactoryResetDriver> FactoryResetActor<F> {
-    pub fn new(driver: F) -> Self {
-        Self { driver }
+impl<F: FactoryResetDriver, R: SystemResetDriver> FactoryResetActor<F, R> {
+    /// Create a new factory reset actor.
+    pub fn new(driver: F, reset: R) -> Self {
+        Self { driver, reset }
     }
 
     /// Run the factory reset monitor (never returns — controller reboots).
     ///
-    /// Waits for the driver to detect a factory reset trigger, then
-    /// publishes `SystemState::FactoryReset` for LED feedback.
-    pub async fn run(&mut self, bus: &EventBus) {
+    /// Waits for the driver to detect a factory reset trigger, notifies the
+    /// lifecycle watch sender, erases credentials, waits for LED feedback,
+    /// and triggers reboot.
+    pub async fn run(&mut self, state_sender: SystemStateSender<'_>) {
         info!("monitoring for factory reset trigger");
 
         self.driver.wait_for_factory_reset().await;
 
         info!("=== FACTORY RESET TRIGGERED ===");
 
-        // Publish factory reset event (indicator shows pattern,
-        // MatterControllerActor signals the controller to erase + reboot)
-        bus.immediate_publisher()
-            .publish_immediate(Event::SystemState(SystemState::FactoryReset));
+        state_sender.factory_reset();
+        self.reset.erase_credentials();
 
-        // Wait for the controller to reboot us
-        loop {
-            Timer::after(Duration::from_secs(60)).await;
-        }
+        Timer::after(Duration::from_millis(FACTORY_RESET_REBOOT_DELAY_MS)).await;
+
+        info!("Rebooting...");
+        self.reset.reboot();
     }
 }
