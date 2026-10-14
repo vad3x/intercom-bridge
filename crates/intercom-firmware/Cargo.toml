@@ -1,0 +1,29 @@
+[package]
+name = "intercom-firmware"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "ESP32-C6 firmware composition root for Intercom Bridge"
+
+[[bin]]
+name = "intercom-bridge"
+path = "src/main.rs"
+harness = false
+
+[dependencies]
+intercom-core = { path = "../intercom-core" }
+intercom-adapter-gpio = { path = "../intercom-adapter-gpio" }
+intercom-adapter-matter = { path = "../intercom-adapter-matter" }
+
+log = "0.4"
+embassy-executor = "0.10"
+embassy-futures = "0.1"
+esp-backtrace = { version = "0.20", features = ["panic-handler", "println", "custom-halt", "esp32c6"] }
+esp-hal = { version = "~1.2", features = ["log-04", "unstable", "exception-handler", "esp32c6"] }
+esp-rtos = { version = "0.4", features = ["esp-radio", "embassy", "esp32c6"] }
+esp-alloc = "0.11"
+esp-println = { version = "0.18", features = ["log-04", "esp32c6"] }
+esp-bootloader-esp-idf = { version = "0.6", features = ["log-04", "esp32c6"] }
+esp-metadata-generated = { version = "0.5", features = ["esp32c6"] }
+portable-atomic = { version = "1", features = ["critical-section"] }
+rs-matter-embassy = { path = "../../../rs-matter-embassy/rs-matter-embassy", default-features = false, features = ["esp", "trouble", "embassy-net", "log", "rustcrypto", "kv-blob-store-8192", "mld-v1-compat", "nd-learn-from-frames"] }

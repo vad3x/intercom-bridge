@@ -1,0 +1,21 @@
+[package]
+name = "intercom-adapter-matter"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Smart Home Matter protocol adapter for Intercom Bridge"
+
+[dependencies]
+intercom-core = { path = "../intercom-core" }
+log = "0.4"
+portable-atomic = "1"
+rs-matter = { version = "0.4", default-features = false }
+rs-matter-embassy = { path = "../../../rs-matter-embassy/rs-matter-embassy", default-features = false, features = ["esp", "trouble", "embassy-net", "log", "rustcrypto", "kv-blob-store-8192", "mld-v1-compat", "nd-learn-from-frames"] }
+esp-radio = { version = "1.0.0-beta.1", features = ["ble", "coex", "log-04", "unstable", "esp32c6"] }
+esp-hal = { version = "~1.2", features = ["log-04", "unstable", "esp32c6"] }
+esp-rtos = { version = "0.4", features = ["esp-radio", "embassy", "esp32c6"] }
+esp-alloc = "0.11"
+embedded-storage = "0.3"
+embedded-storage-async = "0.4"
+static_cell = "2"
+tinyrlibc = { version = "0.5", default-features = false, features = ["utoa", "strtoul"] }

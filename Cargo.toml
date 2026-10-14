@@ -1,14 +1,12 @@
-[package]
-name = "intercom-matter"
-version = "0.1.0"
-edition = "2021"
-license = "MIT OR Apache-2.0"
-description = "ESP32-C6 Matter controller for IR204E analog intercom"
-
-[[bin]]
-name = "intercom-matter"
-path = "src/main.rs"
-harness = false
+[workspace]
+members = [
+    "crates/intercom-core",
+    "crates/intercom-adapter-gpio",
+    "crates/intercom-adapter-matter",
+    "crates/intercom-firmware",
+]
+default-members = ["crates/intercom-firmware"]
+resolver = "2"
 
 [patch.crates-io]
 rs-matter = { path = "../rs-matter/rs-matter" }
@@ -23,39 +21,3 @@ debug = 2
 debug-assertions = false
 opt-level = "s"
 overflow-checks = false
-
-[features]
-default = ["esp32c6"]
-dummy-persist = []
-esp32c6 = [
-    "esp-rtos/esp32c6",
-    "esp-hal/esp32c6",
-    "esp-backtrace/esp32c6",
-    "esp-println/esp32c6",
-    "esp-radio/esp32c6",
-    "esp-bootloader-esp-idf/esp32c6",
-    "esp-metadata-generated/esp32c6",
-    "portable-atomic/critical-section",
-]
-
-[dependencies]
-log = "0.4"
-embassy-executor = "0.10"
-embassy-futures = "0.1"
-embassy-time = "0.5"
-embassy-sync = "0.8"
-embedded-storage = "0.3"
-embedded-storage-async = "0.4"
-rs-matter = { version = "0.4", default-features = false }
-esp-backtrace = { version = "0.20", features = ["panic-handler", "println", "custom-halt"] }
-esp-hal = { version = "~1.2", features = ["log-04", "unstable", "exception-handler"] }
-esp-rtos = { version = "0.4", features = ["esp-radio", "embassy"] }
-esp-alloc = { version = "0.11" }
-esp-println = { version = "0.18", features = ["log-04"] }
-esp-radio = { version = "1.0.0-beta.1", features = ["ble", "coex", "log-04", "unstable"] }
-esp-bootloader-esp-idf = { version = "0.6", features = ["log-04"] }
-esp-metadata-generated = "0.5"
-rs-matter-embassy = { path = "../rs-matter-embassy/rs-matter-embassy", default-features = false, features = ["esp", "trouble", "embassy-net", "log", "rustcrypto", "kv-blob-store-8192", "mld-v1-compat", "nd-learn-from-frames"] }
-tinyrlibc = { version = "0.5", default-features = false, features = ["utoa", "strtoul"] }
-static_cell = "2"
-portable-atomic = "1"

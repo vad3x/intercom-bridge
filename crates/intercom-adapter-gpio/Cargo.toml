@@ -1,0 +1,13 @@
+[package]
+name = "intercom-adapter-gpio"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Hardware GPIO adapter for Intercom Bridge (IR204E & ESP32-C6)"
+
+[dependencies]
+intercom-core = { path = "../intercom-core" }
+log = "0.4"
+embassy-time = { version = "0.5", features = ["generic-queue-8"] }
+esp-hal = { version = "~1.2", features = ["log-04", "unstable", "esp32c6"] }
+embedded-storage = "0.3"

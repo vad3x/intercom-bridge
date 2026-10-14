@@ -1,0 +1,15 @@
+[package]
+name = "intercom-core"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Universal domain logic, actors, events, and port definitions for Intercom Bridge"
+
+[dependencies]
+log = "0.4"
+embassy-sync = "0.8"
+embassy-time = { version = "0.5", features = ["generic-queue-8"] }
+embassy-futures = "0.1"
+
+[dev-dependencies]
+portable-atomic = "1"
