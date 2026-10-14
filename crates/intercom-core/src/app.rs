@@ -1,6 +1,6 @@
-//! Smart Intercom - Application
+//! Smart Intercom - Application Coordinator
 //!
-//! Wires trait-based drivers into actor structs and runs them concurrently
+//! Wires trait-based drivers into application services and runs them concurrently
 //! via Embassy async combinators.
 //!
 //! All dependencies are injected: port drivers, state sender, command receiver.
@@ -8,18 +8,18 @@
 
 use log::info;
 
-use crate::actors::access_controller::AccessController;
-use crate::actors::factory_reset::FactoryResetActor;
-use crate::actors::ring::RingActor;
 use crate::events::SystemStateSender;
 use crate::ports::inbound::{AccessControllerHandle, CommandReceiver};
 use crate::ports::reporter::IntercomReporter;
 use crate::ports::{DoorDriver, FactoryResetDriver, RingDriver, SystemResetDriver};
+use crate::service::access::AccessController;
+use crate::service::reset::FactoryResetService;
+use crate::service::ring::RingWatcher;
 
 /// The Smart Intercom application.
 ///
 /// Generic over port driver implementations.
-/// Owns all actors, runs them concurrently.
+/// Owns all core domain services, runs them concurrently.
 pub struct App<R, D, REP, F, RST>
 where
     R: RingDriver,
@@ -28,9 +28,9 @@ where
     F: FactoryResetDriver,
     RST: SystemResetDriver,
 {
-    ring_actor: RingActor<R>,
+    ring_watcher: RingWatcher<R>,
     access_controller: AccessController<D, REP>,
-    factory_reset_actor: FactoryResetActor<F, RST>,
+    reset_service: FactoryResetService<F, RST>,
 }
 
 impl<R, D, REP, F, RST> App<R, D, REP, F, RST>
@@ -50,13 +50,13 @@ where
         reset: RST,
     ) -> Self {
         Self {
-            ring_actor: RingActor::new(ring),
+            ring_watcher: RingWatcher::new(ring),
             access_controller: AccessController::new(door, reporter),
-            factory_reset_actor: FactoryResetActor::new(factory_reset, reset),
+            reset_service: FactoryResetService::new(factory_reset, reset),
         }
     }
 
-    /// Run all core domain actors concurrently (never returns).
+    /// Run all core domain services concurrently (never returns).
     pub async fn run(
         mut self,
         state_sender: SystemStateSender<'_>,
@@ -66,12 +66,12 @@ where
         info!("publishing Initialized state");
         state_sender.initialized();
 
-        info!("starting actors");
+        info!("starting core services");
 
         embassy_futures::join::join3(
-            self.ring_actor.run(access_handle),
+            self.ring_watcher.run(access_handle),
             self.access_controller.run(receiver),
-            self.factory_reset_actor.run(state_sender),
+            self.reset_service.run(state_sender),
         )
         .await;
     }

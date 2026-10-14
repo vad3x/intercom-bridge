@@ -8,7 +8,7 @@ use crate::config::{AUTO_RELOCK_SEC, RING_HOLD_MS};
 use crate::ports::inbound::AccessCommand;
 use crate::ports::reporter::LockState;
 
-/// Side effects emitted by state transitions for the actor pump to execute.
+/// Side effects emitted by state transitions for the service coordinator to execute.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct AccessEffects {
     /// Whether the physical door unlock mechanism should trigger.

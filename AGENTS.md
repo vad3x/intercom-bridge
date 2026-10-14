@@ -51,7 +51,7 @@ intercom-bridge/
 │   │   │   ├── config.rs           # Domain timing and indicator constants
 │   │   │   ├── events.rs           # Event enum + PubSubChannel event bus
 │   │   │   ├── ports/              # Abstract port traits (RingDriver, DoorDriver, etc.)
-│   │   │   └── actors/             # RingActor, FactoryResetActor, AccessController
+│   │   │   └── service/            # Application services (AccessController, RingWatcher, FactoryResetService)
 │   │   └── tests/                  # Host unit tests with mock drivers
 │   ├── intercom-adapter-gpio/      # Hardware edge adapters (esp-hal)
 │   │   └── src/
@@ -66,13 +66,13 @@ intercom-bridge/
 │   │       ├── config.rs           # Matter endpoint IDs and serial format
 │   │       ├── door_lock.rs        # IntercomDoorLock (DoorLock cluster handler)
 │   │       ├── occupancy.rs        # IntercomOccupancy (OccupancySensing cluster handler)
-│   │       ├── access_control.rs   # MatterAccessControlDriver (bridges actors ↔ clusters)
+│   │       ├── access_control.rs   # MatterAccessControlDriver (bridges services ↔ clusters)
 │   │       ├── commissioning.rs    # Commissioning helpers
 │   │       └── controller.rs       # MatterController builder + runner (WiFi stack)
 │   └── intercom-firmware/          # Composition root binary (intercom-bridge)
 │       └── src/
 │           ├── config.rs           # Hardware version, device info, flash partition layout
-│           ├── main.rs             # Hardware init, peripheral allocation, joins actors
+│           ├── main.rs             # Hardware init, peripheral allocation, joins services
 │           ├── version.rs          # Git and compile-time software versioning
 │           └── utils/
 │               └── uptime_logger.rs# Custom HH:MM:SS.mmm logger
@@ -89,7 +89,7 @@ intercom-bridge/
 |------|---------|
 | `crates/intercom-firmware/src/main.rs` | Composition root: hardware init, creates channels & `SystemStateWatch`, instantiates adapters, wires them into `App` + `MatterController`, runs via `join` |
 | `crates/intercom-core/src/domain/access.rs` | `AccessStateMachine` — pure, deterministic domain state machine (zero async/runtime dependencies) |
-| `crates/intercom-core/src/actors/access_controller.rs` | `AccessController` — deep application use case orchestrating strike relay, auto-relock, and ring announcements |
+| `crates/intercom-core/src/service/access.rs` | `AccessController` — deep application use case orchestrating strike relay, auto-relock, and ring announcements |
 | `crates/intercom-core/src/ports/inbound.rs` | `AccessControllerHandle` & `CommandChannel` — idiomatic Inbound Port handle for driving access commands |
 | `crates/intercom-core/src/ports/reporter.rs` | `IntercomReporter` & `LockState` — protocol-agnostic domain reporting port |
 | `crates/intercom-core/src/ports/reset.rs` | `SystemResetDriver` — outbound port for credential erasure and system reboot |
@@ -107,7 +107,7 @@ intercom-bridge/
 
 ## Architecture Patterns
 
-### Inbound Actor Handle Pattern
+### Inbound Command Handle Pattern
 Inbound commands to the core domain flow through the **`AccessControllerHandle`**:
 - Value semantics: cheap `Copy`, owns no heap memory, zero lifetime annotations in adapters.
 - Encapsulates non-blocking bounded channel dispatch (`AccessCommand::{Unlock, Ring}`).
@@ -121,15 +121,15 @@ let door_lock = IntercomDoorLock::new(IntercomDoorLockConfig {
 });
 ```
 
-### Actor Model with Directed Channels & Lifecycle Watch
-Actors communicate via Embassy channels and continuous state watch:
+### Application Services with Directed Channels & Lifecycle Watch
+Core application services communicate via Embassy channels and continuous state watch:
 - **`CommandChannel`**: Point-to-point MPSC command channel driving `AccessController`.
 - **`SystemStateWatch`**: Continuous lifecycle broadcast observed by edge adapters (e.g. `GpioLedDriver`) without queue overflow risk.
 - **Direct Port Effects**: `AccessController` directly reports domain transitions to `IntercomReporter::report_ring()` and `IntercomReporter::report_lock_state()`. Edge adapters (such as `GpioLedDriver` or `MatterAccessControlDriver`) compose via tuples `(access_driver, indicator)` without intermediate core actors.
 
 ### Trait-Based Drivers
 
-Hardware drivers implement async traits, making actors generic and testable:
+Hardware drivers implement async traits, making services generic and testable:
 
 ```rust
 pub trait RingDriver {
@@ -189,7 +189,7 @@ matter.run().await;
 
 1. Define an async trait in `crates/intercom-core/src/ports/`
 2. Create implementation in `crates/intercom-adapter-gpio/src/`
-3. Add the new actor in `crates/intercom-core/src/actors/`
+3. Add the new service in `crates/intercom-core/src/service/`
 4. Wire into `App` struct in `crates/intercom-core/src/app.rs`
 5. Instantiate with concrete GPIO pin in `crates/intercom-firmware/src/main.rs`
 
@@ -231,7 +231,7 @@ let indicator = INDICATOR.init(GpioLedDriver::new(peripherals.GPIO19));
 
 - `no_std` + `alloc` — no standard library
 - Use `log::info!`, `log::warn!`, `log::error!` for logging (via `esp-println`)
-- All drivers and actors are async (Embassy)
+- All drivers and services are async (Embassy)
 - **Zero callbacks/closures across adapters and core** — communication flows through Inbound Handles (`AccessControllerHandle`, `SystemStateSender`) and Outbound Traits (`SystemResetDriver`, `DoorDriver`, `RingDriver`, `IntercomReporter`)
 - Traits for hardware abstraction, generics for composition
 
@@ -356,7 +356,7 @@ Key subsystems to monitor during debugging:
 - **Matter Exchange & MRP:** `rs_matter::transport::exchange` (`Too many retransmissions`, `Ack`, `Msg`)
 - **Wi-Fi Scanning & Association:** `wifi: Scan completed`, `wifi: AP[...]`, `wifi: Connected`, `DisconnectedInfo`
 - **BLE PASE & Commissioning:** `Starting BLE`, `PASE complete`, `CommissioningComplete`
-- **App Actors & Edge Adapters:** `RingActor`, `AccessController`, `GpioLedDriver` transitions
+- **Core Services & Edge Adapters:** `RingWatcher`, `AccessController`, `GpioLedDriver` transitions
 
 ---
 

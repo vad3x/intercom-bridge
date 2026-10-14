@@ -11,7 +11,7 @@ Connects analog intercom systems (such as the IR204E) to modern smart home ecosy
 - 🔐 **Door Lock & Auto-Relock** — Unlock intercom door latch from Apple Home or any Matter controller.
 - 🔔 **Ring Detection** — Get notified in Apple Home when a visitor rings (exposed as an Occupancy/Motion sensor for instant push notifications and automations).
 - 🧩 **Hexagonal Architecture** — Core business domain is completely isolated from hardware peripherals and smart home protocols. Easily swap or add new adapters (e.g. Home Assistant / MQTT, different intercom hardware).
-- ⚡ **Host-Testable Core** — Run unit tests for actors, state machines, and event bus in ~0.7 seconds on your development machine (macOS/Linux) without flashing or hardware simulators.
+- ⚡ **Host-Testable Core** — Run unit tests for domain state machines and application services in ~0.7 seconds on your development machine (macOS/Linux) without flashing or hardware simulators.
 - 💡 **Status Indicator** — Non-blocking LED patterns indicating WiFi connecting, connected, ringing, and unlocking states.
 - 🔘 **Hardware Factory Reset** — Hold the BOOT button (GPIO9) for 10 seconds to wipe Matter commissioning credentials and restart pairing mode.
 
@@ -48,9 +48,9 @@ The project is structured as a **Virtual Cargo Workspace** following the Ports a
 │   ├── RingDriver (Outbound)               ├── FactoryResetDriver (Outbound)  │
 │   ├── DoorDriver (Outbound)               └── SystemResetDriver (Outbound)   │
 │                                                                             │
-│  Actors & Domain Core:                                                      │
+│  Application Services & Domain Core:                                        │
 │   ├── AccessController (AccessStateMachine)                                 │
-│   ├── RingActor                           ├── FactoryResetActor             │
+│   ├── RingWatcher                         ├── FactoryResetService           │
 │   ├── SystemStateWatch (Lifecycle)        └── CommandChannel (MPSC)         │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -63,10 +63,10 @@ See [GLOSSARY.md](GLOSSARY.md) for domain terminology and architecture definitio
 
 | Crate | Target | Purpose |
 |-------|--------|---------|
-| [`intercom-core`](crates/intercom-core) | Universal (`no_std`, host + embedded) | Pure domain logic, event bus, actor loops, and port trait definitions. Has **zero** hardware or protocol dependencies. |
+| [`intercom-core`](crates/intercom-core) | Universal (`no_std`, host + embedded) | Pure domain logic, application services, and port trait definitions. Has **zero** hardware or protocol dependencies. |
 | [`intercom-adapter-gpio`](crates/intercom-adapter-gpio) | RISC-V (`esp32c6`) | Hardware edge adapter implementing core ports using `esp-hal` (optocoupler debounce, PhotoMOS timed pulse, LED patterns, button press detection). |
 | [`intercom-adapter-matter`](crates/intercom-adapter-matter) | RISC-V (`esp32c6`) | Smart home protocol adapter implementing Matter clusters (`DoorLock`, `OccupancySensing`) using `rs-matter` and bare-metal WiFi/BLE via `rs-matter-embassy`. |
-| [`intercom-firmware`](crates/intercom-firmware) | RISC-V (`esp32c6`) | Composition root. Initializes chip peripherals, constructs drivers, wires callbacks to `EventBus`, and builds the final `intercom-bridge` ELF binary. |
+| [`intercom-firmware`](crates/intercom-firmware) | RISC-V (`esp32c6`) | Composition root. Initializes chip peripherals, constructs drivers, wires ports into `App`, and builds the final `intercom-bridge` ELF binary. |
 
 ---
 
@@ -79,7 +79,7 @@ See [GLOSSARY.md](GLOSSARY.md) for domain terminology and architecture definitio
 
 ### 1. Run Host Unit Tests
 
-Core domain logic, actors, and state transitions are tested on your local host (macOS / Linux) in under a second:
+Core domain logic, application services, and state transitions are tested on your local host (macOS / Linux) in under a second:
 
 ```bash
 mise exec -- cargo test -p intercom-core --target x86_64-apple-darwin

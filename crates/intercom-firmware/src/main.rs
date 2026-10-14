@@ -257,7 +257,7 @@ async fn main(_spawner: Spawner) {
     info!("Smart Intercom Ready");
 
     // ========================================================================
-    // Run App actors + Matter stack concurrently
+    // Run App core services + Matter stack concurrently
     // ========================================================================
 
     let app_future = app.run(state_sender, &command_receiver, access_handle);

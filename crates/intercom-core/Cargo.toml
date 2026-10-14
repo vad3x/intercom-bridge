@@ -3,7 +3,7 @@ name = "intercom-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Universal domain logic, actors, events, and port definitions for Intercom Bridge"
+description = "Universal domain logic, services, events, and port definitions for Intercom Bridge"
 
 [dependencies]
 log = "0.4"

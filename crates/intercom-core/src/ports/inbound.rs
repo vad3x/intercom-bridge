@@ -26,7 +26,7 @@ pub type CommandSender<'a> = Sender<'a, CriticalSectionRawMutex, AccessCommand, 
 /// Receiver endpoint for consuming access commands.
 pub type CommandReceiver<'a> = Receiver<'a, CriticalSectionRawMutex, AccessCommand, CMD_QUEUE_CAP>;
 
-/// Inbound Actor Handle — the primary driving port for the access controller.
+/// Inbound Command Handle — the primary driving port for the access controller.
 ///
 /// Implements value semantics (`Copy`), owns no heap memory, and provides
 /// clean synchronous dispatch methods for edge adapters.

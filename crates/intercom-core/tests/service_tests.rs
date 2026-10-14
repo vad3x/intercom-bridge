@@ -1,9 +1,7 @@
-//! Unit tests for Intercom Core actors and ports.
+//! Unit tests for Intercom Core application services and ports.
 //!
 //! Follows the Arrange -> Act -> Assert pattern strictly.
 
-use intercom_core::actors::access_controller::AccessController;
-use intercom_core::actors::ring::RingActor;
 use intercom_core::app::App;
 use intercom_core::events::{SystemState, SystemStateSender, SystemStateWatch};
 use intercom_core::ports::inbound::{AccessCommand, AccessControllerHandle, CommandChannel};
@@ -11,6 +9,8 @@ use intercom_core::ports::reporter::{IntercomReporter, LockState};
 use intercom_core::ports::{
     DoorDriver, FactoryResetDriver, RingDriver, SystemResetDriver,
 };
+use intercom_core::service::access::AccessController;
+use intercom_core::service::ring::RingWatcher;
 use portable_atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
 
 // ============================================================================
@@ -170,17 +170,17 @@ fn access_controller_processes_ring_command_from_handle() {
 }
 
 #[test]
-fn ring_actor_forwards_to_access_handle() {
+fn ring_watcher_forwards_to_access_handle() {
     // Arrange
     let channel = CommandChannel::new();
     let handle = AccessControllerHandle::new(channel.sender());
     let ring_driver = MockRingDriver::new(true);
-    let mut actor = RingActor::new(&ring_driver);
+    let mut watcher = RingWatcher::new(&ring_driver);
 
     // Act
     futures::executor::block_on(async {
         use embassy_futures::select::{select, Either};
-        match select(actor.run(handle), channel.receiver().receive()).await {
+        match select(watcher.run(handle), channel.receiver().receive()).await {
             Either::First(_) => unreachable!(),
             Either::Second(cmd) => {
                 // Assert

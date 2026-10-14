@@ -8,10 +8,10 @@ Development guide for the **Intercom Bridge** — a bare-metal Rust firmware bri
 
 The firmware is designed with **Hexagonal Architecture** (Ports & Adapters) in a virtual Cargo workspace:
 
-- **`intercom-core`**: Universal domain logic (`no_std`), deterministic state machine (`AccessStateMachine`), async actors (`AccessController`, `RingActor`, `FactoryResetActor`), and port traits. Host-testable without hardware.
+- **`intercom-core`**: Universal domain logic (`no_std`), deterministic state machine (`AccessStateMachine`), async application services (`AccessController`, `RingWatcher`, `FactoryResetService`), and port traits. Host-testable without hardware.
 - **`intercom-adapter-gpio`**: Hardware adapters implementing core ports using `esp-hal` (optocoupler ring debounce, PhotoMOS timed unlock pulse, non-blocking LED patterns, BOOT button reset).
 - **`intercom-adapter-matter`**: Smart home protocol adapters implementing Matter clusters (`DoorLock`, `OccupancySensing`) using `rs-matter` and Embassy networking via `rs-matter-embassy`.
-- **`intercom-firmware`**: Composition root binary (`intercom-bridge`). Initializes peripherals, instantiates adapters, binds them to actors, and joins async tasks.
+- **`intercom-firmware`**: Composition root binary (`intercom-bridge`). Initializes peripherals, instantiates adapters, binds them to services, and joins async tasks.
 
 ---
 
@@ -63,7 +63,7 @@ Defined in [`crates/intercom-core/src/config.rs`](crates/intercom-core/src/confi
 
 ### 1. Run Host Unit Tests
 
-Runs all core domain state machine and actor tests on your local machine in under 1 second without hardware:
+Runs all core domain state machine and application service tests on your local machine in under 1 second without hardware:
 
 ```bash
 # macOS host:

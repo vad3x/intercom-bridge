@@ -1,4 +1,4 @@
-//! Smart Intercom - Factory Reset Actor
+//! Smart Intercom - Factory Reset Service
 //!
 //! Monitors a factory reset trigger via `FactoryResetDriver`,
 //! updates system lifecycle state to `FactoryReset`, erases persistent credentials
@@ -11,17 +11,17 @@ use crate::config::FACTORY_RESET_REBOOT_DELAY_MS;
 use crate::events::SystemStateSender;
 use crate::ports::{FactoryResetDriver, SystemResetDriver};
 
-/// Factory reset actor.
+/// Factory reset lifecycle service.
 ///
 /// Generic over `FactoryResetDriver` (inbound trigger) and `SystemResetDriver`
 /// (outbound reset effect).
-pub struct FactoryResetActor<F: FactoryResetDriver, R: SystemResetDriver> {
+pub struct FactoryResetService<F: FactoryResetDriver, R: SystemResetDriver> {
     driver: F,
     reset: R,
 }
 
-impl<F: FactoryResetDriver, R: SystemResetDriver> FactoryResetActor<F, R> {
-    /// Create a new factory reset actor.
+impl<F: FactoryResetDriver, R: SystemResetDriver> FactoryResetService<F, R> {
+    /// Create a new factory reset service.
     pub fn new(driver: F, reset: R) -> Self {
         Self { driver, reset }
     }

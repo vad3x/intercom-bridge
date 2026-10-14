@@ -11,7 +11,7 @@ use embassy_sync::watch::{Receiver as WatchReceiver, Watch};
 pub enum SystemState {
     /// Starting up, hardware init in progress
     Initializing,
-    /// App actors running, hardware initialized
+    /// Core services running, hardware initialized
     Initialized,
     /// Network stack is establishing connection to ecosystem controller
     Connecting,

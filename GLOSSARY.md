@@ -10,11 +10,11 @@ The overarching system that bridges building intercom systems to modern smart ho
 ### Intercom Core (`intercom-core`)
 The central, hardware-agnostic and protocol-agnostic domain and application orchestrator. Coordinates door unlocking, ring detection, domain event reporting, auto-relock timeouts, and factory reset routines. Zero dependencies on microcontroller peripherals, physical LEDs, or network stacks.
 
-### Actor / Application Use Case
-An autonomous async task orchestrating domain rules and port interfaces:
+### Application Services / Use Cases
+Autonomous async services orchestrating domain rules and port interfaces:
 - **AccessController**: Deep application use case coordinating entrance door unlock actuation, auto-relock safety deadlines, and visitor ring announcements.
-- **RingActor**: Monitors physical ring triggers and dispatches them to the core domain via `AccessControllerHandle`.
-- **FactoryResetActor**: Monitors user maintenance button holds to trigger factory credential wiping.
+- **RingWatcher**: Monitors physical ring triggers and dispatches them to the core domain via `AccessControllerHandle`.
+- **FactoryResetService**: Coordinates credential erasure and reboot sequence upon maintenance button trigger.
 
 ### Lifecycle Watch
 The continuous state broadcast (`Watch`) providing zero-drop, zero-allocation system lifecycle updates to observers without queue limits.
@@ -23,7 +23,7 @@ The continuous state broadcast (`Watch`) providing zero-drop, zero-allocation sy
 
 ### Inbound Ports
 Primary driving contracts allowing external smart home adapters and hardware triggers to drive the core:
-- **AccessControllerHandle**: The idiomatic actor handle wrapping a typed command channel (`AccessCommand`), enabling external adapters to trigger unlocks and rings with value semantics.
+- **AccessControllerHandle**: The idiomatic command handle wrapping a typed command channel (`AccessCommand`), enabling external adapters to trigger unlocks and rings with value semantics.
 
 ### Outbound Ports
 Abstract traits defined by `intercom-core` representing required capabilities:

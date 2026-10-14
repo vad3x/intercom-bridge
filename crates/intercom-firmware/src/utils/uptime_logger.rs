@@ -7,7 +7,7 @@
 //!
 //! ```text
 //! 00:00:00.012 INFO  intercom_matter - === Smart Intercom Starting ===
-//! 00:20:34.567 WARN  intercom_matter::actors::ring - ring detected
+//! 00:20:34.567 WARN  intercom_core::service::ring - ring detected
 //! ```
 
 struct UptimeLogger;

@@ -1,4 +1,4 @@
-//! Smart Intercom - Access Controller
+//! Smart Intercom - Access Controller Service
 //!
 //! Consolidated use-case orchestrator for entrance door access.
 //! Pumps commands from `CommandChannel` into `AccessStateMachine`,

@@ -1,4 +1,4 @@
-//! Smart Intercom - Ring Actor
+//! Smart Intercom - Ring Watcher Service
 //!
 //! Listens to hardware ring detection via the `RingDriver` port
 //! and forwards ring triggers to `AccessControllerHandle`.
@@ -8,16 +8,16 @@ use log::info;
 use crate::ports::inbound::AccessControllerHandle;
 use crate::ports::RingDriver;
 
-/// Ring detection actor.
+/// Ring detection watcher service.
 ///
 /// Generic over any `RingDriver` port implementation.
 /// Dispatches ring events to `AccessControllerHandle`.
-pub struct RingActor<R: RingDriver> {
+pub struct RingWatcher<R: RingDriver> {
     driver: R,
 }
 
-impl<R: RingDriver> RingActor<R> {
-    /// Create a new ring actor with a ring driver.
+impl<R: RingDriver> RingWatcher<R> {
+    /// Create a new ring watcher with a ring driver.
     pub fn new(driver: R) -> Self {
         Self { driver }
     }
