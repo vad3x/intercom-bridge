@@ -42,3 +42,13 @@ pub const fn format_serial_no(mac: &[u8; 6]) -> [u8; MAC_SERIAL_NO_LEN] {
     }
     buf
 }
+
+// ============================================================================
+// Subscription Interval Policies (Matter Spec 8.5.1)
+// ============================================================================
+
+/// Maximum reporting interval granted to Matter subscriptions in seconds.
+///
+/// Apple Home requests 600s (10 min). Clamping this to 120s (2 min) forces the
+/// Apple Home Hub to check in and re-establish CASE within 2 minutes of an ESP32 reboot.
+pub const MAX_SUBSCRIPTION_INTERVAL_SECS: u16 = 120;

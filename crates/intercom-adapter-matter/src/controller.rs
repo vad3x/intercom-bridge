@@ -459,6 +459,7 @@ fn dev_det(info: &DeviceInfo, serial_no: &'static str) -> BasicInfoConfig<'stati
         vendor_name: info.vendor_name,
         product_name: info.product_name,
         device_name: info.device_name,
+        max_subscription_max_interval_secs: Some(crate::config::MAX_SUBSCRIPTION_INTERVAL_SECS),
         ..BasicInfoConfig::new()
     }
 }
