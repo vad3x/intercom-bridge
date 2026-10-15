@@ -30,7 +30,7 @@
 - Consumes: ESP-IDF partition specification.
 - Produces: `MATTER_KVS_OFFSET = 0x6c0000`, `OTA_0_OFFSET = 0x20000`, `OTA_1_OFFSET = 0x370000`, `OTA_SLOT_SIZE = 0x350000`.
 
-- [ ] **Step 1: Update `partitions.csv` with 8MB A/B Dual-Bank Scheme**
+- [x] **Step 1: Update `partitions.csv` with 8MB A/B Dual-Bank Scheme**
 
 Edit `partitions.csv`:
 ```csv
@@ -42,7 +42,7 @@ ota_1,        app,  ota_1,   0x370000, 0x350000,
 matter_kvs,   data, nvs,     0x6c0000, 0x6000,
 ```
 
-- [ ] **Step 2: Update `crates/intercom-firmware/src/config.rs` Offsets**
+- [x] **Step 2: Update `crates/intercom-firmware/src/config.rs` Offsets**
 
 Update `crates/intercom-firmware/src/config.rs`:
 ```rust
@@ -73,12 +73,12 @@ pub const MATTER_KVS_RANGE: Range<u32> =
     MATTER_KVS_OFFSET..MATTER_KVS_OFFSET + MATTER_KVS_SIZE;
 ```
 
-- [ ] **Step 3: Verify Firmware Compiles with New Layout**
+- [x] **Step 3: Verify Firmware Compiles with New Layout**
 
 Run: `mise exec -- cargo build -p intercom-firmware`
 Expected: Successful compile with zero errors.
 
-- [ ] **Step 4: Commit Partition Configuration**
+- [x] **Step 4: Commit Partition Configuration**
 
 ```bash
 git add partitions.csv crates/intercom-firmware/src/config.rs
@@ -98,7 +98,7 @@ git commit -m "feat(flash): configure 8MB dual-bank A/B partition layout for OTA
 - Consumes: `SystemStateWatch`, `SystemStateReceiver`.
 - Produces: `SystemState::Updating`, `IndicatorCommand::Strobe`.
 
-- [ ] **Step 1: Write Unit Test for `SystemState::Updating` in `intercom-core`**
+- [x] **Step 1: Write Unit Test for `SystemState::Updating` in `intercom-core`**
 
 Add test to `crates/intercom-core/tests/` (or in `events.rs` test module):
 ```rust
@@ -117,7 +117,7 @@ fn system_state_watch_notifies_updating_transition() {
 }
 ```
 
-- [ ] **Step 2: Add `SystemState::Updating` Variant**
+- [x] **Step 2: Add `SystemState::Updating` Variant**
 
 In `crates/intercom-core/src/events.rs`:
 ```rust
@@ -134,7 +134,7 @@ pub enum SystemState {
 }
 ```
 
-- [ ] **Step 3: Add Strobe Pattern to `GpioLedDriver`**
+- [x] **Step 3: Add Strobe Pattern to `GpioLedDriver`**
 
 In `crates/intercom-adapter-gpio/src/config.rs`:
 ```rust
@@ -145,12 +145,12 @@ pub const UPDATING_STROBE_MS: u64 = 50;
 In `crates/intercom-adapter-gpio/src/led.rs`:
 Add `IndicatorCommand::Strobe` to command enum and map `SystemState::Updating` to trigger `IndicatorCommand::Strobe` in `observe_state`.
 
-- [ ] **Step 4: Run Tests on Core and GPIO Adapter**
+- [x] **Step 4: Run Tests on Core and GPIO Adapter**
 
 Run: `cargo test -p intercom-core --target x86_64-apple-darwin`
 Expected: PASS.
 
-- [ ] **Step 5: Commit Lifecycle & Indicator Updates**
+- [x] **Step 5: Commit Lifecycle & Indicator Updates**
 
 ```bash
 git add crates/intercom-core/ crates/intercom-adapter-gpio/
@@ -169,7 +169,7 @@ git commit -m "feat(core): add SystemState::Updating and rapid LED strobe patter
 - Consumes: Local binary file, Wi-Fi network interface.
 - Produces: Signed packet format `[b"ICOT"][u32 length][64-byte Ed25519 sig][binary...]` over HTTP POST to target.
 
-- [ ] **Step 1: Create `scripts/generate_keys.py`**
+- [x] **Step 1: Create `scripts/generate_keys.py`**
 
 ```python
 #!/usr/bin/env python3
@@ -214,7 +214,7 @@ if __name__ == "__main__":
     main()
 ```
 
-- [ ] **Step 2: Create `scripts/ota.py` Multi-Device Pusher**
+- [x] **Step 2: Create `scripts/ota.py` Multi-Device Pusher**
 
 Create `scripts/ota.py`:
 - Uses `zeroconf` to browse `_intercom-ota._tcp.local.` services.
@@ -223,12 +223,12 @@ Create `scripts/ota.py`:
 - Packages header: `b"ICOT"` (4 bytes) + `len` (4 bytes little-endian) + `signature` (64 bytes).
 - Sends `POST http://<ip>:8080/api/v1/ota/flash` with streaming body and progress bar.
 
-- [ ] **Step 3: Test Key Generation on Host**
+- [x] **Step 3: Test Key Generation on Host**
 
 Run: `python3 scripts/generate_keys.py`
 Expected: Generates key in `~/.intercom/ota_key.pem` and outputs 32-byte public key array.
 
-- [ ] **Step 4: Commit Host Tools**
+- [x] **Step 4: Commit Host Tools**
 
 ```bash
 git add scripts/generate_keys.py scripts/ota.py
@@ -249,7 +249,7 @@ git commit -m "feat(tools): add Ed25519 key generator and multi-device OTA push 
 - Consumes: `otadata` flash partition.
 - Produces: `OtaBootloader` with `get_running_slot()`, `get_target_slot()`, `mark_pending_verify(target_slot, seq)`, and `mark_valid()`.
 
-- [ ] **Step 1: Write Unit Test for Bootloader `esp_ota_select_entry_t` CRC & Sequence Resolution**
+- [x] **Step 1: Write Unit Test for Bootloader `esp_ota_select_entry_t` CRC & Sequence Resolution**
 
 In `crates/intercom-adapter-ota/src/bootloader.rs`:
 ```rust
@@ -275,7 +275,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Create `crates/intercom-adapter-ota/Cargo.toml`**
+- [x] **Step 2: Create `crates/intercom-adapter-ota/Cargo.toml`**
 
 ```toml
 [package]
@@ -298,16 +298,16 @@ crc32fast = { version = "1.4", default-features = false }
 esp-hal = { version = "~1.2", features = ["esp32c6"] }
 ```
 
-- [ ] **Step 3: Implement `bootloader.rs`**
+- [x] **Step 3: Implement `bootloader.rs`**
 
 Implement `esp_ota_select_entry_t` parser, CRC-32 verification, active slot detection, and sequence increment logic.
 
-- [ ] **Step 4: Run Host Unit Tests on Bootloader Module**
+- [x] **Step 4: Run Host Unit Tests on Bootloader Module**
 
 Run: `cargo test -p intercom-adapter-ota --target x86_64-apple-darwin`
 Expected: PASS.
 
-- [ ] **Step 5: Commit `intercom-adapter-ota` Scaffolding**
+- [x] **Step 5: Commit `intercom-adapter-ota` Scaffolding**
 
 ```bash
 git add Cargo.toml crates/intercom-adapter-ota/
@@ -326,7 +326,7 @@ git commit -m "feat(ota): create intercom-adapter-ota crate with ESP-IDF bootloa
 - Consumes: Byte stream, `OTA_PUBLIC_KEY: [u8; 32]`, active flash partition boundaries.
 - Produces: `OtaWriter` struct with `write_chunk(&mut self, chunk: &[u8]) -> Result<(), OtaError>` and `finish(&mut self) -> Result<(), OtaError>`.
 
-- [ ] **Step 1: Write Unit Test for Stream Signature Verification**
+- [x] **Step 1: Write Unit Test for Stream Signature Verification**
 
 In `crates/intercom-adapter-ota/src/writer.rs`:
 ```rust
@@ -352,7 +352,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Implement `OtaWriter`**
+- [x] **Step 2: Implement `OtaWriter`**
 
 Implement `OtaWriter`:
 - Maintains rolling SHA-512 digest.
@@ -361,12 +361,12 @@ Implement `OtaWriter`:
 - On RISC-V target, writes via `esp_hal::rom::spiflash::esp_rom_spiflash_erase_sector` and `esp_rom_spiflash_write`.
 - Verifies Ed25519 signature on completion before returning success.
 
-- [ ] **Step 3: Run Host Unit Tests**
+- [x] **Step 3: Run Host Unit Tests**
 
 Run: `cargo test -p intercom-adapter-ota --target x86_64-apple-darwin`
 Expected: PASS.
 
-- [ ] **Step 4: Commit Flash Writer Module**
+- [x] **Step 4: Commit Flash Writer Module**
 
 ```bash
 git add crates/intercom-adapter-ota/src/writer.rs crates/intercom-adapter-ota/src/lib.rs
@@ -385,7 +385,7 @@ git commit -m "feat(ota): implement streaming flash writer with Ed25519 verifica
 - Consumes: `embassy_net::Stack`, `SystemStateSender`, `OTA_PUBLIC_KEY`.
 - Produces: `OtaServer::run(&self) -> !`.
 
-- [ ] **Step 1: Write Unit Test for HTTP Request Header Parsing**
+- [x] **Step 1: Write Unit Test for HTTP Request Header Parsing**
 
 In `crates/intercom-adapter-ota/src/server.rs`:
 ```rust
@@ -407,7 +407,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Implement `OtaServer`**
+- [x] **Step 2: Implement `OtaServer`**
 
 Implement `OtaServer`:
 - Binds TCP port 8080.
@@ -417,12 +417,12 @@ Implement `OtaServer`:
 - Upon successful signature verification: updates `otadata` to `ESP_OTA_IMG_NEW`, sends `HTTP/1.1 200 OK`, yields 500ms, and calls `esp_hal::system::software_reset()`.
 - Upon failure: sends `HTTP/1.1 400 Bad Request` and imposes 5-second tarpit delay.
 
-- [ ] **Step 3: Run Host Unit Tests on Server Module**
+- [x] **Step 3: Run Host Unit Tests on Server Module**
 
 Run: `cargo test -p intercom-adapter-ota --target x86_64-apple-darwin`
 Expected: PASS.
 
-- [ ] **Step 4: Commit OTA Server Module**
+- [x] **Step 4: Commit OTA Server Module**
 
 ```bash
 git add crates/intercom-adapter-ota/src/server.rs crates/intercom-adapter-ota/src/lib.rs
@@ -442,14 +442,14 @@ git commit -m "feat(ota): implement async HTTP OTA server with connection thrott
 - Consumes: `intercom-adapter-ota::OtaServer`, `intercom-adapter-ota::bootloader::mark_valid`.
 - Produces: Concurrent OTA task in `main.rs`.
 
-- [ ] **Step 1: Add `intercom-adapter-ota` to Firmware Dependencies**
+- [x] **Step 1: Add `intercom-adapter-ota` to Firmware Dependencies**
 
 In `crates/intercom-firmware/Cargo.toml`:
 ```toml
 intercom-adapter-ota = { path = "../intercom-adapter-ota" }
 ```
 
-- [ ] **Step 2: Add Embedded Public Key in `crates/intercom-firmware/src/config.rs`**
+- [x] **Step 2: Add Embedded Public Key in `crates/intercom-firmware/src/config.rs`**
 
 ```rust
 /// Ed25519 public key used to verify incoming OTA firmware images.
@@ -462,19 +462,19 @@ pub const OTA_PUBLIC_KEY: [u8; 32] = [
 ];
 ```
 
-- [ ] **Step 3: Wire Startup Validation & OTA Task in `crates/intercom-firmware/src/main.rs`**
+- [x] **Step 3: Wire Startup Validation & OTA Task in `crates/intercom-firmware/src/main.rs`**
 
 In `crates/intercom-firmware/src/main.rs`:
 - On boot: call `intercom_adapter_ota::bootloader::mark_running_slot_valid()` to cancel any pending rollback.
 - Instantiate `OtaServer::new(stack, state_sender, config::OTA_PUBLIC_KEY)`.
 - Add `ota_server.run()` to `embassy_futures::join::join4(app_future, matter_future, led_future, ota_future)`.
 
-- [ ] **Step 4: Build Firmware Binary for RISC-V Target**
+- [x] **Step 4: Build Firmware Binary for RISC-V Target**
 
 Run: `mise exec -- cargo build -p intercom-firmware --release`
 Expected: Successful compile and link.
 
-- [ ] **Step 5: Commit Firmware Composition Root Wiring**
+- [x] **Step 5: Commit Firmware Composition Root Wiring**
 
 ```bash
 git add crates/intercom-firmware/
@@ -489,7 +489,7 @@ git commit -m "feat(firmware): wire OTA server into composition root and confirm
 - Modify: `AGENTS.md` (add OTA documentation and commands)
 - Create: `docs/superpowers/plans/2026-10-15-remote-firmware-ota.md`
 
-- [ ] **Step 1: Update `AGENTS.md` with OTA Instructions**
+- [x] **Step 1: Update `AGENTS.md` with OTA Instructions**
 
 Document:
 - Generating OTA keys (`python3 scripts/generate_keys.py`).
@@ -497,12 +497,12 @@ Document:
 - Multi-device discovery and `--target` options.
 - Rollback diagnostics and partition layout.
 
-- [ ] **Step 2: Run Full Host Test Suite**
+- [x] **Step 2: Run Full Host Test Suite**
 
 Run: `cargo test -p intercom-core -p intercom-adapter-ota --target x86_64-apple-darwin`
 Expected: All tests pass (0 failures).
 
-- [ ] **Step 3: Final Git Commit**
+- [x] **Step 3: Final Git Commit**
 
 ```bash
 git add AGENTS.md

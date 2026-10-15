@@ -12,23 +12,27 @@ For accessing rust/cargo CLI, use `mise`. The project uses a nightly Rust toolch
 
 **Tech Stack:**
 
-- **Hardware:** ESP32-C6 (DFRobot Beetle)
+- **Hardware:** ESP32-C6-WROOM-1-N8 (8 MB Quad SPI Flash) / DFRobot Beetle ESP32-C6
 - **Language:** Rust (`no_std`, bare-metal)
 - **Architecture:** Hexagonal Architecture (Ports & Adapters) Virtual Workspace
 - **Async Runtime:** Embassy (replaces FreeRTOS)
 - **HAL:** `esp-hal` + `esp-radio` (WiFi/BLE)
 - **Matter:** `rs-matter` + `rs-matter-embassy` (bare-metal Matter over WiFi)
 - **Protocol:** Matter over WiFi (BLE for commissioning)
+- **OTA Updates:** HTTP streaming over Wi-Fi (port 8080) with Ed25519 signature verification and dual-bank bootloader rollback
 
 
 ## Build, Test & Flash
 
 ```bash
 # Run host unit tests (runs in ~1s on macOS/Linux without hardware)
-cargo test -p intercom-core --target x86_64-apple-darwin
+cargo test -p intercom-core -p intercom-adapter-ota --target x86_64-apple-darwin
 
-# Build firmware binary (intercom-bridge)
+# Build debug firmware binary (intercom-bridge)
 mise exec -- cargo build -p intercom-firmware
+
+# Build optimized release firmware binary (recommended for OTA)
+mise exec -- cargo build -p intercom-firmware --release
 
 # Build + flash + monitor (via cargo runner in .cargo/config.toml)
 mise exec -- cargo run
@@ -38,6 +42,85 @@ espflash flash target/riscv32imac-unknown-none-elf/debug/intercom-bridge --port 
 ```
 
 The `.cargo/config.toml` configures the RISC-V target (`riscv32imac-unknown-none-elf`), `build-std`, and the `espflash` runner. USB ports are typically `/dev/cu.usbmodem*` (native ESP32-C6 USB) or `/dev/cu.usbserial*` (UART bridge).
+
+### Remote Firmware Updates (OTA over Wi-Fi)
+
+The Intercom Bridge supports secure, wireless Over-The-Air firmware updates over the local Wi-Fi network without requiring physical USB access.
+
+#### 1. Generate Signing Key (One-Time Setup)
+
+Firmware images are cryptographically signed using Ed25519 asymmetric cryptography. The private key resides exclusively on the operator's machine (`~/.intercom/ota_key.pem`); the matching 32-byte public key is embedded in `crates/intercom-firmware/src/config.rs`.
+
+```bash
+# Generate private key at ~/.intercom/ota_key.pem (0600 permissions)
+# and print the Rust byte array for config.rs:
+python3 scripts/generate_keys.py
+```
+
+If `crates/intercom-firmware/src/config.rs` has a newly generated `OTA_PUBLIC_KEY`, re-compile the firmware before deploying.
+
+#### 2. Build Release Firmware Binary
+
+Always deploy `--release` builds for OTA to ensure optimal performance and code size within partition boundaries:
+
+```bash
+mise exec -- cargo build -p intercom-firmware --release
+```
+
+The output binary is located at `target/riscv32imac-unknown-none-elf/release/intercom-bridge`.
+
+#### 3. Push OTA Update via Wi-Fi
+
+Use the multi-device OTA push CLI tool (`scripts/ota.py`):
+
+```bash
+# Interactive mode: scans mDNS (_intercom-ota._tcp.local.) and prompts for target
+python3 scripts/ota.py target/riscv32imac-unknown-none-elf/release/intercom-bridge
+
+# Push directly to a specific IP address:
+python3 scripts/ota.py --target 192.168.1.142 target/riscv32imac-unknown-none-elf/release/intercom-bridge
+
+# Push directly by device name (matches mDNS announcement):
+python3 scripts/ota.py --target "Intercom Bridge" target/riscv32imac-unknown-none-elf/release/intercom-bridge
+```
+
+**CLI Flags & Options (`scripts/ota.py`):**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--target`, `-t` | Interactive prompt | Direct IP address, hostname, device name, or MAC address |
+| `--port`, `-p` | `8080` | Target HTTP OTA port on device |
+| `--key`, `-k` | `~/.intercom/ota_key.pem` | Path to Ed25519 private key PEM file |
+| `--timeout` | `3.0` | mDNS discovery timeout in seconds |
+| `--http-timeout` | `60.0` | HTTP upload socket timeout in seconds |
+
+#### 4. Dual-Bank A/B Partition Layout & Fail-Safe Rollback
+
+The ESP32-C6-WROOM-1-N8 has 8 MB flash partitioned into two active app slots:
+
+```
+0x000000 ┌──────────────────────────────────────────────┐
+         │ 2nd-stage bootloader (36 KB)                 │
+0x009000 ├──────────────────────────────────────────────┤
+         │ nvs (24 KB)                                  │
+0x00f000 ├──────────────────────────────────────────────┤
+         │ otadata (8 KB, dual 4 KB sectors)            │
+0x020000 ├──────────────────────────────────────────────┤
+         │ ota_0 (Slot A, 3.4 MB)                       │
+0x370000 ├──────────────────────────────────────────────┤
+         │ ota_1 (Slot B, 3.4 MB)                       │
+0x6c0000 ├──────────────────────────────────────────────┤
+         │ matter_kvs (24 KB)                           │
+0x800000 └──────────────────────────────────────────────┘
+```
+
+**Fail-Safe Rollback Behavior:**
+- **Zero-brick guarantee:** Updates are streamed exclusively into the *inactive* slot (`ota_0` or `ota_1`). The currently running firmware slot is never touched during the update.
+- **Cryptographic verification before commit:** The entire binary is verified with Ed25519 before updating `otadata`. If the signature, magic bytes, or size are invalid, the flash slot is marked invalid and the running system continues uninterrupted without rebooting.
+- **Bootloader rollback watchdog:** After verification, `otadata` writes `ESP_OTA_IMG_NEW` (`0x0`) with an incremented sequence number and reboots. Upon boot, the 2nd-stage ESP-IDF bootloader sets the state to `ESP_OTA_IMG_PENDING_VERIFY` (`0x1`).
+- **Self-validation:** During initialization in `intercom-firmware/src/main.rs`, the new firmware calls `intercom_adapter_ota::bootloader::mark_running_slot_valid()`, transitioning state to `ESP_OTA_IMG_VALID` (`0x2`).
+- **Automatic fallback:** If the new firmware crashes, encounters a boot loop, or watchdogs before reaching operational stability, the bootloader automatically rolls back to the previous valid slot on the subsequent reset.
+
 
 ## Project Structure
 
@@ -69,6 +152,12 @@ intercom-bridge/
 │   │       ├── access_control.rs   # MatterAccessControlDriver (bridges services ↔ clusters)
 │   │       ├── commissioning.rs    # Commissioning helpers
 │   │       └── controller.rs       # MatterController builder + runner (WiFi stack)
+│   ├── intercom-adapter-ota/       # Wireless OTA firmware update adapter (HTTP + Ed25519)
+│   │   └── src/
+│   │       ├── lib.rs              # Crate root, error types, and re-exports
+│   │       ├── bootloader.rs       # ESP-IDF otadata parser & dual-slot state machine
+│   │       ├── writer.rs           # Streaming flash sector writer & Ed25519 verifier
+│   │       └── server.rs           # Async HTTP OTA listener (port 8080)
 │   └── intercom-firmware/          # Composition root binary (intercom-bridge)
 │       └── src/
 │           ├── config.rs           # Hardware version, device info, flash partition layout
@@ -76,6 +165,10 @@ intercom-bridge/
 │           ├── version.rs          # Git and compile-time software versioning
 │           └── utils/
 │               └── uptime_logger.rs# Custom HH:MM:SS.mmm logger
+├── scripts/
+│   ├── generate_keys.py            # Ed25519 keypair generator for firmware signing
+│   ├── ota.py                      # Multi-device mDNS discovery & OTA firmware pusher
+│   └── monitor.py                  # Non-intrusive serial monitor without chip reset
 ├── GLOSSARY.md                     # Ubiquitous domain vocabulary
 ├── Cargo.toml                      # Virtual workspace root manifest
 ├── rust-toolchain.toml             # Nightly toolchain + riscv32imac target
@@ -87,23 +180,28 @@ intercom-bridge/
 
 | File | Purpose |
 |------|---------|
-| `crates/intercom-firmware/src/main.rs` | Composition root: hardware init, creates channels & `SystemStateWatch`, instantiates adapters, wires them into `App` + `MatterController`, runs via `join` |
+| `crates/intercom-firmware/src/main.rs` | Composition root: hardware init, creates channels & `SystemStateWatch`, instantiates adapters, wires them into `App` + `MatterController` + `OtaServer`, runs via `join4` |
 | `crates/intercom-core/src/domain/access.rs` | `AccessStateMachine` — pure, deterministic domain state machine (zero async/runtime dependencies) |
 | `crates/intercom-core/src/service/access.rs` | `AccessController` — deep application use case orchestrating strike relay, auto-relock, and ring announcements |
 | `crates/intercom-core/src/ports/inbound.rs` | `AccessControllerHandle` & `CommandChannel` — idiomatic Inbound Port handle for driving access commands |
 | `crates/intercom-core/src/ports/reporter.rs` | `IntercomReporter` & `LockState` — protocol-agnostic domain reporting port |
 | `crates/intercom-core/src/ports/reset.rs` | `SystemResetDriver` — outbound port for credential erasure and system reboot |
 | `crates/intercom-core/src/ports/` | Abstract outbound port traits (`DoorDriver`, `RingDriver`, `IntercomReporter`, `FactoryResetDriver`, `SystemResetDriver`) |
-| `crates/intercom-core/src/events.rs` | `SystemState` enum, `SystemStateWatch` (`Watch`), `SystemStateSender`, `SystemStateReceiver` |
+| `crates/intercom-core/src/events.rs` | `SystemState` enum (`Updating`, etc.), `SystemStateWatch` (`Watch`), `SystemStateSender`, `SystemStateReceiver` |
 | `crates/intercom-core/src/config.rs` | Domain access, relock, and reset timing policies (protocol- and hardware-agnostic) |
 | `crates/intercom-adapter-matter/src/config.rs` | Matter endpoint IDs and serial number formatting |
-| `crates/intercom-firmware/src/config.rs` | Hardware version, product identification, and flash memory layout |
+| `crates/intercom-firmware/src/config.rs` | Hardware version, product identification, flash layout, and `OTA_PUBLIC_KEY` |
 | `crates/intercom-adapter-matter/src/readiness.rs` | `ClusterReadinessBarrier` — internal Apple Home subscription readiness coordination |
 | `crates/intercom-adapter-matter/src/controller.rs` | `MatterController` — builder pattern for registering clusters + running the Matter stack |
 | `crates/intercom-adapter-matter/src/door_lock.rs` | `IntercomDoorLock` — Matter DoorLock cluster, triggers `AccessControllerHandle` on unlock |
 | `crates/intercom-adapter-matter/src/occupancy.rs` | `IntercomOccupancy` — Matter OccupancySensing cluster |
 | `crates/intercom-adapter-matter/src/access_control.rs` | `MatterAccessControlDriver` — implements `IntercomReporter` port |
 | `crates/intercom-adapter-gpio/src/` | GPIO implementations of port traits using `esp-hal` |
+| `crates/intercom-adapter-ota/src/server.rs` | Async HTTP OTA server: throttled single-connection listener streaming signed updates |
+| `crates/intercom-adapter-ota/src/bootloader.rs` | ESP-IDF `otadata` state machine: slot selection, sequence calculation, rollback protection |
+| `crates/intercom-adapter-ota/src/writer.rs` | Streaming flash writer: sector buffering, Ed25519 signature verification |
+| `scripts/ota.py` | Host CLI: mDNS discovery, Ed25519 signing, and streaming HTTP firmware push |
+| `scripts/generate_keys.py` | Host tool: generates Ed25519 private key and outputs Rust public key array |
 
 ## Architecture Patterns
 
@@ -182,6 +280,37 @@ matter.run().await;
 - **Endpoint 0:** Root node (system clusters, handled by rs-matter-embassy)
 - **Endpoint 1:** Door Lock Cluster (lock/unlock commands)
 - **Endpoint 2:** Occupancy Sensor (ring detection, appears as Motion Sensor in HomeKit)
+
+### Over-The-Air (OTA) Firmware Updates & Fail-Safe Dual-Bank Flash
+
+The OTA architecture provides secure, wireless firmware updates over the local Wi-Fi network with zero risk of bricking:
+
+- **Zero-Allocation Async HTTP Server (`OtaServer`)**:
+  - Binds dedicated TCP port 8080 over Embassy networking (`embassy-net`).
+  - Strict single-connection concurrency: rejects secondary incoming connections immediately to prevent memory exhaustion and contention.
+  - Imposes tarpit delay on invalid requests to protect against brute-force DoS attempts.
+
+- **Wire Protocol & Asymmetric Ed25519 Cryptographic Verification**:
+  - Binary update stream wire header format: `[b"ICOT"][u32 length (LE)][64-byte Ed25519 signature][binary payload...]`.
+  - Signature is computed offline across the exact binary payload using the private key (`~/.intercom/ota_key.pem`).
+  - Device verifies signature using compile-time embedded public key (`config::OTA_PUBLIC_KEY`). The private key is never stored on the microcontroller.
+  - Verification occurs on the final SHA-512 digest *before* committing the bootloader partition, completely preventing corrupt or untrusted code execution.
+
+- **Streaming Flash Sector Writer (`OtaWriter`)**:
+  - Zero heap allocation: buffers streaming bytes into a fixed static 4 KB sector buffer (`[u8; 4096]`).
+  - Computes rolling SHA-512 hash as sectors are erased and programmed directly into the inactive flash slot (`ota_0` or `ota_1`).
+  - Verifies ESP32-C6 executable image magic byte (`0xE9`) and chip ID headers before writing to prevent flashing incompatible binaries.
+
+- **Dual-Bank Fail-Safe Bootloader State Machine (`OtaBootloader`)**:
+  - Leverages standard ESP-IDF 2nd-stage bootloader dual-bank partition structure (`otadata`).
+  - Increments active sequence counter and commits status `ESP_OTA_IMG_NEW` (`0x00000000`) with CRC-32 checksum protection.
+  - On reboot, the bootloader transitions the slot to `ESP_OTA_IMG_PENDING_VERIFY` (`0x00000001`).
+  - Once the main application initializes successfully, `intercom_adapter_ota::bootloader::mark_running_slot_valid()` marks the slot `ESP_OTA_IMG_VALID` (`0x00000002`).
+  - If the new image crashes, reboots unexpectedly, or encounters a watchdog panic before reaching operational state, the bootloader automatically rolls back to the previously functioning slot on the subsequent reset.
+
+- **Priority Preemption & Lifecycle Coordination**:
+  - OTA update activity does not block real-time interrupts or access control operations; door strikes and optocoupler events continue to take precedence.
+  - Emits `SystemState::Updating` to the `SystemStateWatch` lifecycle bus during write activity, prompting `GpioLedDriver` to display a rapid 10 Hz strobe pattern (`UPDATING_STROBE_MS = 50ms`).
 
 ## Common Tasks
 
@@ -406,6 +535,7 @@ espflash erase-flash --port /dev/cu.usbserial-210
 | Device already paired elsewhere | Erase Matter credentials: `espflash erase-parts --port <PORT> matter_kvs nvs` |
 | Stack overflow / alloc failure | Increase `HEAP_SIZE` in `crates/intercom-firmware/src/main.rs` |
 | Commissioning unreliable | Increase `BUMP_SIZE` in `crates/intercom-adapter-matter/src/` |
+| OTA flash fails or times out | Verify Wi-Fi connection, verify private key matches embedded `OTA_PUBLIC_KEY`, check serial logs for bootloader state |
 
 ## Dependencies
 
@@ -422,6 +552,9 @@ Key crates (see `Cargo.toml` for full list):
 | `embassy-time` | Async timers and delays |
 | `embassy-futures` | `join`, `select` combinators |
 | `portable-atomic` | Lock-free atomics for shared state |
+| `ed25519-dalek` | Fast, `no_std` Ed25519 asymmetric signature verification |
+| `crc32fast` | CRC-32 integrity verification for ESP-IDF `otadata` entries |
+| `sha2` | Streaming SHA-512 cryptographic hashing for OTA firmware image validation |
 
 Patched crates (via `[patch.crates-io]` in `Cargo.toml`):
 
@@ -431,7 +564,8 @@ Patched crates (via `[patch.crates-io]` in `Cargo.toml`):
 
 ## Testing Changes
 
-1. Build: `cargo build`
-2. Flash + monitor: `cargo run`
-3. Check serial logs for errors
-4. Test with Aqara Home or chip-tool
+1. Run host unit tests: `cargo test -p intercom-core -p intercom-adapter-ota --target x86_64-apple-darwin`
+2. Build firmware binary: `mise exec -- cargo build -p intercom-firmware --release`
+3. Flash via USB: `mise exec -- cargo run` (or remotely via Wi-Fi: `python3 scripts/ota.py target/riscv32imac-unknown-none-elf/release/intercom-bridge`)
+4. Monitor serial logs: `python3 scripts/monitor.py --no-reset`
+5. Test with Apple Home / Aqara Home or chip-tool
