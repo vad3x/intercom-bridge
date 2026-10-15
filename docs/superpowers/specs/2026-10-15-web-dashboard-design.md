@@ -155,14 +155,23 @@ To ensure the developer experience is seamless:
 
 ---
 
-## 7. Frontend User Interface Design (Option A: Modern Card Grid)
+## 7. Frontend User Interface Design (Tabbed Layout)
 
-The web dashboard is delivered as a single self-contained document:
+The web dashboard is delivered as a single self-contained SPA with two tabs: **Overview** and **System Logs**.
 
+### Tab Navigation
+A persistent top bar allows switching views seamlessly without page reloads:
 ```
 ┌────────────────────────────────────────────────────────┐
 │  ⚡ Intercom Bridge                          ● Ready    │
-├────────────────────────────────────────────────────────┤
+│  [ Overview ]  [ System Logs ]                         │
+└────────────────────────────────────────────────────────┘
+```
+
+#### Tab 1: Overview
+Focused entirely on quick actions and glanceable hardware metrics:
+```
+┌────────────────────────────────────────────────────────┐
 │  [ 🔔 Emulate Ring ]          [ 🔓 Trigger Unlock ]    │
 ├──────────────────────────┬─────────────────────────────┤
 │  SYSTEM UPTIME           │  WI-FI SIGNAL               │
@@ -173,21 +182,30 @@ The web dashboard is delivered as a single self-contained document:
 ├──────────────────────────┼─────────────────────────────┤
 │  MATTER STATUS           │  FIRMWARE VERSION           │
 │  Commissioned            │  v0.1.0 (git: a3f89b)       │
-├──────────────────────────┴─────────────────────────────┤
-│  RECENT SYSTEM LOGS               [ Auto-refresh: ☑ ]  │
-│  ┌──────────────────────────────────────────────────┐  │
-│  │ 00:00:01.020 INFO  intercom_matter - Wi-Fi up    │  │
-│  │ 00:00:03.142 INFO  intercom_core - System Ready  │  │
-│  │ 03:57:12.809 INFO  intercom_core - Ring Disptch  │  │
-│  └──────────────────────────────────────────────────┘  │
-│  [ 📋 Copy Logs ]                                      │
+└──────────────────────────┴─────────────────────────────┘
+```
+
+#### Tab 2: System Logs
+A dedicated full-screen diagnostic console for inspecting and copying runtime output:
+```
+┌────────────────────────────────────────────────────────┐
+│  SYSTEM LOGS             [ Auto-refresh: ☑ ] [ 📋 Copy]│
+├────────────────────────────────────────────────────────┤
+│  00:00:01.020 INFO  intercom_matter - Wi-Fi up         │
+│  00:00:03.142 INFO  intercom_core - System Ready       │
+│  03:57:12.809 INFO  intercom_core - Ring Dispatched    │
+│  03:57:15.220 INFO  intercom_adapter_gpio - Relay ON   │
+│  ...                                                   │
 └────────────────────────────────────────────────────────┘
 ```
 
-### UI Behavior:
-* **Background Awareness**: Telemetry and logs poll every 3 seconds, but pause completely when the tab is hidden (`document.visibilityState === 'hidden'`).
-* **Debounced Actions**: Clicking an action button triggers an immediate visual loading state, dispatches the POST request, displays a toast alert, and disables the button for 2 seconds to prevent spamming.
-* **Offline Indication**: If the ESP32 reboots or Wi-Fi drops, a persistent connection warning badge appears until connectivity is restored.
+### UI Behavior & Bandwidth Optimizations:
+* **Selective Polling (Zero Wasted Bandwidth)**:
+  * When on the **Overview** tab: Only polls `GET /api/status` (~300 bytes) every 3 seconds. Does **not** poll logs.
+  * When on the **System Logs** tab: Polls `GET /api/logs` every 3 seconds (if auto-refresh is checked).
+* **Background Awareness**: All polling pauses when the browser tab is hidden (`document.visibilityState === 'hidden'`).
+* **Debounced Actions**: Clicking an action button displays a loading indicator, sends the POST request, displays a toast, and locks the button for 2 seconds to avoid rapid duplicate triggers.
+* **Offline Indication**: Persistent alert banner when connection to the ESP32 is lost.
 
 ---
 
