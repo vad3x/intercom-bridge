@@ -14,7 +14,7 @@ use intercom_core::ports::inbound::{AccessCommand, AccessControllerHandle};
 use intercom_core::ports::ota::{OtaFlashDriver, OtaStream};
 use intercom_core::ports::SystemResetDriver;
 use intercom_core::service::DiagnosticsService;
-use log::{debug, info, warn};
+use log::{info, warn};
 use picoserve::response::IntoResponse;
 
 use crate::config::{
@@ -245,7 +245,6 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, R: Sy
                 continue;
             }
 
-            debug!("HTTP Server: client connection accepted");
             had_error.set(false);
             let _ = picoserve::Server::new(&router, &picoserve_config, &mut http_buffer)
                 .serve(socket)
