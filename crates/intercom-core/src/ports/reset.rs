@@ -21,3 +21,12 @@ impl<T: SystemResetDriver> SystemResetDriver for &T {
         (*self).reboot();
     }
 }
+
+impl SystemResetDriver for () {
+    fn erase_credentials(&self) {}
+
+    fn reboot(&self) -> ! {
+        panic!("Reboot requested on null reset driver");
+    }
+}
+

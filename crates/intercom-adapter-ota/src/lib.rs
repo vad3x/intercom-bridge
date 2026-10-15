@@ -1,7 +1,7 @@
 //! Smart Intercom - Over-The-Air (OTA) Update Adapter
 //!
-//! Provides bootloader state manipulation, streaming flash writing with Ed25519
-//! signature verification, and an asynchronous HTTP server for firmware updates.
+//! Provides bootloader state manipulation, streaming flash writing, and Ed25519
+//! signature verification for Over-The-Air (OTA) firmware updates.
 
 #![no_std]
 

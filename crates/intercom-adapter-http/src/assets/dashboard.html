@@ -389,10 +389,29 @@
         return freeKb + ' KB';
       }
 
+      let consecutiveFailures = 0;
+
+      function setOffline() {
+        consecutiveFailures++;
+        if (consecutiveFailures >= 2) {
+          badge.textContent = '● Offline';
+          badge.style.background = 'rgba(239, 68, 68, 0.15)';
+          badge.style.color = 'var(--danger)';
+        }
+      }
+
+      function setOnline() {
+        consecutiveFailures = 0;
+      }
+
       function fetchStatus() {
         fetch('/api/status')
-          .then(res => res.json())
+          .then(res => {
+            if (!res.ok) throw new Error();
+            return res.json();
+          })
           .then(data => {
+            setOnline();
             if (data.state) {
               badge.textContent = '● ' + data.state;
               if (data.state === 'Updating') {
@@ -413,17 +432,25 @@
             valEcosystem.textContent = (data.ecosystem_protocol || 'Matter') + ': ' + (data.ecosystem_paired ? 'Paired' : 'Unpaired');
             valVersion.textContent = 'v' + (data.version || '--') + (data.git_commit ? (' (' + data.git_commit + ')') : '');
           })
-          .catch(() => {});
+          .catch(() => {
+            setOffline();
+          });
       }
 
       function fetchLogs() {
         fetch('/api/logs')
-          .then(res => res.text())
+          .then(res => {
+            if (!res.ok) throw new Error();
+            return res.text();
+          })
           .then(text => {
+            setOnline();
             logsPre.textContent = text;
             logsPre.scrollTop = logsPre.scrollHeight;
           })
-          .catch(() => {});
+          .catch(() => {
+            setOffline();
+          });
       }
 
       // Initial fetch

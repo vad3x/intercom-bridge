@@ -7,10 +7,12 @@
 use embassy_net::tcp::TcpSocket;
 use embassy_net::Stack;
 use embassy_time::{Duration, Timer};
+use intercom_core::events::SystemStateSender;
 use intercom_core::ports::diagnostics::HardwareInfoDriver;
 use intercom_core::ports::ecosystem::EcosystemInfoDriver;
 use intercom_core::ports::inbound::{AccessCommand, AccessControllerHandle};
 use intercom_core::ports::ota::{OtaFlashDriver, OtaStream};
+use intercom_core::ports::SystemResetDriver;
 use intercom_core::service::DiagnosticsService;
 use log::{info, warn};
 use picoserve::response::IntoResponse;
@@ -26,24 +28,35 @@ use crate::DASHBOARD_HTML_GZ;
 pub struct HttpServerConfig {
     /// TCP port to listen on (default: 8080).
     pub port: u16,
+    /// Delay on failed OTA transfer (tarpit to prevent DoS, default: 5s).
+    pub tarpit_delay: Duration,
 }
 
 impl HttpServerConfig {
     /// Create a new configuration with the specified TCP port.
     pub const fn new(port: u16) -> Self {
-        Self { port }
+        Self {
+            port,
+            tarpit_delay: Duration::from_secs(5),
+        }
     }
 }
 
 impl Default for HttpServerConfig {
     fn default() -> Self {
-        Self { port: 8080 }
+        Self {
+            port: 8080,
+            tarpit_delay: Duration::from_secs(5),
+        }
     }
 }
 
 impl From<u16> for HttpServerConfig {
     fn from(port: u16) -> Self {
-        Self { port }
+        Self {
+            port,
+            tarpit_delay: Duration::from_secs(5),
+        }
     }
 }
 
@@ -52,7 +65,10 @@ pub(crate) struct AppState<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O:
     pub(crate) access_handle: AccessControllerHandle<'a>,
     pub(crate) diagnostics: &'a DiagnosticsService<'a, H, E>,
     pub(crate) ota_driver: &'a core::cell::RefCell<&'a mut O>,
+    pub(crate) state_sender: Option<SystemStateSender<'a>>,
+    pub(crate) tarpit_delay: Duration,
     pub(crate) had_error: &'a core::cell::Cell<bool>,
+    pub(crate) reboot_requested: &'a core::cell::Cell<bool>,
     pub(crate) log_provider: fn(&mut [u8]) -> usize,
 }
 
@@ -79,17 +95,50 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver> Copy
 /// Dispatches incoming requests via `picoserve` to the pre-compressed dashboard HTML,
 /// system diagnostics snapshots, live logs, access controller actions,
 /// and streaming OTA firmware updates.
-pub struct HttpServer<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver> {
+pub struct HttpServer<
+    'a,
+    H: HardwareInfoDriver,
+    E: EcosystemInfoDriver,
+    O: OtaFlashDriver,
+    R: SystemResetDriver = (),
+> {
     stack: Option<Stack<'static>>,
     access_handle: AccessControllerHandle<'a>,
     diagnostics: &'a DiagnosticsService<'a, H, E>,
     ota_driver: &'a mut O,
+    reset_driver: Option<&'a R>,
+    state_sender: Option<SystemStateSender<'a>>,
     log_provider: fn(&mut [u8]) -> usize,
     config: HttpServerConfig,
 }
 
 impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver>
-    HttpServer<'a, H, E, O>
+    HttpServer<'a, H, E, O, ()>
+{
+    /// Create an unbound `HttpServer` without a network stack or reset driver, suitable for testing.
+    pub fn new_unbound(
+        access_handle: AccessControllerHandle<'a>,
+        diagnostics: &'a DiagnosticsService<'a, H, E>,
+        ota_driver: &'a mut O,
+        log_provider: fn(&mut [u8]) -> usize,
+        mut config: HttpServerConfig,
+    ) -> Self {
+        config.tarpit_delay = Duration::from_millis(0);
+        Self {
+            stack: None,
+            access_handle,
+            diagnostics,
+            ota_driver,
+            reset_driver: None,
+            state_sender: None,
+            log_provider,
+            config,
+        }
+    }
+}
+
+impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, R: SystemResetDriver>
+    HttpServer<'a, H, E, O, R>
 {
     /// Create a new `HttpServer` bound to an `embassy_net::Stack`.
     pub fn new(
@@ -97,6 +146,8 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver>
         access_handle: AccessControllerHandle<'a>,
         diagnostics: &'a DiagnosticsService<'a, H, E>,
         ota_driver: &'a mut O,
+        reset_driver: &'a R,
+        state_sender: Option<SystemStateSender<'a>>,
         log_provider: fn(&mut [u8]) -> usize,
         config: HttpServerConfig,
     ) -> Self {
@@ -105,27 +156,34 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver>
             access_handle,
             diagnostics,
             ota_driver,
+            reset_driver: Some(reset_driver),
+            state_sender,
             log_provider,
             config,
         }
     }
 
-    /// Create an unbound `HttpServer` without a network stack, suitable for testing.
-    pub fn new_unbound(
-        access_handle: AccessControllerHandle<'a>,
-        diagnostics: &'a DiagnosticsService<'a, H, E>,
-        ota_driver: &'a mut O,
-        log_provider: fn(&mut [u8]) -> usize,
-        config: HttpServerConfig,
-    ) -> Self {
-        Self {
-            stack: None,
-            access_handle,
-            diagnostics,
-            ota_driver,
-            log_provider,
-            config,
+    /// Attach a reset driver to the server (for reboot on OTA completion).
+    pub fn with_reset_driver<R2: SystemResetDriver>(
+        self,
+        reset_driver: &'a R2,
+    ) -> HttpServer<'a, H, E, O, R2> {
+        HttpServer {
+            stack: self.stack,
+            access_handle: self.access_handle,
+            diagnostics: self.diagnostics,
+            ota_driver: self.ota_driver,
+            reset_driver: Some(reset_driver),
+            state_sender: self.state_sender,
+            log_provider: self.log_provider,
+            config: self.config,
         }
+    }
+
+    /// Attach a system state sender for broadcasting lifecycle transitions (e.g. Updating).
+    pub fn with_state_sender(mut self, state_sender: SystemStateSender<'a>) -> Self {
+        self.state_sender = Some(state_sender);
+        self
     }
 
     /// Process a single incoming client connection on an abstract `OtaStream`.
@@ -141,11 +199,15 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver>
 
         let ota_driver_cell = core::cell::RefCell::new(&mut *self.ota_driver);
         let had_error = core::cell::Cell::new(false);
+        let reboot_requested = core::cell::Cell::new(false);
         let app_state = AppState {
             access_handle: self.access_handle,
             diagnostics: self.diagnostics,
             ota_driver: &ota_driver_cell,
+            state_sender: self.state_sender,
+            tarpit_delay: self.config.tarpit_delay,
             had_error: &had_error,
+            reboot_requested: &reboot_requested,
             log_provider: self.log_provider,
         };
 
@@ -154,6 +216,12 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver>
         let serve_res = picoserve::Server::new(&router, &picoserve_config, &mut http_buffer)
             .serve(socket)
             .await;
+
+        if reboot_requested.get() {
+            if let Some(reset) = self.reset_driver {
+                reset.reboot();
+            }
+        }
 
         if serve_res.is_err() || had_error.get() {
             Err(())
@@ -181,11 +249,15 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver>
 
         let ota_driver_cell = core::cell::RefCell::new(&mut *self.ota_driver);
         let had_error = core::cell::Cell::new(false);
+        let reboot_requested = core::cell::Cell::new(false);
         let app_state = AppState {
             access_handle: self.access_handle,
             diagnostics: self.diagnostics,
             ota_driver: &ota_driver_cell,
+            state_sender: self.state_sender,
+            tarpit_delay: self.config.tarpit_delay,
             had_error: &had_error,
+            reboot_requested: &reboot_requested,
             log_provider: self.log_provider,
         };
 
@@ -207,6 +279,14 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver>
             let _ = picoserve::Server::new(&router, &picoserve_config, &mut http_buffer)
                 .serve(socket)
                 .await;
+
+            if reboot_requested.get() {
+                info!("OTA update committed; rebooting in 500ms...");
+                Timer::after_millis(500).await;
+                if let Some(reset) = self.reset_driver {
+                    reset.reboot();
+                }
+            }
         }
     }
 }
@@ -248,11 +328,10 @@ fn build_router<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDr
             "/api/logs",
             picoserve::routing::get(
                 |picoserve::extract::State(state): picoserve::extract::State<AppState<'a, H, E, O>>| async move {
-                    let mut log_buf = [0u8; 2048];
+                    let mut log_buf = [0u8; 4096];
                     let log_len = (state.log_provider)(&mut log_buf);
-                    let log_str = alloc::string::String::from(
-                        core::str::from_utf8(&log_buf[..log_len]).unwrap_or(""),
-                    );
+                    let log_str =
+                        alloc::string::String::from_utf8_lossy(&log_buf[..log_len]).into_owned();
                     picoserve::response::Response::ok(log_str)
                         .with_content_type("text/plain; charset=utf-8")
                 },
@@ -309,6 +388,7 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver>
             Some(len) => len,
             None => {
                 state.had_error.set(true);
+                Timer::after(state.tarpit_delay).await;
                 return picoserve::response::Response::new(
                     picoserve::response::StatusCode::BAD_REQUEST,
                     "{\"error\":\"bad_request\"}",
@@ -318,6 +398,10 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver>
                 .await;
             }
         };
+
+        if let Some(sender) = state.state_sender {
+            sender.updating();
+        }
 
         let reader = request.body_connection.body().reader();
         let mut stream = EmbeddedIoReader(reader);
@@ -329,6 +413,7 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver>
 
         match flash_res {
             Ok(()) => {
+                state.reboot_requested.set(true);
                 picoserve::response::Response::ok("{\"status\":\"ok\"}")
                     .with_content_type("application/json")
                     .write_to(request.body_connection.finalize().await?, response_writer)
@@ -336,6 +421,10 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver>
             }
             Err(_) => {
                 state.had_error.set(true);
+                if let Some(sender) = state.state_sender {
+                    sender.ready();
+                }
+                Timer::after(state.tarpit_delay).await;
                 picoserve::response::Response::new(
                     picoserve::response::StatusCode::BAD_REQUEST,
                     "{\"error\":\"bad_request\"}",

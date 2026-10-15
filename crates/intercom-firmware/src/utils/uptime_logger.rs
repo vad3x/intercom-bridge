@@ -80,11 +80,7 @@ impl<const N: usize> LogRingBuffer<N> {
             return 0;
         }
         let to_copy = self.count.min(buf.len());
-        let start = if self.count < N {
-            0
-        } else {
-            self.write_pos
-        };
+        let start = (self.write_pos + N - to_copy) % N;
         for i in 0..to_copy {
             let idx = (start + i) % N;
             buf[i] = self.storage[idx];
@@ -259,9 +255,24 @@ mod tests {
         rb.write_str("12345678");
         let n = rb.read_into(&mut out);
 
-        // Assert: buffer smaller than stored log
+        // Assert: buffer smaller than stored log, returns latest 4 bytes chronologically
         assert_eq!(n, 4);
-        assert_eq!(&out[..n], b"1234");
+        assert_eq!(&out[..n], b"5678");
+    }
+
+    #[test]
+    fn test_log_ring_buffer_partial_read_after_overflow() {
+        // Arrange
+        let mut rb = LogRingBuffer::<16>::new();
+        let mut out = [0u8; 4];
+
+        // Act: write 18 bytes into 16-byte buffer
+        rb.write_str("abcdefghijklmnopqr");
+        let n = rb.read_into(&mut out);
+
+        // Assert: returns latest 4 bytes of 18 ("opqr")
+        assert_eq!(n, 4);
+        assert_eq!(&out[..n], b"opqr");
     }
 
     #[test]

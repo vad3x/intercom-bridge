@@ -369,6 +369,8 @@ async fn main(_spawner: Spawner) {
             access_handle,
             &diagnostics_service,
             &mut ota_driver,
+            &FirmwareResetDriver,
+            Some(state_sender),
             utils::uptime_logger::get_buffered_logs,
             HttpServerConfig::default(),
         );

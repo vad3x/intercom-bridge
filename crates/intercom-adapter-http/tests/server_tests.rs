@@ -482,3 +482,86 @@ fn test_get_invalid_route_returns_404_not_found() {
     assert!(result.is_ok());
     assert!(stream.written_str().contains("HTTP/1.1 404 "));
 }
+
+struct MockResetDriver;
+
+impl intercom_core::ports::SystemResetDriver for MockResetDriver {
+    fn erase_credentials(&self) {}
+    fn reboot(&self) -> ! {
+        panic!("MOCK_REBOOT_TRIGGERED");
+    }
+}
+
+#[test]
+#[should_panic(expected = "MOCK_REBOOT_TRIGGERED")]
+fn test_post_ota_flash_triggers_reboot() {
+    // Arrange
+    let cmd_channel = CommandChannel::new();
+    let access_handle = AccessControllerHandle::new(cmd_channel.sender());
+    let hardware = MockHardwareInfo;
+    let state_watch = SystemStateWatch::new();
+    state_watch.sender().send(SystemState::Ready);
+    let diagnostics = DiagnosticsService::new(&hardware, &state_watch);
+    let mut ota_driver = MockOtaFlashDriver::new(false);
+    let reset_driver = MockResetDriver;
+    let mut server = HttpServer::new_unbound(
+        access_handle,
+        &diagnostics,
+        &mut ota_driver,
+        test_log_provider,
+        HttpServerConfig::default(),
+    )
+    .with_reset_driver(&reset_driver);
+
+    let payload = b"new valid binary payload";
+    let req = format!(
+        "POST /api/v1/ota/flash HTTP/1.1\r\nContent-Length: {}\r\n\r\n",
+        payload.len()
+    );
+    let mut req_bytes = req.into_bytes();
+    req_bytes.extend_from_slice(payload);
+    let mut stream = MockStream::new(&req_bytes);
+
+    // Act
+    let _ = block_on(server.handle_request(&mut stream));
+
+    // Assert: should_panic triggered on reset_driver.reboot()
+}
+
+#[test]
+fn test_post_ota_flash_sets_updating_state() {
+    // Arrange
+    let cmd_channel = CommandChannel::new();
+    let access_handle = AccessControllerHandle::new(cmd_channel.sender());
+    let hardware = MockHardwareInfo;
+    let state_watch = SystemStateWatch::new();
+    state_watch.sender().send(SystemState::Ready);
+    let state_sender = intercom_core::events::SystemStateSender::new(&state_watch);
+    let diagnostics = DiagnosticsService::new(&hardware, &state_watch);
+    let mut ota_driver = MockOtaFlashDriver::new(false);
+    let mut server = HttpServer::new_unbound(
+        access_handle,
+        &diagnostics,
+        &mut ota_driver,
+        test_log_provider,
+        HttpServerConfig::default(),
+    )
+    .with_state_sender(state_sender);
+
+    let payload = b"new valid binary payload";
+    let req = format!(
+        "POST /api/v1/ota/flash HTTP/1.1\r\nContent-Length: {}\r\n\r\n",
+        payload.len()
+    );
+    let mut req_bytes = req.into_bytes();
+    req_bytes.extend_from_slice(payload);
+    let mut stream = MockStream::new(&req_bytes);
+
+    // Act
+    let result = block_on(server.handle_request(&mut stream));
+
+    // Assert
+    assert!(result.is_ok());
+    assert_eq!(state_sender.current_state(), Some(SystemState::Updating));
+}
+
