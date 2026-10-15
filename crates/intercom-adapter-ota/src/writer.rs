@@ -575,6 +575,18 @@ impl OtaTargetFlash for EspTargetFlash {
     }
 }
 
+impl<F: OtaTargetFlash> OtaTargetFlash for &mut F {
+    type Error = F::Error;
+
+    fn erase_sector(&mut self, offset: u32) -> Result<(), Self::Error> {
+        (**self).erase_sector(offset)
+    }
+
+    fn write_sector(&mut self, offset: u32, data: &[u8; SECTOR_SIZE]) -> Result<(), Self::Error> {
+        (**self).write_sector(offset, data)
+    }
+}
+
 // ============================================================================
 // Unit Tests (Host-Runnable)
 // ============================================================================
