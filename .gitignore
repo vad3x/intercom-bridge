@@ -45,3 +45,6 @@ target/
 
 # Vendored dependencies (local patches)
 vendor/
+
+# AI artifacts
+.superpowers
