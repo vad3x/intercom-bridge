@@ -175,8 +175,7 @@ mise exec -- cargo build -p intercom-firmware --release
 3. Reboot device (`software_reset` or manual reset).
 4. Do **not** touch the phone or open the Apple Home app.
 5. Watch serial monitor:
-   - Confirm Apple Home Hub initiates `CASESigma1` and restores subscriptions within **≤ 120 seconds** automatically.
-   - Confirm LED transitions to solid `Ready` on its own.
+   - Confirm Apple Home Hub initiates `CASESigma1` and restores subscriptions within **≤ 120 seconds** automatically (`Subscription primed` in logs).
 
 ---
 
