@@ -8,6 +8,7 @@ members = [
     "crates/intercom-core",
     "crates/intercom-adapter-gpio",
     "crates/intercom-adapter-matter",
+    "crates/intercom-adapter-ota",
     "crates/intercom-firmware",
 ]
 default-members = ["crates/intercom-firmware"]
