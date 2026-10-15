@@ -6,4 +6,4 @@ pub mod access;
 pub mod diagnostics;
 
 pub use access::{AccessEffects, AccessStateMachine};
-pub use diagnostics::SystemDiagnostics;
+pub use diagnostics::{SystemDiagnostics, WifiSsid};

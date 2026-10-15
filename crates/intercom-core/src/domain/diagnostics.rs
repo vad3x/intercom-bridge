@@ -8,6 +8,7 @@ pub struct SystemDiagnostics {
     pub state: SystemState,
     pub door_locked: bool,
     pub uptime_sec: u64,
+    pub wifi_ssid: Option<WifiSsid>,
     pub wifi_rssi_dbm: Option<i8>,
     pub ip: Option<[u8; 4]>,
     pub mac: [u8; 6],
@@ -20,4 +21,41 @@ pub struct SystemDiagnostics {
     pub version: &'static str,
     pub git_commit: &'static str,
     pub build_date: &'static str,
+}
+
+/// Up to 32-byte Wi-Fi SSID string (IEEE 802.11 maximum SSID length).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WifiSsid {
+    bytes: [u8; 32],
+    len: u8,
+}
+
+impl WifiSsid {
+    /// Create a new WifiSsid from a string slice if within 32 bytes.
+    pub fn new(s: &str) -> Option<Self> {
+        Self::from_bytes(s.as_bytes())
+    }
+
+    /// Create a new WifiSsid from a byte slice if within 32 bytes.
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() > 32 {
+            return None;
+        }
+        let mut buf = [0u8; 32];
+        buf[..bytes.len()].copy_from_slice(bytes);
+        Some(Self {
+            bytes: buf,
+            len: bytes.len() as u8,
+        })
+    }
+
+    /// Return the SSID as a string slice (or empty string if not valid UTF-8).
+    pub fn as_str(&self) -> &str {
+        core::str::from_utf8(&self.bytes[..self.len as usize]).unwrap_or("")
+    }
+
+    /// Return the raw SSID bytes.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes[..self.len as usize]
+    }
 }

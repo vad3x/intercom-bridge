@@ -14,6 +14,9 @@ pub trait HardwareInfoDriver {
     /// Return total heap size in bytes.
     fn total_heap_bytes(&self) -> usize;
 
+    /// Return Wi-Fi SSID if connected, or None.
+    fn wifi_ssid(&self) -> Option<crate::domain::diagnostics::WifiSsid>;
+
     /// Return Wi-Fi RSSI in dBm if connected, or None.
     fn wifi_rssi(&self) -> Option<i8>;
 

@@ -116,6 +116,7 @@ fn test_format_status_json_success() {
         state: SystemState::Ready,
         door_locked: true,
         uptime_sec: 14250,
+        wifi_ssid: intercom_core::domain::diagnostics::WifiSsid::new("MyHomeNetwork"),
         wifi_rssi_dbm: Some(-58),
         ip: Some([192, 168, 1, 142]),
         mac: [0x68, 0xB6, 0xB3, 0x21, 0x40, 0x8C],
@@ -140,6 +141,7 @@ fn test_format_status_json_success() {
     assert_eq!(val["state"], "Ready");
     assert_eq!(val["door_locked"], true);
     assert_eq!(val["uptime_sec"], 14250);
+    assert_eq!(val["wifi_ssid"], "MyHomeNetwork");
     assert_eq!(val["wifi_rssi_dbm"], -58);
     assert_eq!(val["ip"], "192.168.1.142");
     assert_eq!(val["mac"], "68:B6:B3:21:40:8C");
@@ -161,6 +163,7 @@ fn test_format_status_json_with_none_options() {
         state: SystemState::Connecting,
         door_locked: false,
         uptime_sec: 42,
+        wifi_ssid: None,
         wifi_rssi_dbm: None,
         ip: None,
         mac: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
@@ -185,6 +188,7 @@ fn test_format_status_json_with_none_options() {
     assert_eq!(val["state"], "Connecting");
     assert_eq!(val["door_locked"], false);
     assert_eq!(val["uptime_sec"], 42);
+    assert!(val["wifi_ssid"].is_null());
     assert!(val["wifi_rssi_dbm"].is_null());
     assert!(val["ip"].is_null());
     assert_eq!(val["mac"], "AA:BB:CC:DD:EE:FF");
@@ -206,6 +210,7 @@ fn test_format_status_json_buffer_overflow_protection() {
         state: SystemState::Ready,
         door_locked: true,
         uptime_sec: 14250,
+        wifi_ssid: intercom_core::domain::diagnostics::WifiSsid::new("MyHomeNetwork"),
         wifi_rssi_dbm: Some(-58),
         ip: Some([192, 168, 1, 142]),
         mac: [0x68, 0xB6, 0xB3, 0x21, 0x40, 0x8C],

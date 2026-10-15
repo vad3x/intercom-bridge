@@ -3,6 +3,7 @@
 //! Queries runtime heap, bootloader active/valid slot, efuse MAC, timers,
 //! and Wi-Fi RSSI via ESP-IDF / esp-radio runtime APIs.
 
+use intercom_core::domain::diagnostics::WifiSsid;
 use intercom_core::ports::diagnostics::HardwareInfoDriver;
 
 /// Concrete hardware information provider querying runtime heap, bootloader, efuse, and timers.
@@ -26,6 +27,42 @@ impl HardwareInfoDriver for FirmwareHardwareInfo {
 
     fn total_heap_bytes(&self) -> usize {
         crate::config::HEAP_SIZE
+    }
+
+    fn wifi_ssid(&self) -> Option<WifiSsid> {
+        #[cfg(target_arch = "riscv32")]
+        {
+            use esp_wifi_sys_esp32c6::include::{
+                esp_wifi_get_config, esp_wifi_sta_get_ap_info, wifi_ap_record_t, wifi_config_t,
+                wifi_interface_t_WIFI_IF_STA, ESP_OK,
+            };
+
+            // Query active AP record first
+            let mut record = core::mem::MaybeUninit::<wifi_ap_record_t>::uninit();
+            if unsafe { esp_wifi_sta_get_ap_info(record.as_mut_ptr()) } == ESP_OK as i32 {
+                let record = unsafe { record.assume_init() };
+                let len = record.ssid.iter().position(|&b| b == 0).unwrap_or(record.ssid.len());
+                if len > 0 {
+                    if let Some(ssid) = WifiSsid::from_bytes(&record.ssid[..len]) {
+                        return Some(ssid);
+                    }
+                }
+            }
+
+            // Fallback to configured station SSID
+            let mut cfg = core::mem::MaybeUninit::<wifi_config_t>::uninit();
+            if unsafe { esp_wifi_get_config(wifi_interface_t_WIFI_IF_STA, cfg.as_mut_ptr()) } == ESP_OK as i32 {
+                let cfg = unsafe { cfg.assume_init() };
+                let ssid_bytes = unsafe { cfg.sta.ssid };
+                let len = ssid_bytes.iter().position(|&b| b == 0).unwrap_or(ssid_bytes.len());
+                if len > 0 {
+                    if let Some(ssid) = WifiSsid::from_bytes(&ssid_bytes[..len]) {
+                        return Some(ssid);
+                    }
+                }
+            }
+        }
+        None
     }
 
     fn wifi_rssi(&self) -> Option<i8> {

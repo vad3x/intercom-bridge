@@ -238,8 +238,8 @@
           <div id="val-uptime" class="card-value">--</div>
         </div>
         <div class="card">
-          <div class="card-label">Wi-Fi RSSI</div>
-          <div id="val-rssi" class="card-value">--</div>
+          <div class="card-label">Wi-Fi Network</div>
+          <div id="val-wifi" class="card-value">--</div>
         </div>
         <div class="card">
           <div class="card-label">Active Slot</div>
@@ -285,7 +285,7 @@
 
       const badge = document.getElementById('status-badge');
       const valUptime = document.getElementById('val-uptime');
-      const valRssi = document.getElementById('val-rssi');
+      const valWifi = document.getElementById('val-wifi');
       const valSlot = document.getElementById('val-slot');
       const valHeap = document.getElementById('val-heap');
       const valEcosystem = document.getElementById('val-ecosystem');
@@ -426,7 +426,13 @@
               }
             }
             valUptime.textContent = formatUptime(data.uptime_sec);
-            valRssi.textContent = data.wifi_rssi_dbm != null ? (data.wifi_rssi_dbm + ' dBm') : '--';
+            if (data.wifi_ssid) {
+              valWifi.textContent = data.wifi_ssid + (data.wifi_rssi_dbm != null ? (' (' + data.wifi_rssi_dbm + ' dBm)') : '');
+            } else if (data.wifi_rssi_dbm != null) {
+              valWifi.textContent = data.wifi_rssi_dbm + ' dBm';
+            } else {
+              valWifi.textContent = '--';
+            }
             valSlot.textContent = data.active_slot ? (data.active_slot + (data.slot_valid ? ' (valid)' : '')) : '--';
             valHeap.textContent = formatHeap(data.free_heap_bytes, data.total_heap_bytes);
             valEcosystem.textContent = (data.ecosystem_protocol || 'Matter') + ': ' + (data.ecosystem_paired ? 'Paired' : 'Unpaired');

@@ -46,6 +46,7 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver> DiagnosticsService<'a, H
             state,
             door_locked,
             uptime_sec: self.hardware.uptime_secs(),
+            wifi_ssid: self.hardware.wifi_ssid(),
             wifi_rssi_dbm: self.hardware.wifi_rssi(),
             ip: self.hardware.ip_address(),
             mac: self.hardware.mac_address(),

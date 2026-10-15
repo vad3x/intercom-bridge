@@ -84,6 +84,10 @@ impl HardwareInfoDriver for MockHardwareInfo {
         320_000
     }
 
+    fn wifi_ssid(&self) -> Option<intercom_core::domain::diagnostics::WifiSsid> {
+        intercom_core::domain::diagnostics::WifiSsid::new("TestNet")
+    }
+
     fn wifi_rssi(&self) -> Option<i8> {
         Some(-55)
     }
@@ -254,6 +258,7 @@ fn test_get_status_returns_valid_telemetry_json() {
     assert_eq!(v["state"], "Ready");
     assert_eq!(v["door_locked"], true);
     assert_eq!(v["uptime_sec"], 1234);
+    assert_eq!(v["wifi_ssid"], "TestNet");
     assert_eq!(v["wifi_rssi_dbm"], -55);
     assert_eq!(v["ip"], "192.168.1.142");
     assert_eq!(v["mac"], "AA:BB:CC:DD:EE:FF");

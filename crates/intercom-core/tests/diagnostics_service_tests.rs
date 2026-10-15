@@ -12,6 +12,7 @@ pub struct MockHardwareInfoDriver {
     pub uptime_secs: u64,
     pub free_heap_bytes: usize,
     pub total_heap_bytes: usize,
+    pub wifi_ssid: Option<intercom_core::domain::diagnostics::WifiSsid>,
     pub wifi_rssi: Option<i8>,
     pub ip_address: Option<[u8; 4]>,
     pub mac_address: [u8; 6],
@@ -28,6 +29,7 @@ impl MockHardwareInfoDriver {
             uptime_secs: 12345,
             free_heap_bytes: 45000,
             total_heap_bytes: 80000,
+            wifi_ssid: intercom_core::domain::diagnostics::WifiSsid::new("HomeNet-IoT"),
             wifi_rssi: Some(-65),
             ip_address: Some([192, 168, 1, 100]),
             mac_address: [0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc],
@@ -51,6 +53,10 @@ impl HardwareInfoDriver for MockHardwareInfoDriver {
 
     fn total_heap_bytes(&self) -> usize {
         self.total_heap_bytes
+    }
+
+    fn wifi_ssid(&self) -> Option<intercom_core::domain::diagnostics::WifiSsid> {
+        self.wifi_ssid
     }
 
     fn wifi_rssi(&self) -> Option<i8> {
@@ -126,6 +132,7 @@ fn diagnostics_service_snapshot_with_default_ecosystem() {
             state: SystemState::Ready,
             door_locked: true,
             uptime_sec: 12345,
+            wifi_ssid: intercom_core::domain::diagnostics::WifiSsid::new("HomeNet-IoT"),
             wifi_rssi_dbm: Some(-65),
             ip: Some([192, 168, 1, 100]),
             mac: [0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc],
@@ -162,6 +169,7 @@ fn diagnostics_service_snapshot_with_explicit_ecosystem() {
             state: SystemState::Connected,
             door_locked: true,
             uptime_sec: 12345,
+            wifi_ssid: intercom_core::domain::diagnostics::WifiSsid::new("HomeNet-IoT"),
             wifi_rssi_dbm: Some(-65),
             ip: Some([192, 168, 1, 100]),
             mac: [0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc],

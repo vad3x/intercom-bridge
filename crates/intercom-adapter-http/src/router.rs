@@ -70,13 +70,19 @@ pub fn format_status_json(diag: &SystemDiagnostics, out: &mut [u8]) -> Result<us
 
     write!(
         writer,
-        "{{\"state\":\"{}\",\"door_locked\":{},\"uptime_sec\":{},\"wifi_rssi_dbm\":",
+        "{{\"state\":\"{}\",\"door_locked\":{},\"uptime_sec\":{},\"wifi_ssid\":",
         state_to_str(diag.state),
         diag.door_locked,
         diag.uptime_sec
     )
     .map_err(|_| ())?;
 
+    match &diag.wifi_ssid {
+        Some(ssid) => write!(writer, "\"{}\"", ssid.as_str()).map_err(|_| ())?,
+        None => write!(writer, "null").map_err(|_| ())?,
+    }
+
+    write!(writer, ",\"wifi_rssi_dbm\":").map_err(|_| ())?;
     match diag.wifi_rssi_dbm {
         Some(rssi) => write!(writer, "{}", rssi).map_err(|_| ())?,
         None => write!(writer, "null").map_err(|_| ())?,

@@ -41,6 +41,7 @@ esp-println = { version = "0.18", features = ["log-04", "esp32c6"] }
 esp-bootloader-esp-idf = { version = "0.6", features = ["log-04", "esp32c6"] }
 esp-metadata-generated = { version = "0.5", features = ["esp32c6"] }
 rs-matter-embassy = { path = "../../../rs-matter-embassy/rs-matter-embassy", default-features = false, features = ["esp", "trouble", "embassy-net", "log", "rustcrypto", "kv-blob-store-8192", "mld-v1-compat", "nd-learn-from-frames"] }
+esp-wifi-sys-esp32c6 = "0.3"
 
 [dev-dependencies]
 critical-section = { version = "1.2", features = ["std"] }
