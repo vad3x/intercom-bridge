@@ -596,15 +596,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "crc32fast"
-version = "1.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "01a7799fd6b852db0e61728dde9a204c423b44d689dbd432522543614b490e78"
-dependencies = [
- "cfg-if",
-]
-
-[[package]]
 name = "critical-section"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2447,7 +2438,6 @@ dependencies = [
 name = "intercom-adapter-ota"
 version = "0.1.0"
 dependencies = [
- "crc32fast",
  "critical-section",
  "ed25519-dalek",
  "embassy-net",
