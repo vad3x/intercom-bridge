@@ -54,4 +54,12 @@ impl<'a> AccessControllerHandle<'a> {
             warn!("Ring trigger dropped: command queue full");
         }
     }
+
+    /// Dispatches an access command directly to the command queue.
+    pub fn send(&self, cmd: AccessCommand) {
+        match cmd {
+            AccessCommand::Unlock => self.request_unlock(),
+            AccessCommand::Ring => self.trigger_ring(),
+        }
+    }
 }

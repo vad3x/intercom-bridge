@@ -9,7 +9,10 @@
 extern crate std;
 
 pub mod router;
+pub mod server;
+
 pub use router::{format_status_json, parse_route, Route};
+pub use server::{HttpServer, HttpServerConfig};
 
 /// Pre-gzipped single-page dashboard application compiled into the binary.
 pub const DASHBOARD_HTML_GZ: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/dashboard.html.gz"));

@@ -2437,9 +2437,11 @@ dependencies = [
 name = "intercom-adapter-http"
 version = "0.1.0"
 dependencies = [
+ "critical-section",
  "embassy-net",
  "embassy-time",
  "flate2",
+ "futures",
  "intercom-core",
  "log",
  "serde-json-core",
