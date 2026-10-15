@@ -3,13 +3,19 @@
 //! In Hexagonal Architecture, ports define abstract capability contracts
 //! required by the core domain application. Edge adapters implement these traits.
 
+pub mod diagnostics;
+pub mod ecosystem;
 pub mod inbound;
+pub mod ota;
 pub mod reporter;
 pub mod reset;
 
+pub use diagnostics::HardwareInfoDriver;
+pub use ecosystem::EcosystemInfoDriver;
 pub use inbound::{
     AccessCommand, AccessControllerHandle, CommandChannel, CommandReceiver, CommandSender,
 };
+pub use ota::{OtaDriverError, OtaFlashDriver, OtaStream};
 pub use reporter::{IntercomReporter, LockState};
 pub use reset::SystemResetDriver;
 

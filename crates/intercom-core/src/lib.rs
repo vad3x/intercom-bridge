@@ -14,4 +14,6 @@ pub mod ports;
 pub mod service;
 
 pub use app::App;
+pub use domain::SystemDiagnostics;
 pub use events::{SystemState, SystemStateReceiver, SystemStateSender, SystemStateWatch};
+pub use service::DiagnosticsService;
