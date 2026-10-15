@@ -38,7 +38,7 @@
   pub fn get_buffered_logs(buf: &mut [u8]) -> usize;
   ```
 
-- [ ] **Step 1: Write failing unit test for `LogRingBuffer`**
+- [x] **Step 1: Write failing unit test for `LogRingBuffer`**
 
 Add unit tests to `crates/intercom-firmware/src/utils/uptime_logger.rs` covering circular overwrite, chronological read-back, and empty buffer behavior:
 
@@ -68,12 +68,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p intercom-firmware --target x86_64-apple-darwin -- test_log_ring_buffer_fifo_overwrite`
 Expected: FAIL with compilation error: `cannot find type LogRingBuffer`.
 
-- [ ] **Step 3: Implement `LogRingBuffer` and hook into `UptimeLogger`**
+- [x] **Step 3: Implement `LogRingBuffer` and hook into `UptimeLogger`**
 
 Implement `LogRingBuffer<const N: usize>` in `crates/intercom-firmware/src/utils/uptime_logger.rs`:
 
@@ -133,12 +133,12 @@ pub fn get_buffered_logs(buf: &mut [u8]) -> usize {
 
 In `UptimeLogger::log()`, format the clean message (no ANSI codes) and write it to `LOG_BUFFER`.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cargo test -p intercom-firmware --target x86_64-apple-darwin -- test_log_ring_buffer_fifo_overwrite`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/intercom-firmware/src/utils/uptime_logger.rs
@@ -236,27 +236,27 @@ git commit -m "feat(firmware): add in-memory LogRingBuffer to UptimeLogger"
   }
   ```
 
-- [ ] **Step 1: Write failing unit test for `DiagnosticsService`**
+- [x] **Step 1: Write failing unit test for `DiagnosticsService`**
 
 In `crates/intercom-core/tests/diagnostics_service_tests.rs`:
 - Mock `HardwareInfoDriver` returning known constants.
 - Construct `DiagnosticsService` and assert `snapshot()` correctly aggregates domain state (`SystemState::Ready`, `door_locked: true`) and hardware info.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p intercom-core --test diagnostics_service_tests --target x86_64-apple-darwin`
 Expected: FAIL (modules not found).
 
-- [ ] **Step 3: Implement domain, ports, and `DiagnosticsService` in `intercom-core`**
+- [x] **Step 3: Implement domain, ports, and `DiagnosticsService` in `intercom-core`**
 
 Add domain model, ports, and service logic. Expose them from `intercom_core`.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cargo test -p intercom-core --target x86_64-apple-darwin`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/intercom-core/
@@ -284,26 +284,26 @@ git commit -m "feat(core): add SystemDiagnostics domain model, HardwareInfoDrive
   impl intercom_core::ports::ota::OtaFlashDriver for FlashOtaDriver { /* ... */ }
   ```
 
-- [ ] **Step 1: Write unit test with mock `OtaStream` for `FlashOtaDriver`**
+- [x] **Step 1: Write unit test with mock `OtaStream` for `FlashOtaDriver`**
 
 In `crates/intercom-adapter-ota/tests/driver_tests.rs`:
 - Test that `FlashOtaDriver` validates the stream and returns appropriate `OtaDriverError` on bad signature or payload.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p intercom-adapter-ota --test driver_tests --target x86_64-apple-darwin`
 Expected: FAIL
 
-- [ ] **Step 3: Implement `FlashOtaDriver`**
+- [x] **Step 3: Implement `FlashOtaDriver`**
 
 Implement `FlashOtaDriver` in `crates/intercom-adapter-ota/src/driver.rs`, streaming bytes from `OtaStream` into `OtaWriter` and committing state to `OtaBootloader`.
 
-- [ ] **Step 4: Run unit tests to verify**
+- [x] **Step 4: Run unit tests to verify**
 
 Run: `cargo test -p intercom-adapter-ota --target x86_64-apple-darwin`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/intercom-adapter-ota/
@@ -327,7 +327,7 @@ git commit -m "feat(ota): implement OtaFlashDriver port in intercom-adapter-ota"
   pub const DASHBOARD_HTML_GZ: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/dashboard.html.gz"));
   ```
 
-- [ ] **Step 1: Create `crates/intercom-adapter-http/Cargo.toml` (Zero dependency on `intercom-adapter-ota`)**
+- [x] **Step 1: Create `crates/intercom-adapter-http/Cargo.toml` (Zero dependency on `intercom-adapter-ota`)**
 
 ```toml
 [package]
@@ -351,20 +351,20 @@ flate2 = "1.0"
 
 Add `"crates/intercom-adapter-http"` to root workspace `Cargo.toml`.
 
-- [ ] **Step 2: Create `crates/intercom-adapter-http/build.rs`**
+- [x] **Step 2: Create `crates/intercom-adapter-http/build.rs`**
 
 Uses `flate2` to gzip `src/assets/dashboard.html` into `$OUT_DIR/dashboard.html.gz` on `cargo build`.
 
-- [ ] **Step 3: Create `crates/intercom-adapter-http/src/assets/dashboard.html`**
+- [x] **Step 3: Create `crates/intercom-adapter-http/src/assets/dashboard.html`**
 
 Vanilla HTML5/CSS/JS document with **Overview** and **System Logs** tabs.
 Polls `/api/status` when Overview tab is active; polls `/api/logs` when System Logs tab is active.
 
-- [ ] **Step 4: Create `crates/intercom-adapter-http/src/lib.rs` and verify gzip test**
+- [x] **Step 4: Create `crates/intercom-adapter-http/src/lib.rs` and verify gzip test**
 
 Write decompression test ensuring gzipped asset < 5 KiB and contains required elements.
 
-- [ ] **Step 5: Run tests and commit**
+- [x] **Step 5: Run tests and commit**
 
 Run: `cargo test -p intercom-adapter-http --target x86_64-apple-darwin`
 Expected: PASS
@@ -402,27 +402,27 @@ git commit -m "feat(http): scaffold intercom-adapter-http with build-time gzip a
   pub fn format_status_json(diag: &intercom_core::domain::diagnostics::SystemDiagnostics, out: &mut [u8]) -> Result<usize, ()>;
   ```
 
-- [ ] **Step 1: Write unit tests for route parsing and status JSON serialization**
+- [x] **Step 1: Write unit tests for route parsing and status JSON serialization**
 
 In `crates/intercom-adapter-http/tests/router_tests.rs`:
 - Asserts `parse_route` matches all endpoints.
 - Asserts `format_status_json` takes a `SystemDiagnostics` from `intercom-core` and serializes valid JSON into a fixed buffer without heap allocation.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p intercom-adapter-http --test router_tests --target x86_64-apple-darwin`
 Expected: FAIL
 
-- [ ] **Step 3: Implement `router.rs`**
+- [x] **Step 3: Implement `router.rs`**
 
 Implement route parsing and JSON formatter. Notice: **zero telemetry building logic here**. It strictly formats the core `SystemDiagnostics` model into bytes.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cargo test -p intercom-adapter-http --test router_tests --target x86_64-apple-darwin`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/intercom-adapter-http/
@@ -458,7 +458,7 @@ git commit -m "feat(http): add zero-alloc HTTP request router and JSON formatter
   }
   ```
 
-- [ ] **Step 1: Write integration test with mock stream and mock core services**
+- [x] **Step 1: Write integration test with mock stream and mock core services**
 
 In `crates/intercom-adapter-http/tests/server_tests.rs`:
 - Mock `HardwareInfoDriver` and `DiagnosticsService`.
@@ -469,21 +469,21 @@ In `crates/intercom-adapter-http/tests/server_tests.rs`:
 - Test `POST /api/action/ring` -> dispatches to `AccessControllerHandle`.
 - Test `POST /api/v1/ota/flash` -> delegates to `OtaFlashDriver`.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p intercom-adapter-http --test server_tests --target x86_64-apple-darwin`
 Expected: FAIL
 
-- [ ] **Step 3: Implement `HttpServer`**
+- [x] **Step 3: Implement `HttpServer`**
 
 Implement single-connection socket listener on port 8080.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cargo test -p intercom-adapter-http --test server_tests --target x86_64-apple-darwin`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/intercom-adapter-http/
@@ -502,15 +502,15 @@ git commit -m "feat(http): implement async HttpServer with injected DiagnosticsS
 **Interfaces:**
 - Connects hardware HAL to `HardwareInfoDriver`, instantiates `DiagnosticsService`, wires `FlashOtaDriver`, and runs `HttpServer`.
 
-- [ ] **Step 1: Update `crates/intercom-firmware/Cargo.toml`**
+- [x] **Step 1: Update `crates/intercom-firmware/Cargo.toml`**
 
 Add `intercom-adapter-http = { path = "../intercom-adapter-http" }`.
 
-- [ ] **Step 2: Implement `FirmwareHardwareInfo` in `crates/intercom-firmware/src/main.rs`**
+- [x] **Step 2: Implement `FirmwareHardwareInfo` in `crates/intercom-firmware/src/main.rs`**
 
 Implement `HardwareInfoDriver` using `embassy_time::Instant::now()`, `esp_alloc::HEAP`, and `intercom_adapter_ota::bootloader`.
 
-- [ ] **Step 3: Wire into `main.rs`**
+- [x] **Step 3: Wire into `main.rs`**
 
 ```rust
 let hardware_info = FirmwareHardwareInfo;
@@ -528,12 +528,12 @@ http_server.run().await;
 
 Delete obsolete `server.rs` from `intercom-adapter-ota`.
 
-- [ ] **Step 4: Verify embedded release compilation on RISC-V target**
+- [x] **Step 4: Verify embedded release compilation on RISC-V target**
 
 Run: `mise exec -- cargo build -p intercom-firmware --release`
 Expected: Successful compilation, binary fits cleanly in `ota_0`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/intercom-firmware/ crates/intercom-adapter-ota/
@@ -547,21 +547,21 @@ git commit -m "feat(firmware): wire DiagnosticsService, FlashOtaDriver, and Http
 **Files:**
 - Test: All workspace crates
 
-- [ ] **Step 1: Run host unit tests across all workspace crates**
+- [x] **Step 1: Run host unit tests across all workspace crates**
 
 Run: `cargo test -p intercom-core -p intercom-adapter-ota -p intercom-adapter-http --target x86_64-apple-darwin`
 Expected: All tests PASS in < 2 seconds.
 
-- [ ] **Step 2: Run release firmware compilation**
+- [x] **Step 2: Run release firmware compilation**
 
 Run: `mise exec -- cargo build -p intercom-firmware --release`
 Expected: Build succeeds with 0 errors.
 
-- [ ] **Step 3: Verify OTA Python script compatibility**
+- [x] **Step 3: Verify OTA Python script compatibility**
 
 Verify `python3 scripts/ota.py --help` runs and that wire protocol paths (`/api/v1/ota/flash`) remain identical.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add -u
