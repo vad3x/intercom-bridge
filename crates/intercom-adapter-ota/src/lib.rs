@@ -8,8 +8,11 @@
 extern crate alloc;
 
 pub mod bootloader;
+pub mod driver;
 pub mod server;
 pub mod writer;
+
+pub use driver::FlashOtaDriver;
 
 pub use server::{
     find_headers_end, handle_connection_with, HttpParseError, OtaOutcome, OtaServer,
