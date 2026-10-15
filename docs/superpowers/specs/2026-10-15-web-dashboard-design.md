@@ -46,17 +46,21 @@ The codebase is structured into clear hexagonal boundaries:
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Crate Separation:
-1. **`crates/intercom-adapter-ota` (Library)**:
+### Crate Separation (Strict Hexagonal Decoupling):
+1. **`crates/intercom-adapter-ota` (Outbound Port Implementation)**:
    * Retains dual-bank `otadata` state machine, A/B partition logic, rollback protection, streaming sector writer, and Ed25519 signature verification.
-   * Completely decoupled from network transport (no direct HTTP server or socket loop).
-2. **`crates/intercom-adapter-http` (New Edge Adapter)**:
+   * Completely decoupled from network transport (no HTTP server or TCP socket loop).
+   * Implements the `OtaFlashDriver` port trait.
+2. **`crates/intercom-adapter-http` (Inbound/Edge Adapter)**:
    * Binds the TCP socket on port 8080.
+   * **Zero dependency on `intercom-adapter-ota`**.
    * Routes incoming HTTP requests (`/`, `/api/status`, `/api/logs`, `/api/action/*`, `/api/v1/ota/flash`).
-   * Imports and drives `intercom-adapter-ota` for the `/api/v1/ota/flash` route.
+   * When `POST /api/v1/ota/flash` arrives, delegates the TCP byte stream to an injected `&mut impl OtaFlashDriver`.
    * Drives core domain via `AccessControllerHandle` and reads telemetry via `SystemTelemetry` port.
-3. **`crates/intercom-core`**:
-   * Pure domain logic unchanged. Holds inbound driving ports and event lifecycle channels.
+3. **`crates/intercom-firmware` (Composition Root)**:
+   * Wires `intercom-adapter-ota` into `intercom-adapter-http` by injecting the concrete `OtaFlashDriver` into `HttpServer::new(...)`.
+4. **`crates/intercom-core`**:
+   * Pure domain logic and abstract ports (`AccessControllerHandle`, `SystemStateWatch`, `OtaFlashDriver`).
 
 ---
 
@@ -100,6 +104,24 @@ pub trait SystemTelemetry {
     fn build_date(&self) -> &'static str;
 }
 ```
+
+### OTA Flashing Port (`intercom-core::ports::ota`)
+
+Decouples HTTP transport from the underlying flash/bootloader implementation:
+
+```rust
+pub trait OtaFlashDriver {
+    async fn handle_flash_stream<S: OtaStream>(
+        &mut self,
+        stream: &mut S,
+        content_length: usize,
+    ) -> Result<(), OtaFlashError>;
+}
+```
+
+* `intercom-adapter-http` calls `OtaFlashDriver::handle_flash_stream(...)` when `POST /api/v1/ota/flash` is received.
+* `intercom-adapter-ota` implements `OtaFlashDriver` using `OtaWriter` and `OtaBootloader`.
+* Neither adapter depends on the other.
 
 ### JSON Schema (`GET /api/status`):
 
