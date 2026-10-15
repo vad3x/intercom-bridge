@@ -1,10 +1,9 @@
 //! Asynchronous HTTP Web and REST API Server
 //!
-//! Provides a single-connection HTTP server running on Embassy networking,
+//! Provides an Embassy-compatible HTTP server running on `picoserve`,
 //! serving the pre-compressed web dashboard and REST API endpoints for telemetry,
 //! domain actions, and firmware OTA flashing.
 
-use core::fmt::Write;
 use embassy_net::tcp::TcpSocket;
 use embassy_net::Stack;
 use embassy_time::{Duration, Timer};
@@ -14,11 +13,8 @@ use intercom_core::ports::inbound::{AccessCommand, AccessControllerHandle};
 use intercom_core::ports::ota::{OtaFlashDriver, OtaStream};
 use intercom_core::service::DiagnosticsService;
 use log::{info, warn};
+use picoserve::response::IntoResponse;
 
-use crate::router::{
-    format_status_json, parse_route, Route, HTTP_200_JSON_OK, HTTP_400_BAD_REQUEST,
-    HTTP_404_NOT_FOUND,
-};
 use crate::DASHBOARD_HTML_GZ;
 
 // ============================================================================
@@ -51,6 +47,28 @@ impl From<u16> for HttpServerConfig {
     }
 }
 
+/// Shared application state passed to HTTP request handlers.
+pub struct AppState<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver> {
+    pub access_handle: AccessControllerHandle<'a>,
+    pub diagnostics: &'a DiagnosticsService<'a, H, E>,
+    pub ota_driver: &'a core::cell::RefCell<&'a mut O>,
+    pub had_error: &'a core::cell::Cell<bool>,
+    pub log_provider: fn(&mut [u8]) -> usize,
+}
+
+impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver> Clone
+    for AppState<'a, H, E, O>
+{
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver> Copy
+    for AppState<'a, H, E, O>
+{
+}
+
 // ============================================================================
 // Main Public Server Struct & Implementation
 // ============================================================================
@@ -58,7 +76,7 @@ impl From<u16> for HttpServerConfig {
 /// Asynchronous HTTP Server with injected core services.
 ///
 /// Binds a single-connection TCP socket on the configured port (default 8080).
-/// Dispatches incoming requests to the pre-compressed dashboard HTML,
+/// Dispatches incoming requests via `picoserve` to the pre-compressed dashboard HTML,
 /// system diagnostics snapshots, live logs, access controller actions,
 /// and streaming OTA firmware updates.
 pub struct HttpServer<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver> {
@@ -112,140 +130,35 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver>
 
     /// Process a single incoming client connection on an abstract `OtaStream`.
     pub async fn handle_request<S: OtaStream>(&mut self, stream: &mut S) -> Result<(), ()> {
-        let mut read_buf = [0u8; 1024];
-        let mut read_len = 0;
+        let mut http_buffer = [0u8; 2048];
+        let picoserve_config = picoserve::Config::new(picoserve::Timeouts {
+            start_read_request: embassy_time::Duration::from_secs(5),
+            persistent_start_read_request: embassy_time::Duration::from_secs(1),
+            read_request: embassy_time::Duration::from_secs(5),
+            write: embassy_time::Duration::from_secs(5),
+        })
+        .close_connection_after_response();
 
-        let body_offset = loop {
-            let n = stream
-                .read(&mut read_buf[read_len..])
-                .await
-                .map_err(|_| ())?;
-            if n == 0 {
-                let _ = stream.write_all(HTTP_400_BAD_REQUEST).await;
-                let _ = stream.flush().await;
-                return Err(());
-            }
-            read_len += n;
-
-            if let Some(offset) = find_headers_end(&read_buf[..read_len]) {
-                break offset;
-            }
-
-            if read_len == read_buf.len() {
-                let _ = stream.write_all(HTTP_400_BAD_REQUEST).await;
-                let _ = stream.flush().await;
-                return Err(());
-            }
+        let ota_driver_cell = core::cell::RefCell::new(&mut *self.ota_driver);
+        let had_error = core::cell::Cell::new(false);
+        let app_state = AppState {
+            access_handle: self.access_handle,
+            diagnostics: self.diagnostics,
+            ota_driver: &ota_driver_cell,
+            had_error: &had_error,
+            log_provider: self.log_provider,
         };
 
-        let header_bytes = &read_buf[..body_offset];
-        let header_str = core::str::from_utf8(header_bytes).map_err(|_| ())?;
-        let request_line = header_str.lines().next().ok_or(())?;
-        let route = parse_route(request_line);
+        let router = build_router(app_state);
+        let socket = SocketStream::new(stream);
+        let serve_res = picoserve::Server::new(&router, &picoserve_config, &mut http_buffer)
+            .serve(socket)
+            .await;
 
-        match route {
-            Route::Dashboard => {
-                let mut header_buf = [0u8; 256];
-                let mut writer = BufferWriter::new(&mut header_buf);
-                write!(
-                    writer,
-                    "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                    DASHBOARD_HTML_GZ.len()
-                )
-                .map_err(|_| ())?;
-                let written = writer.written();
-
-                stream.write_all(&header_buf[..written]).await?;
-                stream.write_all(DASHBOARD_HTML_GZ).await?;
-                stream.flush().await?;
-                Ok(())
-            }
-            Route::Status => {
-                let diag = self.diagnostics.snapshot();
-                let mut json_buf = [0u8; 1024];
-                let json_len = format_status_json(&diag, &mut json_buf).map_err(|_| ())?;
-
-                let mut header_buf = [0u8; 256];
-                let mut writer = BufferWriter::new(&mut header_buf);
-                write!(
-                    writer,
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                    json_len
-                )
-                .map_err(|_| ())?;
-                let written = writer.written();
-
-                stream.write_all(&header_buf[..written]).await?;
-                stream.write_all(&json_buf[..json_len]).await?;
-                stream.flush().await?;
-                Ok(())
-            }
-            Route::Logs => {
-                let mut log_buf = [0u8; 2048];
-                let log_len = (self.log_provider)(&mut log_buf);
-
-                let mut header_buf = [0u8; 256];
-                let mut writer = BufferWriter::new(&mut header_buf);
-                write!(
-                    writer,
-                    "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                    log_len
-                )
-                .map_err(|_| ())?;
-                let written = writer.written();
-
-                stream.write_all(&header_buf[..written]).await?;
-                stream.write_all(&log_buf[..log_len]).await?;
-                stream.flush().await?;
-                Ok(())
-            }
-            Route::ActionRing => {
-                self.access_handle.send(AccessCommand::Ring);
-                stream.write_all(HTTP_200_JSON_OK).await?;
-                stream.flush().await?;
-                Ok(())
-            }
-            Route::ActionUnlock => {
-                self.access_handle.send(AccessCommand::Unlock);
-                stream.write_all(HTTP_200_JSON_OK).await?;
-                stream.flush().await?;
-                Ok(())
-            }
-            Route::OtaFlash => {
-                let content_len = match parse_content_length(header_str) {
-                    Some(len) => len,
-                    None => {
-                        let _ = stream.write_all(HTTP_400_BAD_REQUEST).await;
-                        let _ = stream.flush().await;
-                        return Err(());
-                    }
-                };
-
-                let prefix = &read_buf[body_offset..read_len];
-                let mut prefixed_stream = PrefixedStream::new(prefix, stream);
-
-                match self
-                    .ota_driver
-                    .handle_flash_stream(&mut prefixed_stream, content_len)
-                    .await
-                {
-                    Ok(()) => {
-                        stream.write_all(HTTP_200_JSON_OK).await?;
-                        stream.flush().await?;
-                        Ok(())
-                    }
-                    Err(_) => {
-                        let _ = stream.write_all(HTTP_400_BAD_REQUEST).await;
-                        let _ = stream.flush().await;
-                        Err(())
-                    }
-                }
-            }
-            Route::NotFound => {
-                stream.write_all(HTTP_404_NOT_FOUND).await?;
-                stream.flush().await?;
-                Ok(())
-            }
+        if serve_res.is_err() || had_error.get() {
+            Err(())
+        } else {
+            Ok(())
         }
     }
 
@@ -256,6 +169,27 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver>
             .expect("HttpServer requires a network stack to run");
         let mut rx_buffer = [0u8; 4096];
         let mut tx_buffer = [0u8; 1024];
+        let mut http_buffer = [0u8; 2048];
+
+        let picoserve_config = picoserve::Config::new(picoserve::Timeouts {
+            start_read_request: embassy_time::Duration::from_secs(5),
+            persistent_start_read_request: embassy_time::Duration::from_secs(1),
+            read_request: embassy_time::Duration::from_secs(5),
+            write: embassy_time::Duration::from_secs(5),
+        })
+        .close_connection_after_response();
+
+        let ota_driver_cell = core::cell::RefCell::new(&mut *self.ota_driver);
+        let had_error = core::cell::Cell::new(false);
+        let app_state = AppState {
+            access_handle: self.access_handle,
+            diagnostics: self.diagnostics,
+            ota_driver: &ota_driver_cell,
+            had_error: &had_error,
+            log_provider: self.log_provider,
+        };
+
+        let router = build_router(app_state);
 
         loop {
             let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
@@ -269,131 +203,259 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver>
             }
 
             info!("HTTP Server: client connection accepted");
-            let mut stream = SocketStream(&mut socket);
-            let _ = self.handle_request(&mut stream).await;
-            socket.close();
+            let _ = picoserve::Server::new(&router, &picoserve_config, &mut http_buffer)
+                .serve(socket)
+                .await;
         }
     }
 }
 
 // ============================================================================
-// Private Helpers & Stream Adapters
+// Private Helpers, Services & Stream Adapters
 // ============================================================================
 
-fn find_headers_end(buffer: &[u8]) -> Option<usize> {
-    if buffer.len() < 2 {
-        return None;
-    }
-    for i in 0..buffer.len() {
-        if i + 4 <= buffer.len() && &buffer[i..i + 4] == b"\r\n\r\n" {
-            return Some(i + 4);
-        }
-        if i + 2 <= buffer.len() && &buffer[i..i + 2] == b"\n\n" {
-            return Some(i + 2);
-        }
-    }
-    None
+fn build_router<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver>(
+    app_state: AppState<'a, H, E, O>,
+) -> picoserve::Router<impl picoserve::routing::PathRouter + 'a> {
+    picoserve::Router::new()
+        .route(
+            "/",
+            picoserve::routing::get(|| async move {
+                picoserve::response::Response::ok(DASHBOARD_HTML_GZ)
+                    .with_content_type("text/html; charset=utf-8")
+                    .with_header("Content-Encoding", "gzip")
+            }),
+        )
+        .route(
+            "/api/status",
+            picoserve::routing::get(
+                |picoserve::extract::State(state): picoserve::extract::State<AppState<'a, H, E, O>>| async move {
+                    let diag = state.diagnostics.snapshot();
+                    let mut json_buf = [0u8; 1024];
+                    let json_len = crate::router::format_status_json(&diag, &mut json_buf).unwrap_or(0);
+                    let json_str = alloc::string::String::from(
+                        core::str::from_utf8(&json_buf[..json_len]).unwrap_or("{}"),
+                    );
+                    picoserve::response::Response::ok(json_str)
+                        .with_content_type("application/json")
+                },
+            ),
+        )
+        .route(
+            "/api/logs",
+            picoserve::routing::get(
+                |picoserve::extract::State(state): picoserve::extract::State<AppState<'a, H, E, O>>| async move {
+                    let mut log_buf = [0u8; 2048];
+                    let log_len = (state.log_provider)(&mut log_buf);
+                    let log_str = alloc::string::String::from(
+                        core::str::from_utf8(&log_buf[..log_len]).unwrap_or(""),
+                    );
+                    picoserve::response::Response::ok(log_str)
+                        .with_content_type("text/plain; charset=utf-8")
+                },
+            ),
+        )
+        .route(
+            "/api/action/ring",
+            picoserve::routing::post(
+                |picoserve::extract::State(state): picoserve::extract::State<AppState<'a, H, E, O>>| async move {
+                    state.access_handle.send(AccessCommand::Ring);
+                    picoserve::response::Response::ok("{\"status\":\"ok\"}")
+                        .with_content_type("application/json")
+                },
+            ),
+        )
+        .route(
+            "/api/action/unlock",
+            picoserve::routing::post(
+                |picoserve::extract::State(state): picoserve::extract::State<AppState<'a, H, E, O>>| async move {
+                    state.access_handle.send(AccessCommand::Unlock);
+                    picoserve::response::Response::ok("{\"status\":\"ok\"}")
+                        .with_content_type("application/json")
+                },
+            ),
+        )
+        .route(
+            "/api/v1/ota/flash",
+            picoserve::routing::post_service(OtaFlashService),
+        )
+        .with_state(app_state)
 }
 
-fn parse_content_length(header_str: &str) -> Option<usize> {
-    for line in header_str.lines() {
-        if let Some((name, val)) = line.split_once(':') {
-            if name.trim().eq_ignore_ascii_case("content-length") {
-                if let Ok(len) = val.trim().parse::<usize>() {
-                    return Some(len);
-                }
+struct OtaFlashService;
+
+impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver>
+    picoserve::routing::RequestHandlerService<AppState<'a, H, E, O>> for OtaFlashService
+{
+    async fn call_request_handler_service<
+        R: picoserve::io::Read,
+        W: picoserve::response::ResponseWriter<Error = R::Error>,
+    >(
+        &self,
+        state: &AppState<'a, H, E, O>,
+        _path_parameters: (),
+        mut request: picoserve::request::Request<'_, R>,
+        response_writer: W,
+    ) -> Result<picoserve::ResponseSent, W::Error> {
+        let content_len = match request
+            .parts
+            .headers()
+            .get("content-length")
+            .and_then(|val| val.as_str().ok()?.parse::<usize>().ok())
+        {
+            Some(len) => len,
+            None => {
+                state.had_error.set(true);
+                return picoserve::response::Response::new(
+                    picoserve::response::StatusCode::BAD_REQUEST,
+                    "{\"error\":\"bad_request\"}",
+                )
+                .with_content_type("application/json")
+                .write_to(request.body_connection.finalize().await?, response_writer)
+                .await;
+            }
+        };
+
+        let reader = request.body_connection.body().reader();
+        let mut stream = EmbeddedIoReader(reader);
+        let flash_res = state
+            .ota_driver
+            .borrow_mut()
+            .handle_flash_stream(&mut stream, content_len)
+            .await;
+
+        match flash_res {
+            Ok(()) => {
+                picoserve::response::Response::ok("{\"status\":\"ok\"}")
+                    .with_content_type("application/json")
+                    .write_to(request.body_connection.finalize().await?, response_writer)
+                    .await
+            }
+            Err(_) => {
+                state.had_error.set(true);
+                picoserve::response::Response::new(
+                    picoserve::response::StatusCode::BAD_REQUEST,
+                    "{\"error\":\"bad_request\"}",
+                )
+                .with_content_type("application/json")
+                .write_to(request.body_connection.finalize().await?, response_writer)
+                .await
             }
         }
     }
-    None
 }
 
-struct BufferWriter<'b> {
-    buf: &'b mut [u8],
-    pos: usize,
-}
+struct EmbeddedIoReader<R>(R);
 
-impl<'b> BufferWriter<'b> {
-    fn new(buf: &'b mut [u8]) -> Self {
-        Self { buf, pos: 0 }
-    }
-
-    fn written(&self) -> usize {
-        self.pos
-    }
-}
-
-impl<'b> Write for BufferWriter<'b> {
-    fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        let bytes = s.as_bytes();
-        let remaining = self.buf.len().saturating_sub(self.pos);
-        if bytes.len() > remaining {
-            return Err(core::fmt::Error);
-        }
-        self.buf[self.pos..self.pos + bytes.len()].copy_from_slice(bytes);
-        self.pos += bytes.len();
-        Ok(())
-    }
-}
-
-struct SocketStream<'s, 'b>(&'s mut TcpSocket<'b>);
-
-impl<'s, 'b> OtaStream for SocketStream<'s, 'b> {
+impl<R: picoserve::io::Read> OtaStream for EmbeddedIoReader<R> {
     async fn read(&mut self, buf: &mut [u8]) -> Result<usize, ()> {
         self.0.read(buf).await.map_err(|_| ())
     }
 
-    async fn write_all(&mut self, mut buf: &[u8]) -> Result<(), ()> {
-        while !buf.is_empty() {
-            let n = self.0.write(buf).await.map_err(|_| ())?;
-            if n == 0 {
-                return Err(());
-            }
-            buf = &buf[n..];
-        }
+    async fn write_all(&mut self, _buf: &[u8]) -> Result<(), ()> {
         Ok(())
     }
 
     async fn flush(&mut self) -> Result<(), ()> {
-        self.0.flush().await.map_err(|_| ())
+        Ok(())
     }
 }
 
-struct PrefixedStream<'s, S: OtaStream> {
-    prefix: &'s [u8],
-    prefix_pos: usize,
-    inner: &'s mut S,
+#[derive(Debug)]
+struct StreamIoError;
+
+impl core::fmt::Display for StreamIoError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "Stream IO Error")
+    }
 }
 
-impl<'s, S: OtaStream> PrefixedStream<'s, S> {
-    fn new(prefix: &'s [u8], inner: &'s mut S) -> Self {
+impl core::error::Error for StreamIoError {}
+
+impl picoserve::io::Error for StreamIoError {
+    fn kind(&self) -> picoserve::io::ErrorKind {
+        picoserve::io::ErrorKind::Other
+    }
+}
+
+struct StreamReadHalf<'a, 's, S: OtaStream>(&'a core::cell::RefCell<&'s mut S>);
+
+impl<'a, 's, S: OtaStream> picoserve::io::ErrorType for StreamReadHalf<'a, 's, S> {
+    type Error = StreamIoError;
+}
+
+impl<'a, 's, S: OtaStream> picoserve::io::Read for StreamReadHalf<'a, 's, S> {
+    async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
+        self.0.borrow_mut().read(buf).await.map_err(|_| StreamIoError)
+    }
+}
+
+struct StreamWriteHalf<'a, 's, S: OtaStream>(&'a core::cell::RefCell<&'s mut S>);
+
+impl<'a, 's, S: OtaStream> picoserve::io::ErrorType for StreamWriteHalf<'a, 's, S> {
+    type Error = StreamIoError;
+}
+
+impl<'a, 's, S: OtaStream> picoserve::io::BaseWrite for StreamWriteHalf<'a, 's, S> {
+    async fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
+        self.0.borrow_mut().write_all(buf).await.map_err(|_| StreamIoError)?;
+        Ok(buf.len())
+    }
+
+    async fn flush(&mut self) -> Result<(), Self::Error> {
+        self.0.borrow_mut().flush().await.map_err(|_| StreamIoError)
+    }
+}
+
+impl<'a, 's, S: OtaStream> picoserve::io::Write for StreamWriteHalf<'a, 's, S> {
+    async fn write_with<F: FnOnce(picoserve::mem::BorrowedCursor<'_>) -> Res, Res>(
+        &mut self,
+        f: F,
+    ) -> Result<Res, Self::Error> {
+        let mut buffer = [0u8; 1024];
+        let mut buffer = picoserve::mem::BorrowedBuffer::new(&mut buffer);
+        let output = f(buffer.unfilled());
+        self.0.borrow_mut().write_all(buffer.filled()).await.map_err(|_| StreamIoError)?;
+        Ok(output)
+    }
+}
+
+struct SocketStream<'s, S: OtaStream> {
+    cell: core::cell::RefCell<&'s mut S>,
+}
+
+impl<'s, S: OtaStream> SocketStream<'s, S> {
+    fn new(stream: &'s mut S) -> Self {
         Self {
-            prefix,
-            prefix_pos: 0,
-            inner,
+            cell: core::cell::RefCell::new(stream),
         }
     }
 }
 
-impl<'s, S: OtaStream> OtaStream for PrefixedStream<'s, S> {
-    async fn read(&mut self, buf: &mut [u8]) -> Result<usize, ()> {
-        if self.prefix_pos < self.prefix.len() {
-            let available = self.prefix.len() - self.prefix_pos;
-            let to_copy = core::cmp::min(available, buf.len());
-            buf[..to_copy]
-                .copy_from_slice(&self.prefix[self.prefix_pos..self.prefix_pos + to_copy]);
-            self.prefix_pos += to_copy;
-            Ok(to_copy)
-        } else {
-            self.inner.read(buf).await
-        }
+impl<'s, S: OtaStream> picoserve::io::Socket<picoserve::EmbassyRuntime> for SocketStream<'s, S> {
+    type Error = StreamIoError;
+    type ReadHalf<'a> = StreamReadHalf<'a, 's, S> where 's: 'a;
+    type WriteHalf<'a> = StreamWriteHalf<'a, 's, S> where 's: 'a;
+
+    fn split(&mut self) -> (Self::ReadHalf<'_>, Self::WriteHalf<'_>) {
+        (StreamReadHalf(&self.cell), StreamWriteHalf(&self.cell))
     }
 
-    async fn write_all(&mut self, buf: &[u8]) -> Result<(), ()> {
-        self.inner.write_all(buf).await
+    async fn abort<Timer: picoserve::Timer<picoserve::EmbassyRuntime>>(
+        self,
+        _timeouts: &picoserve::Timeouts,
+        _timer: &Timer,
+    ) -> Result<(), picoserve::Error<Self::Error>> {
+        let _ = self.cell.borrow_mut().flush().await;
+        Ok(())
     }
 
-    async fn flush(&mut self) -> Result<(), ()> {
-        self.inner.flush().await
+    async fn shutdown<Timer: picoserve::Timer<picoserve::EmbassyRuntime>>(
+        self,
+        _timeouts: &picoserve::Timeouts,
+        _timer: &Timer,
+    ) -> Result<(), picoserve::Error<Self::Error>> {
+        self.cell.borrow_mut().flush().await.map_err(|_| picoserve::Error::Write(StreamIoError))?;
+        Ok(())
     }
 }

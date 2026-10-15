@@ -2,7 +2,6 @@
 //!
 //! Follows the Arrange -> Act -> Assert pattern strictly.
 
-use core::sync::atomic::{AtomicUsize, Ordering};
 use flate2::read::GzDecoder;
 use futures::executor::block_on;
 use intercom_adapter_http::{HttpServer, HttpServerConfig, DASHBOARD_HTML_GZ};
@@ -118,11 +117,10 @@ impl HardwareInfoDriver for MockHardwareInfo {
     }
 }
 
-static FLASH_CALL_COUNT: AtomicUsize = AtomicUsize::new(0);
-
 struct MockOtaFlashDriver {
     should_fail: bool,
     received_payload: Vec<u8>,
+    call_count: usize,
 }
 
 impl MockOtaFlashDriver {
@@ -130,6 +128,7 @@ impl MockOtaFlashDriver {
         Self {
             should_fail,
             received_payload: Vec::new(),
+            call_count: 0,
         }
     }
 }
@@ -140,7 +139,7 @@ impl OtaFlashDriver for MockOtaFlashDriver {
         stream: &mut S,
         content_length: usize,
     ) -> Result<(), OtaDriverError> {
-        FLASH_CALL_COUNT.fetch_add(1, Ordering::SeqCst);
+        self.call_count += 1;
         let mut buf = [0u8; 512];
         let mut total = 0;
         while total < content_length {
@@ -202,7 +201,7 @@ fn test_get_dashboard_returns_gzipped_html() {
         .position(|w| w == b"\r\n\r\n")
         .expect("missing header separator");
     let header_str = core::str::from_utf8(&response[..header_end]).unwrap();
-    assert!(header_str.starts_with("HTTP/1.1 200 OK"));
+    assert!(header_str.starts_with("HTTP/1.1 200"));
     assert!(header_str.contains("Content-Type: text/html; charset=utf-8"));
     assert!(header_str.contains("Content-Encoding: gzip"));
     assert!(header_str.contains(&format!("Content-Length: {}", DASHBOARD_HTML_GZ.len())));
@@ -247,7 +246,7 @@ fn test_get_status_returns_valid_telemetry_json() {
         .position(|w| w == b"\r\n\r\n")
         .expect("missing header separator");
     let header_str = core::str::from_utf8(&response[..header_end]).unwrap();
-    assert!(header_str.starts_with("HTTP/1.1 200 OK"));
+    assert!(header_str.starts_with("HTTP/1.1 200"));
     assert!(header_str.contains("Content-Type: application/json"));
 
     let body_str = core::str::from_utf8(&response[header_end + 4..]).unwrap();
@@ -297,7 +296,7 @@ fn test_get_logs_returns_text_plain_logs() {
         .position(|w| w == b"\r\n\r\n")
         .expect("missing header separator");
     let header_str = core::str::from_utf8(&response[..header_end]).unwrap();
-    assert!(header_str.starts_with("HTTP/1.1 200 OK"));
+    assert!(header_str.starts_with("HTTP/1.1 200"));
     assert!(header_str.contains("Content-Type: text/plain; charset=utf-8"));
 
     let body_str = core::str::from_utf8(&response[header_end + 4..]).unwrap();
@@ -328,7 +327,7 @@ fn test_post_action_ring_dispatches_command() {
 
     // Assert
     assert!(result.is_ok());
-    assert!(stream.written_str().contains("HTTP/1.1 200 OK"));
+    assert!(stream.written_str().contains("HTTP/1.1 200 "));
     assert_eq!(cmd_channel.try_receive(), Ok(AccessCommand::Ring));
 }
 
@@ -356,7 +355,7 @@ fn test_post_action_unlock_dispatches_command() {
 
     // Assert
     assert!(result.is_ok());
-    assert!(stream.written_str().contains("HTTP/1.1 200 OK"));
+    assert!(stream.written_str().contains("HTTP/1.1 200 "));
     assert_eq!(cmd_channel.try_receive(), Ok(AccessCommand::Unlock));
 }
 
@@ -370,7 +369,6 @@ fn test_post_ota_flash_success() {
     state_watch.sender().send(SystemState::Ready);
     let diagnostics = DiagnosticsService::new(&hardware, &state_watch);
     let mut ota_driver = MockOtaFlashDriver::new(false);
-    FLASH_CALL_COUNT.store(0, Ordering::SeqCst);
     let mut server = HttpServer::new_unbound(
         access_handle,
         &diagnostics,
@@ -392,8 +390,8 @@ fn test_post_ota_flash_success() {
 
     // Assert
     assert!(result.is_ok());
-    assert!(stream.written_str().contains("HTTP/1.1 200 OK"));
-    assert_eq!(FLASH_CALL_COUNT.load(Ordering::SeqCst), 1);
+    assert!(stream.written_str().contains("HTTP/1.1 200 "));
+    assert_eq!(ota_driver.call_count, 1);
     assert_eq!(ota_driver.received_payload, payload);
 }
 
@@ -428,7 +426,7 @@ fn test_post_ota_flash_driver_error_returns_400() {
 
     // Assert
     assert!(result.is_err());
-    assert!(stream.written_str().contains("HTTP/1.1 400 Bad Request"));
+    assert!(stream.written_str().contains("HTTP/1.1 400 "));
 }
 
 #[test]
@@ -455,7 +453,7 @@ fn test_post_ota_flash_missing_content_length_returns_400() {
 
     // Assert
     assert!(result.is_err());
-    assert!(stream.written_str().contains("HTTP/1.1 400 Bad Request"));
+    assert!(stream.written_str().contains("HTTP/1.1 400 "));
 }
 
 #[test]
@@ -482,5 +480,5 @@ fn test_get_invalid_route_returns_404_not_found() {
 
     // Assert
     assert!(result.is_ok());
-    assert!(stream.written_str().contains("HTTP/1.1 404 Not Found"));
+    assert!(stream.written_str().contains("HTTP/1.1 404 "));
 }
