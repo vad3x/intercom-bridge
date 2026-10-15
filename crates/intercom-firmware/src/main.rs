@@ -152,6 +152,11 @@ impl SystemResetDriver for FirmwareResetDriver {
 /// Concrete hardware information provider querying runtime heap, bootloader, efuse, and timers.
 struct FirmwareHardwareInfo;
 
+#[cfg(target_arch = "riscv32")]
+extern "C" {
+    fn esp_wifi_sta_get_rssi(rssi: *mut i32) -> i32;
+}
+
 impl HardwareInfoDriver for FirmwareHardwareInfo {
     fn uptime_secs(&self) -> u64 {
         embassy_time::Instant::now().as_secs()
@@ -166,6 +171,13 @@ impl HardwareInfoDriver for FirmwareHardwareInfo {
     }
 
     fn wifi_rssi(&self) -> Option<i8> {
+        #[cfg(target_arch = "riscv32")]
+        {
+            let mut rssi: i32 = 0;
+            if unsafe { esp_wifi_sta_get_rssi(&mut rssi) } == 0 {
+                return Some(rssi as i8);
+            }
+        }
         None
     }
 
