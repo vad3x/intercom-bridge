@@ -73,6 +73,10 @@ impl GpioLedDriver {
         self.signal.signal(IndicatorCommand::On);
     }
 
+    fn strobe(&self) {
+        self.signal.signal(IndicatorCommand::Strobe);
+    }
+
     fn blink(&self, on_ms: u64, off_ms: u64, count: Option<u8>) {
         self.signal.signal(IndicatorCommand::Blink {
             on_ms,
@@ -96,6 +100,17 @@ impl GpioLedDriver {
             IndicatorCommand::On => {
                 self.led_on();
                 None
+            }
+            IndicatorCommand::Strobe => {
+                // Continuous rapid strobe until interrupted by a new command
+                loop {
+                    if let Some(next) = self
+                        .blink_pattern(1, config::UPDATING_STROBE_MS, config::UPDATING_STROBE_MS)
+                        .await
+                    {
+                        return Some(next);
+                    }
+                }
             }
             IndicatorCommand::Blink {
                 on_ms,
@@ -197,6 +212,9 @@ impl GpioLedDriver {
             SystemState::Ready => {
                 self.solid();
             }
+            SystemState::Updating => {
+                self.strobe();
+            }
             SystemState::FactoryReset => {
                 self.blink(config::FACTORY_RESET_ON_MS, config::FACTORY_RESET_OFF_MS, None);
             }
@@ -227,6 +245,8 @@ impl GpioLedDriver {
 enum IndicatorCommand {
     /// Steady on.
     On,
+    /// Rapid strobe blink (OTA update).
+    Strobe,
     /// Blink with given on/off durations (ms).
     ///
     /// - `count: None` — blink continuously until the next command.

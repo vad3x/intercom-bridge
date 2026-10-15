@@ -53,6 +53,9 @@ pub const ERROR_PAUSE_MS: u64 = 700;
 pub const FACTORY_RESET_ON_MS: u64 = 50;
 pub const FACTORY_RESET_OFF_MS: u64 = 50;
 
+/// LED rapid strobe period during OTA update (50ms ON, 50ms OFF = 10 Hz)
+pub const UPDATING_STROBE_MS: u64 = 50;
+
 /// Duration of each half of the ring indication blink cycle (ms)
 pub const RING_BLINK_MS: u64 = 100;
 

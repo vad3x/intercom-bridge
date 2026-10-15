@@ -310,3 +310,24 @@ fn system_state_watch_broadcasts_to_multiple_receivers() {
     assert_eq!(s3, SystemState::Ready);
     assert_eq!(s4, SystemState::Ready);
 }
+
+#[test]
+fn system_state_watch_notifies_updating_transition() {
+    // Arrange
+    let watch = SystemStateWatch::new();
+    let sender = SystemStateSender::new(&watch);
+    let mut receiver = watch.receiver().unwrap();
+
+    // Act
+    sender.send(SystemState::Updating);
+
+    // Assert
+    assert_eq!(receiver.try_get(), Some(SystemState::Updating));
+
+    // Act - via helper method
+    sender.ready();
+    sender.updating();
+
+    // Assert
+    assert_eq!(receiver.try_get(), Some(SystemState::Updating));
+}

@@ -19,6 +19,8 @@ pub enum SystemState {
     Connected,
     /// All endpoints and services fully online and operational
     Ready,
+    /// Firmware OTA update in progress (flashing flash memory)
+    Updating,
     /// Factory reset triggered (erasing persistent credentials, rebooting)
     FactoryReset,
     /// Something went wrong
@@ -72,6 +74,11 @@ impl<'a> SystemStateSender<'a> {
     /// Convenience helper to transition to `SystemState::Ready`.
     pub fn ready(&self) {
         self.send(SystemState::Ready);
+    }
+
+    /// Convenience helper to transition to `SystemState::Updating`.
+    pub fn updating(&self) {
+        self.send(SystemState::Updating);
     }
 
     /// Convenience helper to transition to `SystemState::FactoryReset`.
