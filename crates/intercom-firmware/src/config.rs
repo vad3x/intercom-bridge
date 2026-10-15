@@ -56,6 +56,49 @@ pub const MATTER_KVS_RANGE: Range<u32> =
     MATTER_KVS_OFFSET..MATTER_KVS_OFFSET + MATTER_KVS_SIZE;
 
 // ============================================================================
+// Memory & Logging Configuration
+// ============================================================================
+
+/// Total heap size allocated to the esp-alloc runtime (210 KiB).
+pub const HEAP_SIZE: usize = 210 * 1024;
+
+/// Global in-memory log ring buffer capacity (6 KiB).
+pub const LOG_BUFFER_CAPACITY: usize = 6144;
+
+// ============================================================================
+// HTTP Server & Web Dashboard Configuration
+// ============================================================================
+
+use embassy_time::Duration;
+
+/// TCP port on which the HTTP web dashboard and REST API listen.
+pub const HTTP_PORT: u16 = 8080;
+
+/// Delay on failed OTA transfer (tarpit to prevent brute-force DoS).
+pub const HTTP_TARPIT_DELAY: Duration = Duration::from_secs(5);
+
+/// Timeout for waiting for the first byte of a new request.
+pub const HTTP_START_READ_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Timeout for waiting for the first byte of a persistent keep-alive request.
+pub const HTTP_PERSISTENT_START_READ_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Maximum duration permitted for an entire HTTP request lifecycle (including OTA firmware flash).
+pub const HTTP_READ_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Timeout for writing HTTP responses.
+pub const HTTP_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Socket-level timeout on accepted TCP connection.
+pub const HTTP_SOCKET_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Delay before initiating hardware reboot after OTA commit to allow HTTP response flush.
+pub const HTTP_REBOOT_DELAY: Duration = Duration::from_millis(500);
+
+/// Backoff delay after a socket accept failure before re-listening.
+pub const HTTP_ACCEPT_RETRY_DELAY: Duration = Duration::from_millis(100);
+
+// ============================================================================
 // OTA Firmware Update Security
 // ============================================================================
 

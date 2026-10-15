@@ -10,11 +10,13 @@ extern crate alloc;
 #[cfg(test)]
 extern crate std;
 
+pub mod config;
 pub mod router;
 pub mod server;
 
+pub use config::HttpServerConfig;
 pub use router::{format_status_json, parse_route, Route};
-pub use server::{HttpServer, HttpServerConfig};
+pub use server::HttpServer;
 
 /// Pre-gzipped single-page dashboard application compiled into the binary.
 pub const DASHBOARD_HTML_GZ: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/dashboard.html.gz"));

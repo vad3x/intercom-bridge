@@ -33,8 +33,9 @@ pub fn get_buffered_logs(buf: &mut [u8]) -> usize {
 
 /// Global in-memory log ring buffer storing the latest 6 KiB of log output.
 #[allow(dead_code)]
-pub static LOG_BUFFER: critical_section::Mutex<core::cell::RefCell<LogRingBuffer<6144>>> =
-    critical_section::Mutex::new(core::cell::RefCell::new(LogRingBuffer::new()));
+pub static LOG_BUFFER: critical_section::Mutex<
+    core::cell::RefCell<LogRingBuffer<{ crate::config::LOG_BUFFER_CAPACITY }>>,
+> = critical_section::Mutex::new(core::cell::RefCell::new(LogRingBuffer::new()));
 
 /// Fixed-capacity in-memory byte ring buffer.
 ///

@@ -17,48 +17,15 @@ use intercom_core::service::DiagnosticsService;
 use log::{info, warn};
 use picoserve::response::IntoResponse;
 
+use crate::config::{
+    HttpServerConfig, HTTP_BUFFER_SIZE, JSON_BUFFER_SIZE, LOG_BUFFER_SIZE,
+    STREAM_WRITE_BUFFER_SIZE, TCP_RX_BUFFER_SIZE, TCP_TX_BUFFER_SIZE,
+};
 use crate::DASHBOARD_HTML_GZ;
 
 // ============================================================================
-// Public Configuration & Types
+// Internal State Types
 // ============================================================================
-
-/// Configuration for `HttpServer`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct HttpServerConfig {
-    /// TCP port to listen on (default: 8080).
-    pub port: u16,
-    /// Delay on failed OTA transfer (tarpit to prevent DoS, default: 5s).
-    pub tarpit_delay: Duration,
-}
-
-impl HttpServerConfig {
-    /// Create a new configuration with the specified TCP port.
-    pub const fn new(port: u16) -> Self {
-        Self {
-            port,
-            tarpit_delay: Duration::from_secs(5),
-        }
-    }
-}
-
-impl Default for HttpServerConfig {
-    fn default() -> Self {
-        Self {
-            port: 8080,
-            tarpit_delay: Duration::from_secs(5),
-        }
-    }
-}
-
-impl From<u16> for HttpServerConfig {
-    fn from(port: u16) -> Self {
-        Self {
-            port,
-            tarpit_delay: Duration::from_secs(5),
-        }
-    }
-}
 
 /// Shared application state passed to HTTP request handlers.
 pub(crate) struct AppState<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver> {
@@ -67,6 +34,7 @@ pub(crate) struct AppState<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O:
     pub(crate) ota_driver: &'a core::cell::RefCell<&'a mut O>,
     pub(crate) state_sender: Option<SystemStateSender<'a>>,
     pub(crate) tarpit_delay: Duration,
+    pub(crate) read_request_timeout: Duration,
     pub(crate) had_error: &'a core::cell::Cell<bool>,
     pub(crate) reboot_requested: &'a core::cell::Cell<bool>,
     pub(crate) log_provider: fn(&mut [u8]) -> usize,
@@ -188,12 +156,12 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, R: Sy
 
     /// Process a single incoming client connection on an abstract `OtaStream`.
     pub async fn handle_request<S: OtaStream>(&mut self, stream: &mut S) -> Result<(), ()> {
-        let mut http_buffer = [0u8; 2048];
+        let mut http_buffer = [0u8; HTTP_BUFFER_SIZE];
         let picoserve_config = picoserve::Config::new(picoserve::Timeouts {
-            start_read_request: embassy_time::Duration::from_secs(10),
-            persistent_start_read_request: embassy_time::Duration::from_secs(5),
-            read_request: embassy_time::Duration::from_secs(120),
-            write: embassy_time::Duration::from_secs(10),
+            start_read_request: self.config.start_read_timeout,
+            persistent_start_read_request: self.config.persistent_start_read_timeout,
+            read_request: self.config.read_request_timeout,
+            write: self.config.write_timeout,
         })
         .close_connection_after_response();
 
@@ -206,6 +174,7 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, R: Sy
             ota_driver: &ota_driver_cell,
             state_sender: self.state_sender,
             tarpit_delay: self.config.tarpit_delay,
+            read_request_timeout: self.config.read_request_timeout,
             had_error: &had_error,
             reboot_requested: &reboot_requested,
             log_provider: self.log_provider,
@@ -235,15 +204,15 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, R: Sy
         let stack = self
             .stack
             .expect("HttpServer requires a network stack to run");
-        let mut rx_buffer = [0u8; 4096];
-        let mut tx_buffer = [0u8; 1024];
-        let mut http_buffer = [0u8; 2048];
+        let mut rx_buffer = [0u8; TCP_RX_BUFFER_SIZE];
+        let mut tx_buffer = [0u8; TCP_TX_BUFFER_SIZE];
+        let mut http_buffer = [0u8; HTTP_BUFFER_SIZE];
 
         let picoserve_config = picoserve::Config::new(picoserve::Timeouts {
-            start_read_request: embassy_time::Duration::from_secs(10),
-            persistent_start_read_request: embassy_time::Duration::from_secs(5),
-            read_request: embassy_time::Duration::from_secs(120),
-            write: embassy_time::Duration::from_secs(10),
+            start_read_request: self.config.start_read_timeout,
+            persistent_start_read_request: self.config.persistent_start_read_timeout,
+            read_request: self.config.read_request_timeout,
+            write: self.config.write_timeout,
         })
         .close_connection_after_response();
 
@@ -256,6 +225,7 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, R: Sy
             ota_driver: &ota_driver_cell,
             state_sender: self.state_sender,
             tarpit_delay: self.config.tarpit_delay,
+            read_request_timeout: self.config.read_request_timeout,
             had_error: &had_error,
             reboot_requested: &reboot_requested,
             log_provider: self.log_provider,
@@ -265,12 +235,12 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, R: Sy
 
         loop {
             let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
-            socket.set_timeout(Some(Duration::from_secs(60)));
+            socket.set_timeout(Some(self.config.socket_timeout));
 
             info!("HTTP Server listening on TCP port {}", self.config.port);
             if let Err(e) = socket.accept(self.config.port).await {
                 warn!("HTTP socket accept error: {:?}", e);
-                Timer::after_millis(100).await;
+                Timer::after(self.config.accept_retry_delay).await;
                 continue;
             }
 
@@ -281,8 +251,8 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, R: Sy
                 .await;
 
             if reboot_requested.get() {
-                info!("OTA update committed; rebooting in 500ms...");
-                Timer::after_millis(500).await;
+                info!("OTA update committed; rebooting in {:?}...", self.config.reboot_delay);
+                Timer::after(self.config.reboot_delay).await;
                 if let Some(reset) = self.reset_driver {
                     reset.reboot();
                 }
@@ -312,7 +282,7 @@ fn build_router<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDr
             picoserve::routing::get(
                 |picoserve::extract::State(state): picoserve::extract::State<AppState<'a, H, E, O>>| async move {
                     let diag = state.diagnostics.snapshot();
-                    let mut json_buf = [0u8; 1024];
+                    let mut json_buf = [0u8; JSON_BUFFER_SIZE];
                     let json_str = match crate::router::format_status_json(&diag, &mut json_buf) {
                         Ok(len) => alloc::string::String::from(
                             core::str::from_utf8(&json_buf[..len]).unwrap_or("{}"),
@@ -328,7 +298,7 @@ fn build_router<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDr
             "/api/logs",
             picoserve::routing::get(
                 |picoserve::extract::State(state): picoserve::extract::State<AppState<'a, H, E, O>>| async move {
-                    let mut log_buf = [0u8; 4096];
+                    let mut log_buf = [0u8; LOG_BUFFER_SIZE];
                     let log_len = (state.log_provider)(&mut log_buf);
                     let log_str =
                         alloc::string::String::from_utf8_lossy(&log_buf[..log_len]).into_owned();
@@ -407,7 +377,7 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver>
             .body_connection
             .body()
             .reader()
-            .with_different_timeout(Duration::from_secs(120));
+            .with_different_timeout(state.read_request_timeout);
         let mut stream = EmbeddedIoReader(reader);
         let flash_res = state
             .ota_driver
@@ -508,7 +478,7 @@ impl<'a, 's, S: OtaStream> picoserve::io::Write for StreamWriteHalf<'a, 's, S> {
         &mut self,
         f: F,
     ) -> Result<Res, Self::Error> {
-        let mut buffer = [0u8; 1024];
+        let mut buffer = [0u8; STREAM_WRITE_BUFFER_SIZE];
         let mut buffer = picoserve::mem::BorrowedBuffer::new(&mut buffer);
         let output = f(buffer.unfilled());
         self.0.borrow_mut().write_all(buffer.filled()).await.map_err(|_| StreamIoError)?;

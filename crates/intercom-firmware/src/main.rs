@@ -59,8 +59,6 @@ use intercom_adapter_matter::{
 // Memory configuration
 // ============================================================================
 
-const HEAP_SIZE: usize = 210 * 1024;
-
 const RECLAIMED_RAM: usize =
     memory_range!("DRAM2_UNINIT").end - memory_range!("DRAM2_UNINIT").start;
 
@@ -167,7 +165,7 @@ impl HardwareInfoDriver for FirmwareHardwareInfo {
     }
 
     fn total_heap_bytes(&self) -> usize {
-        HEAP_SIZE
+        config::HEAP_SIZE
     }
 
     fn wifi_rssi(&self) -> Option<i8> {
@@ -251,7 +249,7 @@ async fn main(_spawner: Spawner) {
         version::SW_VER
     );
 
-    heap_allocator!(size: HEAP_SIZE - RECLAIMED_RAM);
+    heap_allocator!(size: config::HEAP_SIZE - RECLAIMED_RAM);
     heap_allocator!(#[ram(reclaimed)] size: RECLAIMED_RAM);
 
     // Initialize ESP-HAL peripherals
@@ -376,6 +374,18 @@ async fn main(_spawner: Spawner) {
             info!("Running firmware slot confirmed valid (rollback watchdog cancelled)");
         }
 
+        let http_config = HttpServerConfig {
+            port: config::HTTP_PORT,
+            tarpit_delay: config::HTTP_TARPIT_DELAY,
+            start_read_timeout: config::HTTP_START_READ_TIMEOUT,
+            persistent_start_read_timeout: config::HTTP_PERSISTENT_START_READ_TIMEOUT,
+            read_request_timeout: config::HTTP_READ_REQUEST_TIMEOUT,
+            write_timeout: config::HTTP_WRITE_TIMEOUT,
+            socket_timeout: config::HTTP_SOCKET_TIMEOUT,
+            reboot_delay: config::HTTP_REBOOT_DELAY,
+            accept_retry_delay: config::HTTP_ACCEPT_RETRY_DELAY,
+        };
+
         let mut http_server = HttpServer::new(
             stack,
             access_handle,
@@ -384,7 +394,7 @@ async fn main(_spawner: Spawner) {
             &FirmwareResetDriver,
             Some(state_sender),
             utils::uptime_logger::get_buffered_logs,
-            HttpServerConfig::default(),
+            http_config,
         );
         http_server.run().await;
     };
