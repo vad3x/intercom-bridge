@@ -14,7 +14,7 @@ use intercom_core::ports::inbound::{AccessCommand, AccessControllerHandle};
 use intercom_core::ports::ota::{OtaFlashDriver, OtaStream};
 use intercom_core::ports::SystemResetDriver;
 use intercom_core::service::DiagnosticsService;
-use log::{info, warn};
+use log::{debug, info, warn};
 use picoserve::response::IntoResponse;
 
 use crate::config::{
@@ -233,18 +233,19 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, R: Sy
 
         let router = build_router(app_state);
 
+        info!("HTTP Server listening on TCP port {}", self.config.port);
+
         loop {
             let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
             socket.set_timeout(Some(self.config.socket_timeout));
 
-            info!("HTTP Server listening on TCP port {}", self.config.port);
             if let Err(e) = socket.accept(self.config.port).await {
                 warn!("HTTP socket accept error: {:?}", e);
                 Timer::after(self.config.accept_retry_delay).await;
                 continue;
             }
 
-            info!("HTTP Server: client connection accepted");
+            debug!("HTTP Server: client connection accepted");
             had_error.set(false);
             let _ = picoserve::Server::new(&router, &picoserve_config, &mut http_buffer)
                 .serve(socket)

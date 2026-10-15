@@ -5,7 +5,7 @@
 //! `ESP_OTA_IMG_VALID`, `ESP_OTA_IMG_INVALID`), CRC-32 integrity, active slot
 //! resolution, and fail-safe rollback logic across `ota_0` and `ota_1` slots.
 
-use log::info;
+use log::{debug, info};
 #[cfg(target_arch = "riscv32")]
 use log::warn;
 
@@ -32,7 +32,7 @@ impl<F: OtaFlashStorage> OtaBootloader<F> {
             .map_err(|_| BootloaderError::Flash)?;
 
         let active = resolve_active_slot(&sector0, &sector1);
-        info!(
+        debug!(
             "OTA Bootloader initialized: active slot={:?}, seq={}, state={:?}",
             active.slot, active.seq, active.state
         );

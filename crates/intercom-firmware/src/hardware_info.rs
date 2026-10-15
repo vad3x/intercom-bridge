@@ -104,10 +104,22 @@ impl HardwareInfoDriver for FirmwareHardwareInfo {
     fn active_slot(&self) -> &'static str {
         #[cfg(target_arch = "riscv32")]
         {
+            static SLOT_CACHE: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+            match SLOT_CACHE.load(core::sync::atomic::Ordering::Relaxed) {
+                1 => return "ota_0",
+                2 => return "ota_1",
+                _ => {}
+            }
             match intercom_adapter_ota::OtaBootloader::load() {
                 Ok(bl) => match bl.get_running_slot() {
-                    intercom_adapter_ota::Slot::Ota0 => "ota_0",
-                    intercom_adapter_ota::Slot::Ota1 => "ota_1",
+                    intercom_adapter_ota::Slot::Ota0 => {
+                        SLOT_CACHE.store(1, core::sync::atomic::Ordering::Relaxed);
+                        "ota_0"
+                    }
+                    intercom_adapter_ota::Slot::Ota1 => {
+                        SLOT_CACHE.store(2, core::sync::atomic::Ordering::Relaxed);
+                        "ota_1"
+                    }
                 },
                 Err(_) => "ota_0",
             }
@@ -121,8 +133,18 @@ impl HardwareInfoDriver for FirmwareHardwareInfo {
     fn is_slot_valid(&self) -> bool {
         #[cfg(target_arch = "riscv32")]
         {
+            static VALID_CACHE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+            if VALID_CACHE.load(core::sync::atomic::Ordering::Relaxed) {
+                return true;
+            }
             match intercom_adapter_ota::OtaBootloader::load() {
-                Ok(bl) => bl.get_active().state == intercom_adapter_ota::OtaState::Valid,
+                Ok(bl) => {
+                    let valid = bl.get_active().state == intercom_adapter_ota::OtaState::Valid;
+                    if valid {
+                        VALID_CACHE.store(true, core::sync::atomic::Ordering::Relaxed);
+                    }
+                    valid
+                }
                 Err(_) => true,
             }
         }
