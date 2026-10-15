@@ -11,5 +11,5 @@ pub mod bootloader;
 
 pub use bootloader::{
     ActiveSlot, BootloaderError, EspOtaSelectEntry, MemOtaFlash, OtaBootloader, OtaFlashStorage,
-    OtaState, Slot,
+    OtaState, Slot, OTA_DATA_ENTRY_SIZE, OTA_DATA_SECTOR_SIZE,
 };

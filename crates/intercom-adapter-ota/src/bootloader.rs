@@ -25,8 +25,8 @@ pub struct OtaBootloader<F = DefaultFlash> {
 impl<F: OtaFlashStorage> OtaBootloader<F> {
     /// Initialize the bootloader by reading `otadata` sectors from flash storage.
     pub fn new(mut flash: F) -> Result<Self, BootloaderError> {
-        let mut sector0 = [0xffu8; OTA_DATA_SECTOR_SIZE];
-        let mut sector1 = [0xffu8; OTA_DATA_SECTOR_SIZE];
+        let mut sector0 = [0xffu8; OTA_DATA_ENTRY_SIZE];
+        let mut sector1 = [0xffu8; OTA_DATA_ENTRY_SIZE];
         flash
             .read_otadata(&mut sector0, &mut sector1)
             .map_err(|_| BootloaderError::Flash)?;
@@ -80,7 +80,7 @@ impl<F: OtaFlashStorage> OtaBootloader<F> {
             1 - self.active.sector_index
         };
 
-        let mut sector = [0xffu8; OTA_DATA_SECTOR_SIZE];
+        let mut sector = [0xffu8; OTA_DATA_ENTRY_SIZE];
         write_ota_entry(&mut sector, seq, OtaState::New);
 
         self.flash
@@ -114,7 +114,7 @@ impl<F: OtaFlashStorage> OtaBootloader<F> {
         let write_sec = self.active.sector_index;
         let seq = if self.active.seq == 0 { 1 } else { self.active.seq };
 
-        let mut sector = [0xffu8; OTA_DATA_SECTOR_SIZE];
+        let mut sector = [0xffu8; OTA_DATA_ENTRY_SIZE];
         write_ota_entry(&mut sector, seq, OtaState::Valid);
 
         self.flash
@@ -215,13 +215,26 @@ pub fn compute_target_slot(active_slot: Slot) -> Slot {
 
 /// Calculate the smallest sequence number strictly greater than `current_seq`
 /// that maps to `target_slot` under the ESP-IDF formula: `(seq - 1) % 2 == slot_idx`.
+///
+/// Employs `wrapping_add` and a loop guard to avoid infinite loops if `current_seq`
+/// is near or at `u32::MAX`.
 pub fn compute_next_seq(current_seq: u32, target_slot: Slot) -> u32 {
     let target_idx = target_slot.index();
-    let mut next_seq = current_seq.saturating_add(1);
-    while (next_seq.saturating_sub(1)) % 2 != target_idx || next_seq == 0 {
-        next_seq = next_seq.saturating_add(1);
+    let mut next_seq = current_seq.wrapping_add(1);
+    let mut attempts = 0;
+    while attempts < 4 && (next_seq == 0 || (next_seq - 1) % 2 != target_idx) {
+        next_seq = next_seq.wrapping_add(1);
+        attempts += 1;
     }
-    next_seq
+    if next_seq == 0 || (next_seq - 1) % 2 != target_idx {
+        if target_idx == 0 {
+            1
+        } else {
+            2
+        }
+    } else {
+        next_seq
+    }
 }
 
 /// Compute the IEEE 802.3 CRC-32 checksum of an OTA sequence number.
@@ -259,18 +272,18 @@ pub fn mark_running_slot_valid() -> Result<(), BootloaderError> {
 pub trait OtaFlashStorage {
     type Error: core::fmt::Debug;
 
-    /// Read both 4096-byte `otadata` sectors.
+    /// Read both 32-byte `otadata` entries from offset 0 of each sector.
     fn read_otadata(
         &mut self,
-        sector0: &mut [u8; OTA_DATA_SECTOR_SIZE],
-        sector1: &mut [u8; OTA_DATA_SECTOR_SIZE],
+        sector0: &mut [u8; OTA_DATA_ENTRY_SIZE],
+        sector1: &mut [u8; OTA_DATA_ENTRY_SIZE],
     ) -> Result<(), Self::Error>;
 
-    /// Erase and rewrite one `otadata` sector (0 or 1).
+    /// Erase and rewrite one `otadata` sector (0 or 1) with an updated 32-byte entry.
     fn write_otadata_sector(
         &mut self,
         sector_index: usize,
-        data: &[u8; OTA_DATA_SECTOR_SIZE],
+        data: &[u8; OTA_DATA_ENTRY_SIZE],
     ) -> Result<(), Self::Error>;
 }
 
@@ -452,23 +465,23 @@ pub enum BootloaderError {
 /// In-memory implementation of `OtaFlashStorage` for host testing.
 #[derive(Debug, Clone)]
 pub struct MemOtaFlash {
-    /// Sector 0 buffer.
-    pub sector0: [u8; OTA_DATA_SECTOR_SIZE],
-    /// Sector 1 buffer.
-    pub sector1: [u8; OTA_DATA_SECTOR_SIZE],
+    /// Sector 0 entry buffer.
+    pub sector0: [u8; OTA_DATA_ENTRY_SIZE],
+    /// Sector 1 entry buffer.
+    pub sector1: [u8; OTA_DATA_ENTRY_SIZE],
 }
 
 impl MemOtaFlash {
-    /// Create new in-memory flash initialized with given sectors.
-    pub fn new(sector0: [u8; OTA_DATA_SECTOR_SIZE], sector1: [u8; OTA_DATA_SECTOR_SIZE]) -> Self {
+    /// Create new in-memory flash initialized with given entry buffers.
+    pub fn new(sector0: [u8; OTA_DATA_ENTRY_SIZE], sector1: [u8; OTA_DATA_ENTRY_SIZE]) -> Self {
         Self { sector0, sector1 }
     }
 
     /// Create blank/unwritten in-memory flash (all 0xFF).
     pub fn blank() -> Self {
         Self {
-            sector0: [0xffu8; OTA_DATA_SECTOR_SIZE],
-            sector1: [0xffu8; OTA_DATA_SECTOR_SIZE],
+            sector0: [0xffu8; OTA_DATA_ENTRY_SIZE],
+            sector1: [0xffu8; OTA_DATA_ENTRY_SIZE],
         }
     }
 }
@@ -478,8 +491,8 @@ impl OtaFlashStorage for MemOtaFlash {
 
     fn read_otadata(
         &mut self,
-        sector0: &mut [u8; OTA_DATA_SECTOR_SIZE],
-        sector1: &mut [u8; OTA_DATA_SECTOR_SIZE],
+        sector0: &mut [u8; OTA_DATA_ENTRY_SIZE],
+        sector1: &mut [u8; OTA_DATA_ENTRY_SIZE],
     ) -> Result<(), Self::Error> {
         sector0.copy_from_slice(&self.sector0);
         sector1.copy_from_slice(&self.sector1);
@@ -489,7 +502,7 @@ impl OtaFlashStorage for MemOtaFlash {
     fn write_otadata_sector(
         &mut self,
         sector_index: usize,
-        data: &[u8; OTA_DATA_SECTOR_SIZE],
+        data: &[u8; OTA_DATA_ENTRY_SIZE],
     ) -> Result<(), Self::Error> {
         match sector_index {
             0 => self.sector0.copy_from_slice(data),
@@ -506,6 +519,9 @@ impl OtaFlashStorage for MemOtaFlash {
 
 /// ESP32 SPI flash sector size (4 KiB).
 pub const OTA_DATA_SECTOR_SIZE: usize = 4096;
+
+/// ESP-IDF `esp_ota_select_entry_t` size at the start of each otadata sector (32 bytes).
+pub const OTA_DATA_ENTRY_SIZE: usize = EspOtaSelectEntry::SIZE;
 
 /// Absolute flash offset of `otadata` partition (from partitions.csv).
 pub const OTA_DATA_OFFSET: u32 = 0x00f000;
@@ -542,15 +558,15 @@ impl OtaFlashStorage for EspOtaFlash {
 
     fn read_otadata(
         &mut self,
-        sector0: &mut [u8; OTA_DATA_SECTOR_SIZE],
-        sector1: &mut [u8; OTA_DATA_SECTOR_SIZE],
+        sector0: &mut [u8; OTA_DATA_ENTRY_SIZE],
+        sector1: &mut [u8; OTA_DATA_ENTRY_SIZE],
     ) -> Result<(), Self::Error> {
-        let mut buf0 = [0u32; OTA_DATA_SECTOR_SIZE / 4];
+        let mut buf0 = [0u32; OTA_DATA_ENTRY_SIZE / 4];
         let ret0 = unsafe {
             esp_hal::rom::spiflash::esp_rom_spiflash_read(
                 OTA_DATA_SECTOR_0_OFFSET,
                 buf0.as_mut_ptr(),
-                OTA_DATA_SECTOR_SIZE as u32,
+                OTA_DATA_ENTRY_SIZE as u32,
             )
         };
         if ret0 != esp_hal::rom::spiflash::ESP_ROM_SPIFLASH_RESULT_OK {
@@ -560,16 +576,16 @@ impl OtaFlashStorage for EspOtaFlash {
             core::ptr::copy_nonoverlapping(
                 buf0.as_ptr() as *const u8,
                 sector0.as_mut_ptr(),
-                OTA_DATA_SECTOR_SIZE,
+                OTA_DATA_ENTRY_SIZE,
             );
         }
 
-        let mut buf1 = [0u32; OTA_DATA_SECTOR_SIZE / 4];
+        let mut buf1 = [0u32; OTA_DATA_ENTRY_SIZE / 4];
         let ret1 = unsafe {
             esp_hal::rom::spiflash::esp_rom_spiflash_read(
                 OTA_DATA_SECTOR_1_OFFSET,
                 buf1.as_mut_ptr(),
-                OTA_DATA_SECTOR_SIZE as u32,
+                OTA_DATA_ENTRY_SIZE as u32,
             )
         };
         if ret1 != esp_hal::rom::spiflash::ESP_ROM_SPIFLASH_RESULT_OK {
@@ -579,7 +595,7 @@ impl OtaFlashStorage for EspOtaFlash {
             core::ptr::copy_nonoverlapping(
                 buf1.as_ptr() as *const u8,
                 sector1.as_mut_ptr(),
-                OTA_DATA_SECTOR_SIZE,
+                OTA_DATA_ENTRY_SIZE,
             );
         }
 
@@ -589,7 +605,7 @@ impl OtaFlashStorage for EspOtaFlash {
     fn write_otadata_sector(
         &mut self,
         sector_index: usize,
-        data: &[u8; OTA_DATA_SECTOR_SIZE],
+        data: &[u8; OTA_DATA_ENTRY_SIZE],
     ) -> Result<(), Self::Error> {
         let (offset, sector_num) = match sector_index {
             0 => (
@@ -615,12 +631,12 @@ impl OtaFlashStorage for EspOtaFlash {
             return Err(EspOtaFlashError::Rom(ret));
         }
 
-        let mut aligned = [0u32; OTA_DATA_SECTOR_SIZE / 4];
+        let mut aligned = [0u32; OTA_DATA_ENTRY_SIZE / 4];
         unsafe {
             core::ptr::copy_nonoverlapping(
                 data.as_ptr(),
                 aligned.as_mut_ptr() as *mut u8,
-                OTA_DATA_SECTOR_SIZE,
+                OTA_DATA_ENTRY_SIZE,
             );
         }
 
@@ -628,7 +644,7 @@ impl OtaFlashStorage for EspOtaFlash {
             esp_hal::rom::spiflash::esp_rom_spiflash_write(
                 offset,
                 aligned.as_ptr(),
-                OTA_DATA_SECTOR_SIZE as u32,
+                OTA_DATA_ENTRY_SIZE as u32,
             )
         };
         if ret != esp_hal::rom::spiflash::ESP_ROM_SPIFLASH_RESULT_OK {
@@ -651,8 +667,8 @@ mod tests {
     #[test]
     fn selects_slot_with_higher_valid_sequence() {
         // Arrange
-        let mut sector0 = [0xffu8; 4096];
-        let mut sector1 = [0xffu8; 4096];
+        let mut sector0 = [0xffu8; OTA_DATA_ENTRY_SIZE];
+        let mut sector1 = [0xffu8; OTA_DATA_ENTRY_SIZE];
         write_ota_entry(&mut sector0, 1, OtaState::Valid);
         write_ota_entry(&mut sector1, 2, OtaState::Valid);
 
@@ -668,8 +684,8 @@ mod tests {
     #[test]
     fn selects_slot_with_higher_valid_sequence_reversed() {
         // Arrange
-        let mut sector0 = [0xffu8; 4096];
-        let mut sector1 = [0xffu8; 4096];
+        let mut sector0 = [0xffu8; OTA_DATA_ENTRY_SIZE];
+        let mut sector1 = [0xffu8; OTA_DATA_ENTRY_SIZE];
         write_ota_entry(&mut sector0, 3, OtaState::Valid);
         write_ota_entry(&mut sector1, 2, OtaState::Valid);
 
@@ -685,8 +701,8 @@ mod tests {
     #[test]
     fn ignores_corrupted_crc() {
         // Arrange
-        let mut sector0 = [0xffu8; 4096];
-        let mut sector1 = [0xffu8; 4096];
+        let mut sector0 = [0xffu8; OTA_DATA_ENTRY_SIZE];
+        let mut sector1 = [0xffu8; OTA_DATA_ENTRY_SIZE];
         write_ota_entry(&mut sector0, 5, OtaState::Valid);
         // Corrupt CRC in sector 0
         sector0[30] ^= 0xff;
@@ -704,8 +720,8 @@ mod tests {
     #[test]
     fn defaults_to_ota0_when_flash_is_blank() {
         // Arrange
-        let sector0 = [0xffu8; 4096];
-        let sector1 = [0xffu8; 4096];
+        let sector0 = [0xffu8; OTA_DATA_ENTRY_SIZE];
+        let sector1 = [0xffu8; OTA_DATA_ENTRY_SIZE];
 
         // Act
         let active = resolve_active_slot(&sector0, &sector1);
@@ -720,8 +736,8 @@ mod tests {
     #[test]
     fn ignores_invalid_and_aborted_states() {
         // Arrange
-        let mut sector0 = [0xffu8; 4096];
-        let mut sector1 = [0xffu8; 4096];
+        let mut sector0 = [0xffu8; OTA_DATA_ENTRY_SIZE];
+        let mut sector1 = [0xffu8; OTA_DATA_ENTRY_SIZE];
         write_ota_entry(&mut sector0, 1, OtaState::Valid);
         write_ota_entry(&mut sector1, 2, OtaState::Invalid);
 
@@ -736,26 +752,49 @@ mod tests {
 
     #[test]
     fn slot_mapping_and_next_sequence_calculation() {
-        // Arrange & Act & Assert
-        // Slot mapping from sequence
-        assert_eq!(Slot::from_seq(0), Slot::Ota0);
-        assert_eq!(Slot::from_seq(1), Slot::Ota0);
-        assert_eq!(Slot::from_seq(2), Slot::Ota1);
-        assert_eq!(Slot::from_seq(3), Slot::Ota0);
-        assert_eq!(Slot::from_seq(4), Slot::Ota1);
+        // Arrange
+        let seqs = [0, 1, 2, 3, 4];
+        let slots = [Slot::Ota0, Slot::Ota1];
 
-        // Target slot toggling
-        assert_eq!(compute_target_slot(Slot::Ota0), Slot::Ota1);
-        assert_eq!(compute_target_slot(Slot::Ota1), Slot::Ota0);
+        // Act
+        let mapped: alloc::vec::Vec<Slot> = seqs.iter().map(|&s| Slot::from_seq(s)).collect();
+        let toggled: alloc::vec::Vec<Slot> = slots.iter().map(|&s| compute_target_slot(s)).collect();
+        let next_ota1_from_0 = compute_next_seq(0, Slot::Ota1);
+        let next_ota0_from_0 = compute_next_seq(0, Slot::Ota0);
+        let next_ota1_from_1 = compute_next_seq(1, Slot::Ota1);
+        let next_ota0_from_2 = compute_next_seq(2, Slot::Ota0);
+        let next_ota1_from_3 = compute_next_seq(3, Slot::Ota1);
+
+        // Assert
+        assert_eq!(mapped, [Slot::Ota0, Slot::Ota0, Slot::Ota1, Slot::Ota0, Slot::Ota1]);
+        assert_eq!(toggled, [Slot::Ota1, Slot::Ota0]);
         assert_eq!(Slot::Ota0.other(), Slot::Ota1);
         assert_eq!(Slot::Ota1.other(), Slot::Ota0);
 
-        // Next sequence computation
-        assert_eq!(compute_next_seq(0, Slot::Ota1), 2);
-        assert_eq!(compute_next_seq(0, Slot::Ota0), 1);
-        assert_eq!(compute_next_seq(1, Slot::Ota1), 2);
-        assert_eq!(compute_next_seq(2, Slot::Ota0), 3);
-        assert_eq!(compute_next_seq(3, Slot::Ota1), 4);
+        assert_eq!(next_ota1_from_0, 2);
+        assert_eq!(next_ota0_from_0, 1);
+        assert_eq!(next_ota1_from_1, 2);
+        assert_eq!(next_ota0_from_2, 3);
+        assert_eq!(next_ota1_from_3, 4);
+    }
+
+    #[test]
+    fn compute_next_seq_handles_u32_max_without_looping() {
+        // Arrange
+        let max_seq = u32::MAX;
+        let near_max = u32::MAX - 1;
+
+        // Act
+        let next_for_ota1_from_max = compute_next_seq(max_seq, Slot::Ota1);
+        let next_for_ota0_from_max = compute_next_seq(max_seq, Slot::Ota0);
+        let next_for_ota0_from_near_max = compute_next_seq(near_max, Slot::Ota0);
+        let next_for_ota1_from_near_max = compute_next_seq(near_max, Slot::Ota1);
+
+        // Assert
+        assert_eq!(next_for_ota1_from_max, 2);
+        assert_eq!(next_for_ota0_from_max, 1);
+        assert_eq!(next_for_ota0_from_near_max, u32::MAX);
+        assert_eq!(next_for_ota1_from_near_max, 2);
     }
 
     #[test]
@@ -808,8 +847,8 @@ mod tests {
     #[test]
     fn mark_valid_is_idempotent() {
         // Arrange
-        let mut sector0 = [0xffu8; 4096];
-        let sector1 = [0xffu8; 4096];
+        let mut sector0 = [0xffu8; OTA_DATA_ENTRY_SIZE];
+        let sector1 = [0xffu8; OTA_DATA_ENTRY_SIZE];
         write_ota_entry(&mut sector0, 1, OtaState::Valid);
         let flash = MemOtaFlash::new(sector0, sector1);
         let mut bootloader = OtaBootloader::new(flash).unwrap();
