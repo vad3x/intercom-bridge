@@ -25,11 +25,28 @@ pub const PRODUCT_NAME: &str = "Intercom Controller";
 pub const DEVICE_NAME: &str = "Smart Intercom";
 
 // ============================================================================
-// Flash persistence (Matter commissioning data partition)
+// Flash persistence & Partition Layout (from partitions.csv)
 // ============================================================================
 
+/// Start offset of the `otadata` partition in flash.
+#[allow(dead_code)]
+pub const OTA_DATA_OFFSET: u32 = 0x00f000;
+/// Size of the `otadata` partition (8 KiB = 2 sectors).
+#[allow(dead_code)]
+pub const OTA_DATA_SIZE: u32 = 0x002000;
+
+/// Start offset of `ota_0` app partition (Slot A).
+#[allow(dead_code)]
+pub const OTA_0_OFFSET: u32 = 0x020000;
+/// Start offset of `ota_1` app partition (Slot B).
+#[allow(dead_code)]
+pub const OTA_1_OFFSET: u32 = 0x370000;
+/// Size of each app partition (3.4 MiB = 896 sectors × 4 KiB).
+#[allow(dead_code)]
+pub const OTA_SLOT_SIZE: u32 = 0x350000;
+
 /// Start offset of the `matter_kvs` partition in flash (from partitions.csv).
-pub const MATTER_KVS_OFFSET: u32 = 0x310000;
+pub const MATTER_KVS_OFFSET: u32 = 0x6c0000;
 
 /// Size of the `matter_kvs` partition (24 KiB = 6 sectors × 4 KiB).
 pub const MATTER_KVS_SIZE: u32 = 0x6000;
