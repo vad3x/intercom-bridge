@@ -4,13 +4,14 @@
 
 **Goal:** Build a zero-cost embedded Web UI Dashboard on port 8080 delivering real-time diagnostics (uptime, Wi-Fi RSSI, heap stats, active partition slot, Matter status, in-memory live logs) and interactive access control debugging (emulating rings, triggering unlocks) without compromising the ESP32-C6's strict memory and real-time constraints.
 
-**Architecture:** Split HTTP serving and low-level dual-bank flash logic into separate crates (`intercom-adapter-http` and `intercom-adapter-ota`) adhering strictly to Hexagonal Architecture. The two adapters have **zero dependency on each other**; they communicate exclusively through the abstract `OtaFlashDriver` and `OtaStream` ports defined in `intercom-core`. The HTTP server reuses the single-connection TCP socket on port 8080, serving a pre-gzipped single-file HTML/CSS/JS frontend embedded in flash, a zero-alloc JSON status endpoint, an in-memory log streaming endpoint, and action routes that drive the core domain via `AccessControllerHandle`.
+**Architecture:** Strictly follow Hexagonal Architecture: **all business and telemetry aggregation logic belongs in `intercom-core`** (`SystemDiagnostics` domain model, `HardwareInfoDriver` outbound port, and `DiagnosticsService` application service). The adapters (`intercom-adapter-http` and `intercom-adapter-ota`) have **zero dependency on each other** and contain zero business logic. `intercom-adapter-http` is a pure transport adapter that serves the pre-gzipped static asset from flash, serializes `SystemDiagnostics` to JSON, streams logs from `UptimeLogger`, and dispatches commands via `AccessControllerHandle` and `OtaFlashDriver`.
 
 **Tech Stack:** Rust (`no_std` on target, `std` for host tests), Embassy (`embassy-net`, `embassy-time`, `embassy-sync`), `flate2` (build-time compression), `critical_section` (safe logging buffer), Ed25519 firmware verification.
 
 ## Global Constraints
 - Target platform: ESP32-C6 (`riscv32imac-unknown-none-elf`), bare-metal `no_std` + `alloc`.
-- Hexagonal Architecture: Adapters never depend on other adapters. `intercom-adapter-http` depends ONLY on `intercom-core`.
+- Domain Purity: All business logic, state aggregation, and telemetry snapshot assembly resides exclusively in `intercom-core`. `intercom-adapter-http` must NOT contain telemetry building logic.
+- Hexagonal Isolation: Adapters never depend on other adapters. `intercom-adapter-http` depends ONLY on `intercom-core`.
 - Host unit tests: Must run on macOS/Linux with `cargo test --target x86_64-apple-darwin` in < 2 seconds.
 - Rendering: Zero runtime HTML templating or string concatenation on chip; client-side rendering with compile-time pre-gzipped asset (`build.rs`).
 - Concurrency: Strict single-connection TCP model on port 8080 with fixed static buffers (`[u8; 4096]` RX, `[u8; 1024]` TX).
@@ -18,7 +19,7 @@
 
 ---
 
-### Task 1: In-Memory Live Log Ring Buffer
+### Task 1: In-Memory Live Log Ring Buffer in `intercom-firmware`
 
 **Files:**
 - Modify: `crates/intercom-firmware/src/utils/uptime_logger.rs`
@@ -146,17 +147,58 @@ git commit -m "feat(firmware): add in-memory LogRingBuffer to UptimeLogger"
 
 ---
 
-### Task 2: Define `OtaFlashDriver` Port in `intercom-core` & Implement in `intercom-adapter-ota`
+### Task 2: Core Diagnostics Service, Domain Model & Ports in `intercom-core`
 
 **Files:**
+- Create: `crates/intercom-core/src/domain/diagnostics.rs`
+- Create: `crates/intercom-core/src/ports/diagnostics.rs`
 - Create: `crates/intercom-core/src/ports/ota.rs`
+- Create: `crates/intercom-core/src/service/diagnostics.rs`
+- Modify: `crates/intercom-core/src/domain/mod.rs`
 - Modify: `crates/intercom-core/src/ports/mod.rs`
-- Modify: `crates/intercom-adapter-ota/src/lib.rs`
-- Create: `crates/intercom-adapter-ota/src/driver.rs`
-- Test: `crates/intercom-adapter-ota/tests/driver_tests.rs`
+- Modify: `crates/intercom-core/src/service/mod.rs`
+- Modify: `crates/intercom-core/src/lib.rs`
+- Test: `crates/intercom-core/tests/diagnostics_service_tests.rs`
 
 **Interfaces:**
-- In `intercom-core::ports::ota`:
+- In `intercom_core::domain::diagnostics`:
+  ```rust
+  #[derive(Debug, Clone, PartialEq, Eq)]
+  pub struct SystemDiagnostics {
+      pub state: crate::events::SystemState,
+      pub door_locked: bool,
+      pub uptime_sec: u64,
+      pub wifi_rssi_dbm: Option<i8>,
+      pub ip: Option<[u8; 4]>,
+      pub mac: [u8; 6],
+      pub active_slot: &'static str,
+      pub slot_valid: bool,
+      pub free_heap_bytes: usize,
+      pub total_heap_bytes: usize,
+      pub matter_commissioned: bool,
+      pub version: &'static str,
+      pub git_commit: &'static str,
+      pub build_date: &'static str,
+  }
+  ```
+- In `intercom_core::ports::diagnostics`:
+  ```rust
+  pub trait HardwareInfoDriver {
+      fn uptime_secs(&self) -> u64;
+      fn free_heap_bytes(&self) -> usize;
+      fn total_heap_bytes(&self) -> usize;
+      fn wifi_rssi(&self) -> Option<i8>;
+      fn ip_address(&self) -> Option<[u8; 4]>;
+      fn mac_address(&self) -> [u8; 6];
+      fn active_slot(&self) -> &'static str;
+      fn is_slot_valid(&self) -> bool;
+      fn is_matter_commissioned(&self) -> bool;
+      fn firmware_version(&self) -> &'static str;
+      fn git_commit(&self) -> &'static str;
+      fn build_date(&self) -> &'static str;
+  }
+  ```
+- In `intercom_core::ports::ota`:
   ```rust
   pub trait OtaStream {
       async fn read(&mut self, buf: &mut [u8]) -> Result<usize, ()>;
@@ -181,7 +223,57 @@ git commit -m "feat(firmware): add in-memory LogRingBuffer to UptimeLogger"
       ) -> Result<(), OtaDriverError>;
   }
   ```
-- In `intercom-adapter-ota`:
+- In `intercom_core::service::diagnostics`:
+  ```rust
+  pub struct DiagnosticsService<'a, H: HardwareInfoDriver> {
+      hardware: &'a H,
+      state_watch: crate::events::SystemStateWatch,
+  }
+
+  impl<'a, H: HardwareInfoDriver> DiagnosticsService<'a, H> {
+      pub fn new(hardware: &'a H, state_watch: crate::events::SystemStateWatch) -> Self;
+      pub fn snapshot(&self) -> SystemDiagnostics;
+  }
+  ```
+
+- [ ] **Step 1: Write failing unit test for `DiagnosticsService`**
+
+In `crates/intercom-core/tests/diagnostics_service_tests.rs`:
+- Mock `HardwareInfoDriver` returning known constants.
+- Construct `DiagnosticsService` and assert `snapshot()` correctly aggregates domain state (`SystemState::Ready`, `door_locked: true`) and hardware info.
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cargo test -p intercom-core --test diagnostics_service_tests --target x86_64-apple-darwin`
+Expected: FAIL (modules not found).
+
+- [ ] **Step 3: Implement domain, ports, and `DiagnosticsService` in `intercom-core`**
+
+Add domain model, ports, and service logic. Expose them from `intercom_core`.
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `cargo test -p intercom-core --target x86_64-apple-darwin`
+Expected: PASS
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add crates/intercom-core/
+git commit -m "feat(core): add SystemDiagnostics domain model, HardwareInfoDriver, OtaFlashDriver, and DiagnosticsService"
+```
+
+---
+
+### Task 3: Implement `OtaFlashDriver` in `intercom-adapter-ota`
+
+**Files:**
+- Create: `crates/intercom-adapter-ota/src/driver.rs`
+- Modify: `crates/intercom-adapter-ota/src/lib.rs`
+- Test: `crates/intercom-adapter-ota/tests/driver_tests.rs`
+
+**Interfaces:**
+- Produces:
   ```rust
   pub struct FlashOtaDriver {
       public_key: [u8; 32],
@@ -189,36 +281,38 @@ git commit -m "feat(firmware): add in-memory LogRingBuffer to UptimeLogger"
   impl FlashOtaDriver {
       pub fn new(public_key: [u8; 32]) -> Self;
   }
-  impl OtaFlashDriver for FlashOtaDriver { /* ... */ }
+  impl intercom_core::ports::ota::OtaFlashDriver for FlashOtaDriver { /* ... */ }
   ```
 
-- [ ] **Step 1: Write failing test in `intercom-core` for `OtaFlashDriver`**
+- [ ] **Step 1: Write unit test with mock `OtaStream` for `FlashOtaDriver`**
 
-Add test in `crates/intercom-core/tests/ota_port_tests.rs` with mock stream verifying `OtaStream` and `OtaFlashDriver` traits compile and behave correctly.
+In `crates/intercom-adapter-ota/tests/driver_tests.rs`:
+- Test that `FlashOtaDriver` validates the stream and returns appropriate `OtaDriverError` on bad signature or payload.
 
-- [ ] **Step 2: Create `crates/intercom-core/src/ports/ota.rs` and re-export in `mod.rs`**
+- [ ] **Step 2: Run test to verify it fails**
 
-Add `pub mod ota; pub use ota::{OtaDriverError, OtaFlashDriver, OtaStream};` to `crates/intercom-core/src/ports/mod.rs`.
+Run: `cargo test -p intercom-adapter-ota --test driver_tests --target x86_64-apple-darwin`
+Expected: FAIL
 
-- [ ] **Step 3: Implement `FlashOtaDriver` in `crates/intercom-adapter-ota/src/driver.rs`**
+- [ ] **Step 3: Implement `FlashOtaDriver`**
 
-Implement `OtaFlashDriver` in `crates/intercom-adapter-ota/src/driver.rs`. It reads incoming chunks from `OtaStream`, feeds `OtaWriter`, verifies Ed25519 signature against `self.public_key`, and commits state into `OtaBootloader`.
+Implement `FlashOtaDriver` in `crates/intercom-adapter-ota/src/driver.rs`, streaming bytes from `OtaStream` into `OtaWriter` and committing state to `OtaBootloader`.
 
-- [ ] **Step 4: Run unit tests to verify implementation**
+- [ ] **Step 4: Run unit tests to verify**
 
-Run: `cargo test -p intercom-core -p intercom-adapter-ota --target x86_64-apple-darwin`
+Run: `cargo test -p intercom-adapter-ota --target x86_64-apple-darwin`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/intercom-core/ crates/intercom-adapter-ota/
-git commit -m "feat(ota): define OtaFlashDriver port in core and implement in adapter-ota"
+git add crates/intercom-adapter-ota/
+git commit -m "feat(ota): implement OtaFlashDriver port in intercom-adapter-ota"
 ```
 
 ---
 
-### Task 3: Scaffold `intercom-adapter-http` with Build-Time Gzip Pipeline
+### Task 4: Scaffold `intercom-adapter-http` with Build-Time Gzip Pipeline
 
 **Files:**
 - Create: `crates/intercom-adapter-http/Cargo.toml`
@@ -255,76 +349,25 @@ flate2 = "1.0"
 flate2 = "1.0"
 ```
 
-Add `"crates/intercom-adapter-http"` to workspace `Cargo.toml`. Notice: **Zero dependency on `intercom-adapter-ota`**.
+Add `"crates/intercom-adapter-http"` to root workspace `Cargo.toml`.
 
 - [ ] **Step 2: Create `crates/intercom-adapter-http/build.rs`**
 
-```rust
-use std::env;
-use std::fs::File;
-use std::io::{Read, Write};
-use std::path::Path;
-use flate2::write::GzEncoder;
-use flate2::Compression;
-
-fn main() {
-    println!("cargo:rerun-if-changed=src/assets/dashboard.html");
-    let out_dir = env::var("OUT_DIR").expect("OUT_DIR not set");
-    let dest_path = Path::new(&out_dir).join("dashboard.html.gz");
-
-    let mut src = File::open("src/assets/dashboard.html")
-        .expect("Failed to open src/assets/dashboard.html");
-    let mut content = Vec::new();
-    src.read_to_end(&mut content).unwrap();
-
-    let dest = File::create(&dest_path).expect("Failed to create dashboard.html.gz");
-    let mut encoder = GzEncoder::new(dest, Compression::best());
-    encoder.write_all(&content).unwrap();
-    encoder.finish().unwrap();
-}
-```
+Uses `flate2` to gzip `src/assets/dashboard.html` into `$OUT_DIR/dashboard.html.gz` on `cargo build`.
 
 - [ ] **Step 3: Create `crates/intercom-adapter-http/src/assets/dashboard.html`**
 
-Create the complete, vanilla HTML5/CSS/JS document with the **Overview** and **System Logs** tabs:
-- Header: Intercom Bridge + Live Status Badge (`#status-badge`)
-- Tab Switcher: `[Overview]` and `[System Logs]`
-- Tab 1 Overview: Action buttons (`#btn-ring`, `#btn-unlock`), Telemetry cards (`#val-uptime`, `#val-rssi`, `#val-slot`, `#val-heap`, `#val-matter`, `#val-version`).
-- Tab 2 System Logs: Full-height `<pre id="logs-pre">`, `[📋 Copy Logs]` button, auto-refresh checkbox.
-- Script: `fetch('/api/status')` every 3s on Overview, `fetch('/api/logs')` every 3s on Logs, pauses on `document.hidden`, handles button clicks via `fetch('/api/action/...')`.
+Vanilla HTML5/CSS/JS document with **Overview** and **System Logs** tabs.
+Polls `/api/status` when Overview tab is active; polls `/api/logs` when System Logs tab is active.
 
-- [ ] **Step 4: Create `crates/intercom-adapter-http/src/lib.rs` and verify gzip decompression in unit test**
+- [ ] **Step 4: Create `crates/intercom-adapter-http/src/lib.rs` and verify gzip test**
 
-```rust
-#![no_std]
-#[cfg(test)]
-extern crate std;
-
-pub const DASHBOARD_HTML_GZ: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/dashboard.html.gz"));
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::io::Read;
-    use flate2::read::GzDecoder;
-
-    #[test]
-    fn test_dashboard_gzip_decompresses_to_valid_html() {
-        let mut decoder = GzDecoder::new(DASHBOARD_HTML_GZ);
-        let mut html = std::string::String::new();
-        decoder.read_to_string(&mut html).expect("Decompression failed");
-        assert!(html.contains("<!DOCTYPE html>"));
-        assert!(html.contains("Intercom Bridge"));
-        assert!(html.contains("btn-ring"));
-        assert!(DASHBOARD_HTML_GZ.len() < 5120, "Gzip asset exceeds 5 KiB limit");
-    }
-}
-```
+Write decompression test ensuring gzipped asset < 5 KiB and contains required elements.
 
 - [ ] **Step 5: Run tests and commit**
 
 Run: `cargo test -p intercom-adapter-http --target x86_64-apple-darwin`
-Expected: PASS (decompression test passes, gzipped asset < 5 KiB).
+Expected: PASS
 
 ```bash
 git add crates/intercom-adapter-http/ Cargo.toml
@@ -333,28 +376,19 @@ git commit -m "feat(http): scaffold intercom-adapter-http with build-time gzip a
 
 ---
 
-### Task 4: Telemetry Port & Zero-Alloc Router Endpoints
+### Task 5: Zero-Alloc Router & Serialization (Pure Transport, No Business Logic)
 
 **Files:**
-- Create: `crates/intercom-adapter-http/src/telemetry.rs`
 - Create: `crates/intercom-adapter-http/src/router.rs`
 - Modify: `crates/intercom-adapter-http/src/lib.rs`
 - Test: `crates/intercom-adapter-http/tests/router_tests.rs`
 
 **Interfaces:**
+- Consumes from `intercom_core`:
+  - `SystemDiagnostics`
+  - `AccessControllerHandle`
 - Produces:
   ```rust
-  pub trait SystemTelemetry {
-      fn uptime_secs(&self) -> u64;
-      fn free_heap_bytes(&self) -> usize;
-      fn total_heap_bytes(&self) -> usize;
-      fn wifi_rssi(&self) -> Option<i8>;
-      fn ip_address(&self) -> Option<[u8; 4]>;
-      fn active_slot(&self) -> &'static str;
-      fn is_slot_valid(&self) -> bool;
-      fn is_matter_commissioned(&self) -> bool;
-      fn firmware_version(&self) -> &'static str;
-  }
   pub enum Route {
       Dashboard,
       Status,
@@ -365,39 +399,23 @@ git commit -m "feat(http): scaffold intercom-adapter-http with build-time gzip a
       NotFound,
   }
   pub fn parse_route(request_line: &str) -> Route;
+  pub fn format_status_json(diag: &intercom_core::domain::diagnostics::SystemDiagnostics, out: &mut [u8]) -> Result<usize, ()>;
   ```
 
 - [ ] **Step 1: Write unit tests for route parsing and status JSON serialization**
 
 In `crates/intercom-adapter-http/tests/router_tests.rs`:
-
-```rust
-use intercom_adapter_http::router::{parse_route, Route};
-
-#[test]
-fn test_parse_routes() {
-    assert_eq!(parse_route("GET / HTTP/1.1"), Route::Dashboard);
-    assert_eq!(parse_route("GET /api/status HTTP/1.1"), Route::Status);
-    assert_eq!(parse_route("GET /api/logs HTTP/1.1"), Route::Logs);
-    assert_eq!(parse_route("POST /api/action/ring HTTP/1.1"), Route::ActionRing);
-    assert_eq!(parse_route("POST /api/action/unlock HTTP/1.1"), Route::ActionUnlock);
-    assert_eq!(parse_route("POST /api/v1/ota/flash HTTP/1.1"), Route::OtaFlash);
-    assert_eq!(parse_route("GET /random HTTP/1.1"), Route::NotFound);
-}
-```
+- Asserts `parse_route` matches all endpoints.
+- Asserts `format_status_json` takes a `SystemDiagnostics` from `intercom-core` and serializes valid JSON into a fixed buffer without heap allocation.
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p intercom-adapter-http --test router_tests --target x86_64-apple-darwin`
-Expected: FAIL (modules not found).
+Expected: FAIL
 
-- [ ] **Step 3: Implement `telemetry.rs` and `router.rs`**
+- [ ] **Step 3: Implement `router.rs`**
 
-Define `SystemTelemetry` trait in `crates/intercom-adapter-http/src/telemetry.rs`.
-Implement `parse_route` and formatting functions in `crates/intercom-adapter-http/src/router.rs`:
-- Status JSON formatter: uses `core::fmt::write` to format into fixed TX buffer without dynamic allocation.
-- Action handlers: invoke `access_handle.send(AccessCommand::Ring)` and `access_handle.send(AccessCommand::Unlock)`.
-- 404 handler: writes standard HTTP 404 response.
+Implement route parsing and JSON formatter. Notice: **zero telemetry building logic here**. It strictly formats the core `SystemDiagnostics` model into bytes.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -408,12 +426,12 @@ Expected: PASS
 
 ```bash
 git add crates/intercom-adapter-http/
-git commit -m "feat(http): add SystemTelemetry trait and zero-alloc HTTP request router"
+git commit -m "feat(http): add zero-alloc HTTP request router and JSON formatter"
 ```
 
 ---
 
-### Task 5: Implement Async `HttpServer` with Injected `OtaFlashDriver`
+### Task 6: Implement Async `HttpServer` with Injected Core Services
 
 **Files:**
 - Create: `crates/intercom-adapter-http/src/server.rs`
@@ -424,50 +442,41 @@ git commit -m "feat(http): add SystemTelemetry trait and zero-alloc HTTP request
 - Consumes:
   - `embassy_net::Stack<'static>`
   - `AccessControllerHandle`
-  - `SystemStateSender<'a>`
-  - `&'a impl SystemTelemetry`
-  - `&'a mut impl OtaFlashDriver` (from `intercom_core::ports::ota`)
+  - `&'a DiagnosticsService<'a, H>` (from `intercom-core`)
+  - `&'a mut O` where `O: OtaFlashDriver` (from `intercom-core::ports::ota`)
 - Produces:
   ```rust
-  pub struct HttpServer<'a, T: SystemTelemetry, O: OtaFlashDriver> { /* ... */ }
-  impl<'a, T: SystemTelemetry, O: OtaFlashDriver> HttpServer<'a, T, O> {
+  pub struct HttpServer<'a, H: HardwareInfoDriver, O: OtaFlashDriver> { /* ... */ }
+  impl<'a, H: HardwareInfoDriver, O: OtaFlashDriver> HttpServer<'a, H, O> {
       pub fn new(
           stack: Stack<'static>,
-          state_sender: SystemStateSender<'a>,
           access_handle: AccessControllerHandle,
-          telemetry: &'a T,
+          diagnostics: &'a DiagnosticsService<'a, H>,
           ota_driver: &'a mut O,
       ) -> Self;
       pub async fn run(&mut self) -> !;
   }
   ```
 
-- [ ] **Step 1: Write integration test with mock stream and `MockOtaFlashDriver`**
+- [ ] **Step 1: Write integration test with mock stream and mock core services**
 
 In `crates/intercom-adapter-http/tests/server_tests.rs`:
-- Create `MockOtaFlashDriver` implementing `OtaFlashDriver`. Notice: **no flash simulation needed**!
-- Mock stream providing `GET /` -> verifies response header contains `Content-Encoding: gzip` and payload matches `DASHBOARD_HTML_GZ`.
-- Mock stream providing `GET /api/status` -> verifies JSON parses into expected fields.
-- Mock stream providing `POST /api/action/ring` -> verifies `AccessControllerHandle` receives `Ring`.
-- Mock stream providing `POST /api/v1/ota/flash` -> verifies `MockOtaFlashDriver::handle_flash_stream` was called.
+- Mock `HardwareInfoDriver` and `DiagnosticsService`.
+- Mock `OtaFlashDriver`.
+- Test `GET /` -> 200 OK + gzipped HTML.
+- Test `GET /api/status` -> 200 OK + JSON matching core snapshot.
+- Test `GET /api/logs` -> 200 OK + log text.
+- Test `POST /api/action/ring` -> dispatches to `AccessControllerHandle`.
+- Test `POST /api/v1/ota/flash` -> delegates to `OtaFlashDriver`.
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p intercom-adapter-http --test server_tests --target x86_64-apple-darwin`
-Expected: FAIL (`HttpServer` not implemented).
+Expected: FAIL
 
-- [ ] **Step 3: Implement `HttpServer` in `crates/intercom-adapter-http/src/server.rs`**
+- [ ] **Step 3: Implement `HttpServer`**
 
-Implement the single-connection socket accept loop in `crates/intercom-adapter-http/src/server.rs`:
-- Reuses fixed `[u8; 4096]` RX buffer and `[u8; 1024]` TX buffer.
-- Dispatches parsed route:
-  - `Route::Dashboard`: Streams `DASHBOARD_HTML_GZ` directly with `Content-Encoding: gzip`.
-  - `Route::Status`: Formats telemetry JSON into TX buffer and writes out.
-  - `Route::Logs`: Calls `get_buffered_logs()` and writes out as `text/plain`.
-  - `Route::ActionRing`: Calls `access_handle.send(AccessCommand::Ring)` and returns `{"status":"ok"}`.
-  - `Route::ActionUnlock`: Calls `access_handle.send(AccessCommand::Unlock)` and returns `{"status":"ok"}`.
-  - `Route::OtaFlash`: Delegates stream to `self.ota_driver.handle_flash_stream(&mut socket, content_length)`.
-- Enforces single-connection concurrency and graceful connection closing.
+Implement single-connection socket listener on port 8080.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -478,12 +487,12 @@ Expected: PASS
 
 ```bash
 git add crates/intercom-adapter-http/
-git commit -m "feat(http): implement async HttpServer with injected OtaFlashDriver"
+git commit -m "feat(http): implement async HttpServer with injected DiagnosticsService and OtaFlashDriver"
 ```
 
 ---
 
-### Task 6: Firmware Composition Root Wiring
+### Task 7: Firmware Composition Root Wiring
 
 **Files:**
 - Modify: `crates/intercom-firmware/Cargo.toml`
@@ -491,31 +500,33 @@ git commit -m "feat(http): implement async HttpServer with injected OtaFlashDriv
 - Delete: Obsolete `crates/intercom-adapter-ota/src/server.rs`
 
 **Interfaces:**
-- Connects `HttpServer` with `AccessControllerHandle`, `UptimeLogger::get_buffered_logs`, concrete `FirmwareTelemetry`, and `FlashOtaDriver`.
+- Connects hardware HAL to `HardwareInfoDriver`, instantiates `DiagnosticsService`, wires `FlashOtaDriver`, and runs `HttpServer`.
 
 - [ ] **Step 1: Update `crates/intercom-firmware/Cargo.toml`**
 
 Add `intercom-adapter-http = { path = "../intercom-adapter-http" }`.
 
-- [ ] **Step 2: Implement `FirmwareTelemetry` in `crates/intercom-firmware/src/main.rs`**
+- [ ] **Step 2: Implement `FirmwareHardwareInfo` in `crates/intercom-firmware/src/main.rs`**
 
-Implement `SystemTelemetry` for `FirmwareTelemetry` using `embassy_time::Instant::now()`, `esp_alloc::HEAP`, and `intercom_adapter_ota::bootloader`.
+Implement `HardwareInfoDriver` using `embassy_time::Instant::now()`, `esp_alloc::HEAP`, and `intercom_adapter_ota::bootloader`.
 
-- [ ] **Step 3: Wire `FlashOtaDriver` and `HttpServer` in `main.rs`**
+- [ ] **Step 3: Wire into `main.rs`**
 
 ```rust
+let hardware_info = FirmwareHardwareInfo;
+let diagnostics_service = DiagnosticsService::new(&hardware_info, state_watch);
 let mut ota_driver = intercom_adapter_ota::FlashOtaDriver::new(config::OTA_PUBLIC_KEY);
+
 let mut http_server = intercom_adapter_http::HttpServer::new(
     stack,
-    state_sender,
     access_handle,
-    &FirmwareTelemetry,
+    &diagnostics_service,
     &mut ota_driver,
 );
 http_server.run().await;
 ```
 
-Remove obsolete `OtaServer` in `crates/intercom-adapter-ota/src/server.rs`.
+Delete obsolete `server.rs` from `intercom-adapter-ota`.
 
 - [ ] **Step 4: Verify embedded release compilation on RISC-V target**
 
@@ -526,12 +537,12 @@ Expected: Successful compilation, binary fits cleanly in `ota_0`.
 
 ```bash
 git add crates/intercom-firmware/ crates/intercom-adapter-ota/
-git commit -m "feat(firmware): wire FlashOtaDriver and HttpServer into main composition root"
+git commit -m "feat(firmware): wire DiagnosticsService, FlashOtaDriver, and HttpServer in main"
 ```
 
 ---
 
-### Task 7: Full Workspace Verification & OTA Compatibility Check
+### Task 8: Full Workspace Verification & OTA Compatibility Check
 
 **Files:**
 - Test: All workspace crates

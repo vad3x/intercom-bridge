@@ -86,24 +86,63 @@ All routes are served over HTTP/1.1 on TCP port 8080:
 
 ## 4. Telemetry Port & Data Contracts
 
-### Telemetry Outbound Port (`intercom-adapter-http`)
+### Core Diagnostics Domain Model & Service (`intercom-core`)
 
-```rust
-pub trait SystemTelemetry {
-    fn uptime_secs(&self) -> u64;
-    fn free_heap_bytes(&self) -> usize;
-    fn total_heap_bytes(&self) -> usize;
-    fn wifi_rssi(&self) -> Option<i8>;
-    fn ip_address(&self) -> Option<[u8; 4]>;
-    fn mac_address(&self) -> [u8; 6];
-    fn active_slot(&self) -> &'static str;
-    fn is_slot_valid(&self) -> bool;
-    fn is_matter_commissioned(&self) -> bool;
-    fn firmware_version(&self) -> &'static str;
-    fn git_commit(&self) -> &'static str;
-    fn build_date(&self) -> &'static str;
-}
-```
+All domain state assembly and telemetry aggregation logic belongs strictly inside `intercom-core`:
+
+1. **Domain Model (`intercom_core::domain::diagnostics::SystemDiagnostics`)**:
+   ```rust
+   pub struct SystemDiagnostics {
+       pub state: SystemState,
+       pub door_locked: bool,
+       pub uptime_sec: u64,
+       pub wifi_rssi_dbm: Option<i8>,
+       pub ip: Option<[u8; 4]>,
+       pub mac: [u8; 6],
+       pub active_slot: &'static str,
+       pub slot_valid: bool,
+       pub free_heap_bytes: usize,
+       pub total_heap_bytes: usize,
+       pub matter_commissioned: bool,
+       pub version: &'static str,
+       pub git_commit: &'static str,
+       pub build_date: &'static str,
+   }
+   ```
+
+2. **Outbound Hardware Port (`intercom_core::ports::HardwareInfoDriver`)**:
+   ```rust
+   pub trait HardwareInfoDriver {
+       fn uptime_secs(&self) -> u64;
+       fn free_heap_bytes(&self) -> usize;
+       fn total_heap_bytes(&self) -> usize;
+       fn wifi_rssi(&self) -> Option<i8>;
+       fn ip_address(&self) -> Option<[u8; 4]>;
+       fn mac_address(&self) -> [u8; 6];
+       fn active_slot(&self) -> &'static str;
+       fn is_slot_valid(&self) -> bool;
+       fn is_matter_commissioned(&self) -> bool;
+       fn firmware_version(&self) -> &'static str;
+       fn git_commit(&self) -> &'static str;
+       fn build_date(&self) -> &'static str;
+   }
+   ```
+
+3. **Application Service (`intercom_core::service::diagnostics::DiagnosticsService`)**:
+   Orchestrates the domain state and hardware driver to produce the snapshot:
+   ```rust
+   pub struct DiagnosticsService<'a, H: HardwareInfoDriver> {
+       hardware: &'a H,
+       state_watch: SystemStateWatch,
+   }
+
+   impl<'a, H: HardwareInfoDriver> DiagnosticsService<'a, H> {
+       pub fn new(hardware: &'a H, state_watch: SystemStateWatch) -> Self;
+       pub fn snapshot(&self) -> SystemDiagnostics;
+   }
+   ```
+
+`intercom-adapter-http` is a pure transport adapter: it calls `diagnostics_service.snapshot()` and serializes the domain struct to JSON. It contains **zero** telemetry assembly or business logic.
 
 ### OTA Flashing Port (`intercom-core::ports::ota`)
 
