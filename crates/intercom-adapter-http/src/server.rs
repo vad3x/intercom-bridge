@@ -190,10 +190,10 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, R: Sy
     pub async fn handle_request<S: OtaStream>(&mut self, stream: &mut S) -> Result<(), ()> {
         let mut http_buffer = [0u8; 2048];
         let picoserve_config = picoserve::Config::new(picoserve::Timeouts {
-            start_read_request: embassy_time::Duration::from_secs(5),
-            persistent_start_read_request: embassy_time::Duration::from_secs(1),
-            read_request: embassy_time::Duration::from_secs(5),
-            write: embassy_time::Duration::from_secs(5),
+            start_read_request: embassy_time::Duration::from_secs(10),
+            persistent_start_read_request: embassy_time::Duration::from_secs(5),
+            read_request: embassy_time::Duration::from_secs(120),
+            write: embassy_time::Duration::from_secs(10),
         })
         .close_connection_after_response();
 
@@ -240,10 +240,10 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, R: Sy
         let mut http_buffer = [0u8; 2048];
 
         let picoserve_config = picoserve::Config::new(picoserve::Timeouts {
-            start_read_request: embassy_time::Duration::from_secs(5),
-            persistent_start_read_request: embassy_time::Duration::from_secs(1),
-            read_request: embassy_time::Duration::from_secs(5),
-            write: embassy_time::Duration::from_secs(5),
+            start_read_request: embassy_time::Duration::from_secs(10),
+            persistent_start_read_request: embassy_time::Duration::from_secs(5),
+            read_request: embassy_time::Duration::from_secs(120),
+            write: embassy_time::Duration::from_secs(10),
         })
         .close_connection_after_response();
 
@@ -403,7 +403,11 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver>
             sender.updating();
         }
 
-        let reader = request.body_connection.body().reader();
+        let reader = request
+            .body_connection
+            .body()
+            .reader()
+            .with_different_timeout(Duration::from_secs(120));
         let mut stream = EmbeddedIoReader(reader);
         let flash_res = state
             .ota_driver
