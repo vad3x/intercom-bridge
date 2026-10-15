@@ -7,12 +7,16 @@ signs firmware binaries with Ed25519 private key, and streams signed updates ove
 
 import argparse
 from dataclasses import dataclass
+import hashlib
 import http.client
 import os
 import re
+import shutil
 import socket
 import struct
+import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -267,6 +271,79 @@ def render_progress(current: int, total: int, start_time: float, bar_width: int 
     return f"\r[{bar}] {percent:3d}% ({curr_mb:.2f}/{total_mb:.2f} MB) [{speed_str}]"
 
 
+def find_espflash() -> Optional[str]:
+    """Locate the espflash binary in PATH or standard cargo bin directory."""
+    candidates = [
+        "espflash",
+        str(Path.home() / ".cargo" / "bin" / "espflash"),
+    ]
+    for c in candidates:
+        found = shutil.which(c)
+        if found:
+            return found
+    return None
+
+
+def convert_elf_to_bin(elf_path: Path) -> Path:
+    """Convert an ELF executable to an ESP32-C6 flat binary image using espflash."""
+    espflash_cmd = find_espflash()
+    if not espflash_cmd:
+        sys.stderr.write(
+            f"Error: '{elf_path.name}' is an ELF executable, but 'espflash' was not found in PATH.\n"
+            f"espflash is required to convert ELF images to ESP32-C6 flat binaries.\n"
+            f"Please install espflash using:\n"
+            f"    cargo install espflash --locked\n"
+            f"Or convert manually to a flat binary first:\n"
+            f"    espflash save-image --chip esp32c6 --flash-size 8mb {elf_path} firmware.bin\n"
+        )
+        sys.exit(1)
+
+    # Deterministic output path in tempdir based on ELF path and mtime
+    mtime = elf_path.stat().st_mtime_ns
+    path_hash = hashlib.sha256(f"{elf_path.resolve()}:{mtime}".encode()).hexdigest()[:12]
+    out_path = Path(tempfile.gettempdir()) / f"ota_converted_{path_hash}.bin"
+
+    cmd = [
+        espflash_cmd,
+        "save-image",
+        "--chip",
+        "esp32c6",
+        "--flash-size",
+        "8mb",
+        str(elf_path),
+        str(out_path),
+    ]
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+    except Exception as e:
+        sys.stderr.write(f"Error executing espflash: {e}\n")
+        sys.exit(1)
+
+    if proc.returncode != 0:
+        sys.stderr.write(
+            f"Error: Failed to convert ELF '{elf_path.name}' using espflash:\n"
+            f"{proc.stderr or proc.stdout}\n"
+            f"You can manually convert using:\n"
+            f"    {' '.join(cmd)}\n"
+        )
+        sys.exit(1)
+
+    if not out_path.exists() or out_path.stat().st_size == 0:
+        sys.stderr.write(f"Error: Converted binary not created at {out_path}\n")
+        sys.exit(1)
+
+    out_size = out_path.stat().st_size
+    print(f"Detected ELF executable. Converting to ESP32-C6 flat binary via espflash ({out_size} bytes)...")
+    return out_path
+
+
 def push_ota_to_device(
     device: DiscoveredDevice,
     header: bytes,
@@ -324,9 +401,38 @@ def push_ota_to_device(
                 print(f"   Device message: {resp_data}")
             return False
 
+    except BrokenPipeError as e:
+        print()
+        # Attempt to read pending HTTP response from device before reporting error
+        server_responded = False
+        if conn:
+            try:
+                resp = conn.getresponse()
+                resp_data = resp.read().decode("utf-8", errors="replace").strip()
+                print(f"❌ Device rejected update: HTTP {resp.status} {resp.reason}")
+                if resp_data:
+                    print(f"   Device message: {resp_data}")
+                server_responded = True
+            except Exception:
+                pass
+        if not server_responded:
+            print(f"❌ Connection broken communicating with {target_desc}: {e}")
+        return False
     except (http.client.HTTPException, OSError) as e:
         print()
-        print(f"❌ Connection error communicating with {target_desc}: {e}")
+        server_responded = False
+        if conn:
+            try:
+                resp = conn.getresponse()
+                resp_data = resp.read().decode("utf-8", errors="replace").strip()
+                print(f"❌ Device rejected update: HTTP {resp.status} {resp.reason}")
+                if resp_data:
+                    print(f"   Device message: {resp_data}")
+                server_responded = True
+            except Exception:
+                pass
+        if not server_responded:
+            print(f"❌ Connection error communicating with {target_desc}: {e}")
         return False
     finally:
         if conn:
@@ -351,7 +457,7 @@ def main() -> None:
   python3 scripts/ota.py --target "Front Door" firmware.bin
 """,
     )
-    parser.add_argument("firmware", help="Path to compiled firmware binary (.bin)")
+    parser.add_argument("firmware", help="Path to compiled firmware binary (.bin or ELF executable)")
     parser.add_argument(
         "--target",
         "-t",
@@ -391,6 +497,13 @@ def main() -> None:
     if not binary_path.exists() or not binary_path.is_file():
         sys.stderr.write(f"Error: Firmware binary not found: {binary_path}\n")
         sys.exit(1)
+
+    # Check if input file is an ELF executable and auto-convert to flat binary if needed
+    with open(binary_path, "rb") as f:
+        magic = f.read(4)
+
+    if magic == b"\x7fELF":
+        binary_path = convert_elf_to_bin(binary_path)
 
     binary_len = binary_path.stat().st_size
     if binary_len == 0:

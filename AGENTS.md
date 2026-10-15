@@ -67,14 +67,20 @@ Always deploy `--release` builds for OTA to ensure optimal performance and code 
 mise exec -- cargo build -p intercom-firmware --release
 ```
 
-The output binary is located at `target/riscv32imac-unknown-none-elf/release/intercom-bridge`.
+The output binary is located at `target/riscv32imac-unknown-none-elf/release/intercom-bridge` (ELF executable).
+
+You can either pass this ELF directly to `scripts/ota.py` (which automatically detects ELF executables and converts them to ESP32-C6 flat binaries via `espflash save-image`), or generate the flat binary image manually beforehand:
+
+```bash
+espflash save-image --chip esp32c6 --flash-size 8mb target/riscv32imac-unknown-none-elf/release/intercom-bridge firmware.bin
+```
 
 #### 3. Push OTA Update via Wi-Fi
 
 Use the multi-device OTA push CLI tool (`scripts/ota.py`):
 
 ```bash
-# Interactive mode: scans mDNS (_intercom-ota._tcp.local.) and prompts for target
+# Interactive mode: scans mDNS (_intercom-ota._tcp.local.) and prompts for target (ELF or flat .bin)
 python3 scripts/ota.py target/riscv32imac-unknown-none-elf/release/intercom-bridge
 
 # Push directly to a specific IP address:
@@ -118,7 +124,7 @@ The ESP32-C6-WROOM-1-N8 has 8 MB flash partitioned into two active app slots:
 - **Zero-brick guarantee:** Updates are streamed exclusively into the *inactive* slot (`ota_0` or `ota_1`). The currently running firmware slot is never touched during the update.
 - **Cryptographic verification before commit:** The entire binary is verified with Ed25519 before updating `otadata`. If the signature, magic bytes, or size are invalid, the flash slot is marked invalid and the running system continues uninterrupted without rebooting.
 - **Bootloader rollback watchdog:** After verification, `otadata` writes `ESP_OTA_IMG_NEW` (`0x0`) with an incremented sequence number and reboots. Upon boot, the 2nd-stage ESP-IDF bootloader sets the state to `ESP_OTA_IMG_PENDING_VERIFY` (`0x1`).
-- **Self-validation:** During initialization in `intercom-firmware/src/main.rs`, the new firmware calls `intercom_adapter_ota::bootloader::mark_running_slot_valid()`, transitioning state to `ESP_OTA_IMG_VALID` (`0x2`).
+- **Self-validation:** Once hardware, Wi-Fi, and the network stack are operational in `intercom-firmware/src/main.rs`, the new firmware calls `intercom_adapter_ota::bootloader::mark_running_slot_valid()`, transitioning state to `ESP_OTA_IMG_VALID` (`0x2`) and cancelling the rollback watchdog.
 - **Automatic fallback:** If the new firmware crashes, encounters a boot loop, or watchdogs before reaching operational stability, the bootloader automatically rolls back to the previous valid slot on the subsequent reset.
 
 
@@ -298,14 +304,14 @@ The OTA architecture provides secure, wireless firmware updates over the local W
 
 - **Streaming Flash Sector Writer (`OtaWriter`)**:
   - Zero heap allocation: buffers streaming bytes into a fixed static 4 KB sector buffer (`[u8; 4096]`).
-  - Computes rolling SHA-512 hash as sectors are erased and programmed directly into the inactive flash slot (`ota_0` or `ota_1`).
+  - Streams bytes into an Ed25519 `StreamVerifier` as sectors are erased and programmed directly into the inactive flash slot (`ota_0` or `ota_1`).
   - Verifies ESP32-C6 executable image magic byte (`0xE9`) and chip ID headers before writing to prevent flashing incompatible binaries.
 
 - **Dual-Bank Fail-Safe Bootloader State Machine (`OtaBootloader`)**:
   - Leverages standard ESP-IDF 2nd-stage bootloader dual-bank partition structure (`otadata`).
   - Increments active sequence counter and commits status `ESP_OTA_IMG_NEW` (`0x00000000`) with CRC-32 checksum protection.
   - On reboot, the bootloader transitions the slot to `ESP_OTA_IMG_PENDING_VERIFY` (`0x00000001`).
-  - Once the main application initializes successfully, `intercom_adapter_ota::bootloader::mark_running_slot_valid()` marks the slot `ESP_OTA_IMG_VALID` (`0x00000002`).
+  - Once hardware, Wi-Fi, and the network stack are operational, `intercom_adapter_ota::bootloader::mark_running_slot_valid()` marks the slot `ESP_OTA_IMG_VALID` (`0x00000002`).
   - If the new image crashes, reboots unexpectedly, or encounters a watchdog panic before reaching operational state, the bootloader automatically rolls back to the previously functioning slot on the subsequent reset.
 
 - **Priority Preemption & Lifecycle Coordination**:

@@ -8,7 +8,6 @@
 use crate::bootloader::Slot;
 use core::fmt;
 use ed25519_dalek::{Signature, StreamVerifier, VerifyingKey};
-use sha2::{Digest, Sha512};
 
 // ============================================================================
 // Public Constants
@@ -62,7 +61,6 @@ pub struct OtaWriter<F = DefaultTargetFlash> {
     sector_buf_len: usize,
     sector_buf: SectorBuffer,
     stream_verifier: Option<StreamVerifier>,
-    rolling_hasher: Sha512,
     check_esp_magic: bool,
     esp_magic_checked: bool,
     magic_prefix: [u8; 14],
@@ -85,7 +83,6 @@ impl<F: OtaTargetFlash> OtaWriter<F> {
             sector_buf_len: 0,
             sector_buf: SectorBuffer([0xffu8; SECTOR_SIZE]),
             stream_verifier: None,
-            rolling_hasher: Sha512::new(),
             check_esp_magic: true,
             esp_magic_checked: false,
             magic_prefix: [0u8; 14],
@@ -137,11 +134,10 @@ impl<F: OtaTargetFlash> OtaWriter<F> {
             self.accumulate_and_check_esp_prefix(chunk)?;
         }
 
-        // 4. Update signature stream verifier and rolling SHA-512
+        // 4. Update signature stream verifier
         if let Some(ref mut verifier) = self.stream_verifier {
             verifier.update(chunk);
         }
-        self.rolling_hasher.update(chunk);
         self.received_image_bytes += chunk.len();
 
         // 5. Buffer bytes into 4 KiB sectors and flash complete sectors
@@ -219,14 +215,6 @@ impl<F: OtaTargetFlash> OtaWriter<F> {
     /// Returns the total bytes flushed to flash so far.
     pub fn flashed_bytes(&self) -> usize {
         self.flashed_bytes
-    }
-
-    /// Compute the current rolling SHA-512 digest of image bytes received so far.
-    pub fn rolling_sha512(&self) -> [u8; 64] {
-        let digest = self.rolling_hasher.clone().finalize();
-        let mut out = [0u8; 64];
-        out.copy_from_slice(&digest);
-        out
     }
 
     // ------------------------------------------------------------------------

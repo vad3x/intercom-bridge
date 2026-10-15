@@ -51,6 +51,11 @@ impl<'a> SystemStateSender<'a> {
         Self(watch)
     }
 
+    /// Query the current system lifecycle state, if available.
+    pub fn current_state(&self) -> Option<SystemState> {
+        self.0.try_get()
+    }
+
     /// Send a new system lifecycle state.
     pub fn send(&self, state: SystemState) {
         self.0.sender().send(state);

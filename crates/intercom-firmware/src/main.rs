@@ -171,11 +171,6 @@ async fn main(_spawner: Spawner) {
 
     info!("Hardware initialized");
 
-    // Confirm running slot validity to cancel any pending bootloader rollback
-    if let Err(e) = intercom_adapter_ota::bootloader::mark_running_slot_valid() {
-        warn!("Failed to mark running slot valid: {:?}", e);
-    }
-
     // ========================================================================
     // Channels and synchronization primitives
     // ========================================================================
@@ -270,6 +265,16 @@ async fn main(_spawner: Spawner) {
     let led_future = indicator.run(state_receiver);
     let ota_future = async {
         let stack = rs_matter_embassy::enet::wait_global_stack().await;
+
+        // Mark the running slot valid now that hardware, Wi-Fi, and network stack are operational.
+        // If an OTA update failed to boot or crashes before reaching this point, the ESP-IDF
+        // 2nd-stage bootloader will automatically roll back to the previously functioning slot.
+        if let Err(e) = intercom_adapter_ota::bootloader::mark_running_slot_valid() {
+            warn!("Failed to mark running slot valid: {:?}", e);
+        } else {
+            info!("Running firmware slot confirmed valid (rollback watchdog cancelled)");
+        }
+
         let ota_server = intercom_adapter_ota::OtaServer::new(
             stack,
             state_sender,

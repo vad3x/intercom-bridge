@@ -398,7 +398,12 @@ where
         target_slot, next_seq, expected_len
     );
 
-    // 4. Signal Updating lifecycle state
+    // 4. Remember initial lifecycle state and signal Updating
+    let initial_state = state_sender.current_state().unwrap_or(SystemState::Ready);
+    let revert_state = match initial_state {
+        SystemState::Updating | SystemState::FactoryReset => SystemState::Ready,
+        state => state,
+    };
     state_sender.updating();
 
     // 5. Initialize OtaWriter
@@ -412,7 +417,7 @@ where
         if let Err(e) = writer.write_chunk(initial_body) {
             let _ = stream.write_all(HTTP_400_BAD_REQUEST).await;
             let _ = stream.flush().await;
-            state_sender.send(SystemState::Ready);
+            state_sender.send(revert_state);
             return Err(OtaServerError::Writer(e));
         }
         total_body_received += initial_body.len();
@@ -428,14 +433,14 @@ where
             Ok(0) => {
                 let _ = stream.write_all(HTTP_400_BAD_REQUEST).await;
                 let _ = stream.flush().await;
-                state_sender.send(SystemState::Ready);
+                state_sender.send(revert_state);
                 return Err(OtaServerError::TruncatedBody);
             }
             Ok(n) => n,
             Err(_) => {
                 let _ = stream.write_all(HTTP_400_BAD_REQUEST).await;
                 let _ = stream.flush().await;
-                state_sender.send(SystemState::Ready);
+                state_sender.send(revert_state);
                 return Err(OtaServerError::Stream);
             }
         };
@@ -443,7 +448,7 @@ where
         if let Err(e) = writer.write_chunk(&chunk_buf[..n]) {
             let _ = stream.write_all(HTTP_400_BAD_REQUEST).await;
             let _ = stream.flush().await;
-            state_sender.send(SystemState::Ready);
+            state_sender.send(revert_state);
             return Err(OtaServerError::Writer(e));
         }
         total_body_received += n;
@@ -454,7 +459,7 @@ where
         warn!("OTA signature or format validation failed: {:?}", e);
         let _ = stream.write_all(HTTP_400_BAD_REQUEST).await;
         let _ = stream.flush().await;
-        state_sender.send(SystemState::Ready);
+        state_sender.send(revert_state);
         return Err(OtaServerError::Writer(e));
     }
 
@@ -463,7 +468,7 @@ where
         warn!("OTA bootloader commit failed: {:?}", e);
         let _ = stream.write_all(HTTP_400_BAD_REQUEST).await;
         let _ = stream.flush().await;
-        state_sender.send(SystemState::Ready);
+        state_sender.send(revert_state);
         return Err(OtaServerError::Bootloader(e));
     }
 
@@ -972,5 +977,38 @@ mod tests {
         // Assert 3
         assert_eq!(config3.port, 8080);
         assert_eq!(config3.public_key, key);
+    }
+
+    #[test]
+    fn ota_failure_reverts_to_prior_system_state() {
+        // Arrange
+        let (pubkey, privkey) = generate_test_keys();
+        let image = build_test_esp_binary(4096);
+        let mut wire_payload = build_signed_wire_payload(&image, &privkey);
+        // Tamper with signature to force verification failure
+        wire_payload[8] ^= 0xff;
+        let request_bytes = build_http_request(&wire_payload);
+
+        let mut stream = MockStream::new(request_bytes);
+        let mut bootloader = OtaBootloader::new(MemOtaFlash::blank()).unwrap();
+        let target_flash = MemTargetFlash::new();
+        let watch = SystemStateWatch::new();
+        let state_sender = SystemStateSender::new(&watch);
+        // Device was in Connected state before OTA started
+        state_sender.connected();
+
+        // Act
+        let outcome = futures::executor::block_on(handle_connection_with(
+            &mut stream,
+            &mut bootloader,
+            target_flash,
+            pubkey,
+            &state_sender,
+            true,
+        ));
+
+        // Assert
+        assert!(outcome.is_err());
+        assert_eq!(state_sender.current_state(), Some(SystemState::Connected));
     }
 }

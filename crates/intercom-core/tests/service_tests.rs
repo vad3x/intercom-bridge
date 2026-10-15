@@ -331,3 +331,16 @@ fn system_state_watch_notifies_updating_transition() {
     // Assert
     assert_eq!(receiver.try_get(), Some(SystemState::Updating));
 }
+
+#[test]
+fn system_state_sender_queries_current_state() {
+    // Arrange
+    let watch = SystemStateWatch::new();
+    let sender = SystemStateSender::new(&watch);
+
+    // Act
+    sender.connected();
+
+    // Assert
+    assert_eq!(sender.current_state(), Some(SystemState::Connected));
+}
