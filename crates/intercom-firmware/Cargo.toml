@@ -17,6 +17,7 @@ dummy-persist = []
 intercom-core = { path = "../intercom-core" }
 intercom-adapter-gpio = { path = "../intercom-adapter-gpio" }
 intercom-adapter-matter = { path = "../intercom-adapter-matter" }
+intercom-adapter-ota = { path = "../intercom-adapter-ota" }
 
 log = "0.4"
 embassy-executor = "0.10"

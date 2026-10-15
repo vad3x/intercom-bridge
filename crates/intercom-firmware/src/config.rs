@@ -56,6 +56,17 @@ pub const MATTER_KVS_RANGE: Range<u32> =
     MATTER_KVS_OFFSET..MATTER_KVS_OFFSET + MATTER_KVS_SIZE;
 
 // ============================================================================
+// OTA Firmware Update Security
+// ============================================================================
+
+/// Ed25519 public key used to verify incoming OTA firmware images.
+pub const OTA_PUBLIC_KEY: [u8; 32] = [
+    0xc5, 0xcc, 0x7f, 0x68, 0xac, 0xce, 0x5d, 0xa4, 0x0c, 0x92, 0xa9, 0xf9,
+    0x09, 0xaf, 0xaa, 0xcf, 0xb6, 0x42, 0xa3, 0x62, 0xf4, 0xae, 0xc0, 0x09,
+    0xfc, 0xb8, 0x40, 0x16, 0x39, 0x05, 0xc9, 0xa8,
+];
+
+// ============================================================================
 // Private helpers
 // ============================================================================
 

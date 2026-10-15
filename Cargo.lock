@@ -2490,6 +2490,7 @@ dependencies = [
  "esp-rtos",
  "intercom-adapter-gpio",
  "intercom-adapter-matter",
+ "intercom-adapter-ota",
  "intercom-core",
  "log",
  "portable-atomic",
