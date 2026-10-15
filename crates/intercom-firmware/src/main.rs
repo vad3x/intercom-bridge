@@ -215,7 +215,7 @@ async fn main(_spawner: Spawner) {
     let app_future = app.run(state_sender, &command_receiver, access_handle);
     let matter_future = pin!(matter.run());
     let led_future = indicator.run(state_receiver);
-    let ota_future = async {
+    let http_future = async {
         let stack = rs_matter_embassy::enet::wait_global_stack().await;
 
         // Mark the running slot valid now that hardware, Wi-Fi, and network stack are operational.
@@ -255,5 +255,5 @@ async fn main(_spawner: Spawner) {
     info!("Matter Controller Running");
 
     // All run forever; join4 waits for all
-    embassy_futures::join::join4(app_future, matter_future, led_future, ota_future).await;
+    embassy_futures::join::join4(app_future, matter_future, led_future, http_future).await;
 }
