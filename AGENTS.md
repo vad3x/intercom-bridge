@@ -35,13 +35,15 @@ mise exec -- cargo build -p intercom-firmware
 mise exec -- cargo build -p intercom-firmware --release
 
 # Build + flash + monitor (via cargo runner in .cargo/config.toml)
+# Note: Runner automatically passes `--partition-table partitions.csv --erase-parts otadata`
+# to guarantee that newly flashed code in `ota_0` boots cleanly without A/B slot confusion.
 mise exec -- cargo run
 
-# Flash directly to specific port
-espflash flash target/riscv32imac-unknown-none-elf/debug/intercom-bridge --port /dev/cu.usbmodem14201
+# Flash directly to specific port via USB (erases otadata so ota_0 boots without A/B confusion)
+espflash flash target/riscv32imac-unknown-none-elf/debug/intercom-bridge --port /dev/cu.usbmodem14201 --partition-table partitions.csv --erase-parts otadata
 ```
 
-The `.cargo/config.toml` configures the RISC-V target (`riscv32imac-unknown-none-elf`), `build-std`, and the `espflash` runner. USB ports are typically `/dev/cu.usbmodem*` (native ESP32-C6 USB) or `/dev/cu.usbserial*` (UART bridge).
+The `.cargo/config.toml` configures the RISC-V target (`riscv32imac-unknown-none-elf`), `build-std`, and the `espflash` runner with `--erase-parts otadata`. Erasing `otadata` ensures that whenever firmware is flashed via USB, the 2nd-stage bootloader automatically boots the newly flashed binary in `ota_0`, preserving `nvs` (Wi-Fi) and `matter_kvs` (Matter credentials). USB ports are typically `/dev/cu.usbmodem*` (native ESP32-C6 USB) or `/dev/cu.usbserial*` (UART bridge).
 
 ### Remote Firmware Updates (OTA over Wi-Fi)
 

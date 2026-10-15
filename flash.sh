@@ -9,5 +9,5 @@ if [ ! -f "$BINARY" ]; then
     mise exec -- cargo build -p intercom-firmware
 fi
 
-echo "Flashing $BINARY to $PORT..."
-espflash flash "$BINARY" --port "$PORT"
+echo "Flashing $BINARY to $PORT (erasing otadata to guarantee booting ota_0)..."
+espflash flash "$BINARY" --port "$PORT" --partition-table partitions.csv --erase-parts otadata
