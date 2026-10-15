@@ -104,24 +104,10 @@ impl HardwareInfoDriver for FirmwareHardwareInfo {
     fn active_slot(&self) -> &'static str {
         #[cfg(target_arch = "riscv32")]
         {
-            static SLOT_CACHE: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+            ensure_bootloader_cached();
             match SLOT_CACHE.load(core::sync::atomic::Ordering::Relaxed) {
-                1 => return "ota_0",
-                2 => return "ota_1",
-                _ => {}
-            }
-            match intercom_adapter_ota::OtaBootloader::load() {
-                Ok(bl) => match bl.get_running_slot() {
-                    intercom_adapter_ota::Slot::Ota0 => {
-                        SLOT_CACHE.store(1, core::sync::atomic::Ordering::Relaxed);
-                        "ota_0"
-                    }
-                    intercom_adapter_ota::Slot::Ota1 => {
-                        SLOT_CACHE.store(2, core::sync::atomic::Ordering::Relaxed);
-                        "ota_1"
-                    }
-                },
-                Err(_) => "ota_0",
+                2 => "ota_1",
+                _ => "ota_0",
             }
         }
         #[cfg(not(target_arch = "riscv32"))]
@@ -133,20 +119,8 @@ impl HardwareInfoDriver for FirmwareHardwareInfo {
     fn is_slot_valid(&self) -> bool {
         #[cfg(target_arch = "riscv32")]
         {
-            static VALID_CACHE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-            if VALID_CACHE.load(core::sync::atomic::Ordering::Relaxed) {
-                return true;
-            }
-            match intercom_adapter_ota::OtaBootloader::load() {
-                Ok(bl) => {
-                    let valid = bl.get_active().state == intercom_adapter_ota::OtaState::Valid;
-                    if valid {
-                        VALID_CACHE.store(true, core::sync::atomic::Ordering::Relaxed);
-                    }
-                    valid
-                }
-                Err(_) => true,
-            }
+            ensure_bootloader_cached();
+            VALID_CACHE.load(core::sync::atomic::Ordering::Relaxed) == 1
         }
         #[cfg(not(target_arch = "riscv32"))]
         {
@@ -164,6 +138,37 @@ impl HardwareInfoDriver for FirmwareHardwareInfo {
 
     fn build_date(&self) -> &'static str {
         crate::version::BUILD_DATE
+    }
+}
+
+#[cfg(target_arch = "riscv32")]
+static SLOT_CACHE: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+#[cfg(target_arch = "riscv32")]
+static VALID_CACHE: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+
+#[cfg(target_arch = "riscv32")]
+fn ensure_bootloader_cached() {
+    if SLOT_CACHE.load(core::sync::atomic::Ordering::Relaxed) != 0 {
+        return;
+    }
+    match intercom_adapter_ota::OtaBootloader::load() {
+        Ok(bl) => {
+            let slot_val = match bl.get_running_slot() {
+                intercom_adapter_ota::Slot::Ota0 => 1,
+                intercom_adapter_ota::Slot::Ota1 => 2,
+            };
+            SLOT_CACHE.store(slot_val, core::sync::atomic::Ordering::Relaxed);
+            let valid_val = if bl.get_active().state == intercom_adapter_ota::OtaState::Valid {
+                1
+            } else {
+                2
+            };
+            VALID_CACHE.store(valid_val, core::sync::atomic::Ordering::Relaxed);
+        }
+        Err(_) => {
+            SLOT_CACHE.store(1, core::sync::atomic::Ordering::Relaxed);
+            VALID_CACHE.store(1, core::sync::atomic::Ordering::Relaxed);
+        }
     }
 }
 
