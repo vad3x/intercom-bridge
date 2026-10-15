@@ -8,5 +8,9 @@
 extern crate std;
 
 pub mod config;
+pub mod ecosystem_info;
+pub mod hardware_info;
+pub mod reset;
 pub mod utils;
 pub mod version;
+

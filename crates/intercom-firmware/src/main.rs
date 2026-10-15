@@ -13,6 +13,9 @@
 extern crate alloc;
 
 mod config;
+mod ecosystem_info;
+mod hardware_info;
+mod reset;
 mod utils;
 mod version;
 
@@ -27,17 +30,12 @@ use esp_metadata_generated::memory_range;
 use log::{info, warn};
 use static_cell::StaticCell;
 
-#[cfg(not(feature = "dummy-persist"))]
-use rs_matter_embassy::persist::SeqMapKvBlobStore;
 #[cfg(feature = "dummy-persist")]
 use rs_matter_embassy::matter::persist::DummyKvBlobStore;
 
 use intercom_core::app::App;
 use intercom_core::events::{SystemStateSender, SystemStateWatch};
-use intercom_core::ports::diagnostics::HardwareInfoDriver;
-use intercom_core::ports::ecosystem::EcosystemInfoDriver;
 use intercom_core::ports::inbound::{AccessControllerHandle, CommandChannel};
-use intercom_core::ports::SystemResetDriver;
 use intercom_core::service::DiagnosticsService;
 
 use intercom_adapter_http::{HttpServer, HttpServerConfig};
@@ -45,7 +43,6 @@ use intercom_adapter_ota::FlashOtaDriver;
 
 use intercom_adapter_gpio::boot_button::{GpioBootButtonConfig, GpioBootButtonDriver};
 use intercom_adapter_gpio::door::{GpioDoorConfig, GpioDoorDriver};
-use intercom_adapter_gpio::flash::EspFlash;
 use intercom_adapter_gpio::led::GpioLedDriver;
 use intercom_adapter_gpio::ring::{GpioRingConfig, GpioRingDriver};
 
@@ -54,6 +51,10 @@ use intercom_adapter_matter::{
     IntercomOccupancy, IntercomOccupancyConfig, MatterAccessControlDriver, MatterController,
     MatterControllerConfig, MatterPeripherals,
 };
+
+use self::ecosystem_info::FirmwareEcosystemInfo;
+use self::hardware_info::FirmwareHardwareInfo;
+use self::reset::FirmwareResetDriver;
 
 // ============================================================================
 // Memory configuration
@@ -83,154 +84,6 @@ esp_bootloader_esp_idf::esp_app_desc!(
 #[unsafe(no_mangle)]
 pub fn custom_halt() -> ! {
     esp_hal::system::software_reset();
-}
-
-// ============================================================================
-// Matter persistence + factory reset driver
-// ============================================================================
-
-/// Create the Matter persistence layer for the given flash range.
-#[cfg(not(feature = "dummy-persist"))]
-fn create_kv_blob_store(kvs_range: core::ops::Range<u32>) -> SeqMapKvBlobStore<EspFlash> {
-    let flash = EspFlash::new(kvs_range.clone());
-    SeqMapKvBlobStore::new(flash, kvs_range)
-}
-
-/// Erase the Matter KVS partition (commissioning data) for factory reset.
-///
-/// Erases all 4 KiB sectors in the given flash range using ROM SPI flash calls.
-/// This is a blocking operation (~ms per sector, 6 sectors = ~24 ms for 24 KiB).
-#[cfg(not(feature = "dummy-persist"))]
-fn erase_matter_kvs(range: &core::ops::Range<u32>) {
-    const SECTOR_SIZE: u32 = 4096;
-
-    info!(
-        "Erasing Matter KVS: 0x{:x}..0x{:x} ({} sectors)",
-        range.start,
-        range.end,
-        (range.end - range.start) / SECTOR_SIZE
-    );
-
-    // Unlock flash for erasing
-    let ret = unsafe { esp_hal::rom::spiflash::esp_rom_spiflash_unlock() };
-    if ret != esp_hal::rom::spiflash::ESP_ROM_SPIFLASH_RESULT_OK {
-        warn!("Flash unlock failed: {}", ret);
-        return;
-    }
-
-    let mut addr = range.start;
-    while addr < range.end {
-        let sector = addr / SECTOR_SIZE;
-        let ret = unsafe { esp_hal::rom::spiflash::esp_rom_spiflash_erase_sector(sector) };
-        if ret != esp_hal::rom::spiflash::ESP_ROM_SPIFLASH_RESULT_OK {
-            warn!("Flash erase sector {} failed: {}", sector, ret);
-        }
-        addr += SECTOR_SIZE;
-    }
-
-    info!("Matter KVS erased successfully");
-}
-
-/// Outbound reset driver implementing persistent credential erasure and hardware reboot.
-struct FirmwareResetDriver;
-
-impl SystemResetDriver for FirmwareResetDriver {
-    fn erase_credentials(&self) {
-        #[cfg(not(feature = "dummy-persist"))]
-        erase_matter_kvs(&config::MATTER_KVS_RANGE);
-        #[cfg(feature = "dummy-persist")]
-        info!("Factory reset skipped (dummy-persist)");
-    }
-
-    fn reboot(&self) -> ! {
-        esp_hal::system::software_reset()
-    }
-}
-
-/// Concrete hardware information provider querying runtime heap, bootloader, efuse, and timers.
-struct FirmwareHardwareInfo;
-
-#[cfg(target_arch = "riscv32")]
-extern "C" {
-    fn esp_wifi_sta_get_rssi(rssi: *mut i32) -> i32;
-}
-
-impl HardwareInfoDriver for FirmwareHardwareInfo {
-    fn uptime_secs(&self) -> u64 {
-        embassy_time::Instant::now().as_secs()
-    }
-
-    fn free_heap_bytes(&self) -> usize {
-        esp_alloc::HEAP.free()
-    }
-
-    fn total_heap_bytes(&self) -> usize {
-        config::HEAP_SIZE
-    }
-
-    fn wifi_rssi(&self) -> Option<i8> {
-        #[cfg(target_arch = "riscv32")]
-        {
-            let mut rssi: i32 = 0;
-            if unsafe { esp_wifi_sta_get_rssi(&mut rssi) } == 0 {
-                return Some(rssi as i8);
-            }
-        }
-        None
-    }
-
-    fn ip_address(&self) -> Option<[u8; 4]> {
-        let stack = rs_matter_embassy::enet::global_stack()?;
-        let config = stack.config_v4()?;
-        Some(config.address.address().octets())
-    }
-
-    fn mac_address(&self) -> [u8; 6] {
-        let mac = esp_hal::efuse::base_mac_address();
-        mac.as_bytes().try_into().unwrap_or([0u8; 6])
-    }
-
-    fn active_slot(&self) -> &'static str {
-        match intercom_adapter_ota::OtaBootloader::load() {
-            Ok(bl) => match bl.get_running_slot() {
-                intercom_adapter_ota::Slot::Ota0 => "ota_0",
-                intercom_adapter_ota::Slot::Ota1 => "ota_1",
-            },
-            Err(_) => "ota_0",
-        }
-    }
-
-    fn is_slot_valid(&self) -> bool {
-        match intercom_adapter_ota::OtaBootloader::load() {
-            Ok(bl) => bl.get_active().state == intercom_adapter_ota::OtaState::Valid,
-            Err(_) => true,
-        }
-    }
-
-    fn firmware_version(&self) -> &'static str {
-        version::SW_VER_STR
-    }
-
-    fn git_commit(&self) -> &'static str {
-        version::GIT_HASH
-    }
-
-    fn build_date(&self) -> &'static str {
-        version::BUILD_DATE
-    }
-}
-
-/// Concrete smart home ecosystem status provider for Matter protocol.
-struct FirmwareEcosystemInfo;
-
-impl EcosystemInfoDriver for FirmwareEcosystemInfo {
-    fn is_paired(&self) -> bool {
-        true
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "Matter"
-    }
 }
 
 // ============================================================================
@@ -311,7 +164,7 @@ async fn main(_spawner: Spawner) {
                 device_name: config::DEVICE_NAME,
             },
             #[cfg(not(feature = "dummy-persist"))]
-            store: create_kv_blob_store(config::MATTER_KVS_RANGE),
+            store: reset::create_kv_blob_store(config::MATTER_KVS_RANGE),
             #[cfg(feature = "dummy-persist")]
             store: DummyKvBlobStore,
             comm_data: None,
