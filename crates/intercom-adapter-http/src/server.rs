@@ -48,12 +48,12 @@ impl From<u16> for HttpServerConfig {
 }
 
 /// Shared application state passed to HTTP request handlers.
-pub struct AppState<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver> {
-    pub access_handle: AccessControllerHandle<'a>,
-    pub diagnostics: &'a DiagnosticsService<'a, H, E>,
-    pub ota_driver: &'a core::cell::RefCell<&'a mut O>,
-    pub had_error: &'a core::cell::Cell<bool>,
-    pub log_provider: fn(&mut [u8]) -> usize,
+pub(crate) struct AppState<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver> {
+    pub(crate) access_handle: AccessControllerHandle<'a>,
+    pub(crate) diagnostics: &'a DiagnosticsService<'a, H, E>,
+    pub(crate) ota_driver: &'a core::cell::RefCell<&'a mut O>,
+    pub(crate) had_error: &'a core::cell::Cell<bool>,
+    pub(crate) log_provider: fn(&mut [u8]) -> usize,
 }
 
 impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver> Clone
@@ -203,6 +203,7 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver>
             }
 
             info!("HTTP Server: client connection accepted");
+            had_error.set(false);
             let _ = picoserve::Server::new(&router, &picoserve_config, &mut http_buffer)
                 .serve(socket)
                 .await;
@@ -232,10 +233,12 @@ fn build_router<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDr
                 |picoserve::extract::State(state): picoserve::extract::State<AppState<'a, H, E, O>>| async move {
                     let diag = state.diagnostics.snapshot();
                     let mut json_buf = [0u8; 1024];
-                    let json_len = crate::router::format_status_json(&diag, &mut json_buf).unwrap_or(0);
-                    let json_str = alloc::string::String::from(
-                        core::str::from_utf8(&json_buf[..json_len]).unwrap_or("{}"),
-                    );
+                    let json_str = match crate::router::format_status_json(&diag, &mut json_buf) {
+                        Ok(len) => alloc::string::String::from(
+                            core::str::from_utf8(&json_buf[..len]).unwrap_or("{}"),
+                        ),
+                        Err(_) => alloc::string::String::from("{}"),
+                    };
                     picoserve::response::Response::ok(json_str)
                         .with_content_type("application/json")
                 },

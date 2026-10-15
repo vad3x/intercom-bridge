@@ -34,8 +34,14 @@ use rs_matter_embassy::matter::persist::DummyKvBlobStore;
 
 use intercom_core::app::App;
 use intercom_core::events::{SystemStateSender, SystemStateWatch};
+use intercom_core::ports::diagnostics::HardwareInfoDriver;
+use intercom_core::ports::ecosystem::EcosystemInfoDriver;
 use intercom_core::ports::inbound::{AccessControllerHandle, CommandChannel};
 use intercom_core::ports::SystemResetDriver;
+use intercom_core::service::DiagnosticsService;
+
+use intercom_adapter_http::{HttpServer, HttpServerConfig};
+use intercom_adapter_ota::FlashOtaDriver;
 
 use intercom_adapter_gpio::boot_button::{GpioBootButtonConfig, GpioBootButtonDriver};
 use intercom_adapter_gpio::door::{GpioDoorConfig, GpioDoorDriver};
@@ -140,6 +146,80 @@ impl SystemResetDriver for FirmwareResetDriver {
 
     fn reboot(&self) -> ! {
         esp_hal::system::software_reset()
+    }
+}
+
+/// Concrete hardware information provider querying runtime heap, bootloader, efuse, and timers.
+struct FirmwareHardwareInfo;
+
+impl HardwareInfoDriver for FirmwareHardwareInfo {
+    fn uptime_secs(&self) -> u64 {
+        embassy_time::Instant::now().as_secs()
+    }
+
+    fn free_heap_bytes(&self) -> usize {
+        esp_alloc::HEAP.free()
+    }
+
+    fn total_heap_bytes(&self) -> usize {
+        HEAP_SIZE
+    }
+
+    fn wifi_rssi(&self) -> Option<i8> {
+        None
+    }
+
+    fn ip_address(&self) -> Option<[u8; 4]> {
+        let stack = rs_matter_embassy::enet::global_stack()?;
+        let config = stack.config_v4()?;
+        Some(config.address.address().octets())
+    }
+
+    fn mac_address(&self) -> [u8; 6] {
+        let mac = esp_hal::efuse::base_mac_address();
+        mac.as_bytes().try_into().unwrap_or([0u8; 6])
+    }
+
+    fn active_slot(&self) -> &'static str {
+        match intercom_adapter_ota::OtaBootloader::load() {
+            Ok(bl) => match bl.get_running_slot() {
+                intercom_adapter_ota::Slot::Ota0 => "ota_0",
+                intercom_adapter_ota::Slot::Ota1 => "ota_1",
+            },
+            Err(_) => "ota_0",
+        }
+    }
+
+    fn is_slot_valid(&self) -> bool {
+        match intercom_adapter_ota::OtaBootloader::load() {
+            Ok(bl) => bl.get_active().state == intercom_adapter_ota::OtaState::Valid,
+            Err(_) => true,
+        }
+    }
+
+    fn firmware_version(&self) -> &'static str {
+        version::SW_VER_STR
+    }
+
+    fn git_commit(&self) -> &'static str {
+        version::GIT_HASH
+    }
+
+    fn build_date(&self) -> &'static str {
+        version::BUILD_DATE
+    }
+}
+
+/// Concrete smart home ecosystem status provider for Matter protocol.
+struct FirmwareEcosystemInfo;
+
+impl EcosystemInfoDriver for FirmwareEcosystemInfo {
+    fn is_paired(&self) -> bool {
+        true
+    }
+
+    fn protocol_name(&self) -> &'static str {
+        "Matter"
     }
 }
 
@@ -256,8 +336,17 @@ async fn main(_spawner: Spawner) {
 
     info!("Smart Intercom Ready");
 
+    let hardware_info = FirmwareHardwareInfo;
+    let ecosystem_info = FirmwareEcosystemInfo;
+    let diagnostics_service = DiagnosticsService::with_ecosystem(
+        &hardware_info,
+        &ecosystem_info,
+        &STATE_WATCH,
+    );
+    let mut ota_driver = FlashOtaDriver::new(config::OTA_PUBLIC_KEY);
+
     // ========================================================================
-    // Run App core services, Matter stack, LED indicator & OTA server concurrently
+    // Run App core services, Matter stack, LED indicator & HTTP server concurrently
     // ========================================================================
 
     let app_future = app.run(state_sender, &command_receiver, access_handle);
@@ -275,12 +364,15 @@ async fn main(_spawner: Spawner) {
             info!("Running firmware slot confirmed valid (rollback watchdog cancelled)");
         }
 
-        let ota_server = intercom_adapter_ota::OtaServer::new(
+        let mut http_server = HttpServer::new(
             stack,
-            state_sender,
-            config::OTA_PUBLIC_KEY,
+            access_handle,
+            &diagnostics_service,
+            &mut ota_driver,
+            utils::uptime_logger::get_buffered_logs,
+            HttpServerConfig::default(),
         );
-        ota_server.run().await;
+        http_server.run().await;
     };
 
     info!("Matter Controller Running");

@@ -9,7 +9,6 @@ use crate::bootloader::{DefaultFlash, OtaBootloader, OtaFlashStorage};
 use crate::bootloader::MemOtaFlash;
 #[cfg(target_arch = "riscv32")]
 use crate::bootloader::{BootloaderError, EspOtaFlash};
-use crate::server::COOPERATIVE_YIELD_DELAY;
 use crate::writer::{
     DefaultTargetFlash, OtaError, OtaTargetFlash, OtaWriter, MAX_APP_SLOT_SIZE, OTA_HEADER_LEN,
 };
@@ -18,7 +17,7 @@ use crate::writer::MemTargetFlash;
 #[cfg(target_arch = "riscv32")]
 use crate::writer::EspTargetFlash;
 
-use embassy_time::Timer;
+use embassy_time::{Duration, Timer};
 use intercom_core::ports::ota::{OtaDriverError, OtaFlashDriver, OtaStream};
 use log::{info, warn};
 
@@ -188,11 +187,18 @@ impl<F: OtaFlashStorage, TF: OtaTargetFlash> OtaFlashDriver for FlashOtaDriver<F
 }
 
 // ============================================================================
-// Private Constants & Helpers
+// Public Constants
 // ============================================================================
 
+/// Cooperative yield duration between chunks during streaming OTA writes.
+pub const COOPERATIVE_YIELD_DELAY: Duration = Duration::from_millis(1);
+
 /// Maximum OTA payload size: 72-byte wire header + 3.4 MiB application slot.
-const MAX_OTA_PAYLOAD_SIZE: usize = OTA_HEADER_LEN + MAX_APP_SLOT_SIZE;
+pub const MAX_OTA_PAYLOAD_SIZE: usize = OTA_HEADER_LEN + MAX_APP_SLOT_SIZE;
+
+// ============================================================================
+// Private Constants & Helpers
+// ============================================================================
 
 /// Streaming chunk buffer size (2 KiB).
 const CHUNK_BUF_SIZE: usize = 2048;

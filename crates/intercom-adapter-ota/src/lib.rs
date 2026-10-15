@@ -9,17 +9,9 @@ extern crate alloc;
 
 pub mod bootloader;
 pub mod driver;
-pub mod server;
 pub mod writer;
 
-pub use driver::FlashOtaDriver;
-
-pub use server::{
-    find_headers_end, handle_connection_with, HttpParseError, OtaOutcome, OtaServer,
-    OtaServerConfig, OtaServerError, OtaStream, RequestKind, parse_request_headers,
-    COOPERATIVE_YIELD_DELAY, HTTP_200_OK, HTTP_400_BAD_REQUEST, MAX_OTA_PAYLOAD_SIZE,
-    OTA_FLASH_PATH, REBOOT_DELAY, TARPIT_DELAY,
-};
+pub use driver::{COOPERATIVE_YIELD_DELAY, FlashOtaDriver, MAX_OTA_PAYLOAD_SIZE};
 
 pub use bootloader::{
     ActiveSlot, BootloaderError, EspOtaSelectEntry, MemOtaFlash, OtaBootloader, OtaFlashStorage,
