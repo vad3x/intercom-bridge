@@ -310,6 +310,14 @@ pub enum Slot {
 }
 
 impl Slot {
+    /// Return the starting byte offset of this slot in flash.
+    pub fn flash_offset(&self) -> u32 {
+        match self {
+            Slot::Ota0 => 0x020000,
+            Slot::Ota1 => 0x370000,
+        }
+    }
+
     /// Return the alternate slot.
     pub fn other(&self) -> Self {
         match self {
