@@ -1,25 +1,18 @@
-//! Outbound port traits for smart home ecosystem integrations (e.g. Matter).
+//! Outbound port traits for smart home ecosystem integrations.
 
-/// Ecosystem pairing and commissioning status provider.
+use crate::domain::ecosystem::EcosystemStatus;
+
+/// Ecosystem status and telemetry provider.
 ///
-/// Implemented by smart home protocol adapters (e.g. `intercom-adapter-matter`).
+/// Implemented by smart home protocol adapters.
 /// Decouples the core domain and diagnostic telemetry from protocol-specific details.
 pub trait EcosystemInfoDriver {
-    /// Return whether the device is paired or commissioned with an ecosystem controller.
-    fn is_paired(&self) -> bool;
-
-    /// Return the name of the active smart home protocol (e.g. "Matter", "None").
-    fn protocol_name(&self) -> &'static str {
-        "None"
-    }
+    /// Return the current status snapshot of the active ecosystem, or `None` if standalone.
+    fn status(&self) -> Option<EcosystemStatus>;
 }
 
 impl EcosystemInfoDriver for () {
-    fn is_paired(&self) -> bool {
-        false
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "None"
+    fn status(&self) -> Option<EcosystemStatus> {
+        None
     }
 }

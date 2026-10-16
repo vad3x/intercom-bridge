@@ -220,11 +220,11 @@ fn system_state_watch_sender_and_receiver() {
     let mut receiver = watch.receiver().unwrap();
 
     // Act
-    sender.ready();
+    sender.operational();
     let state = futures::executor::block_on(receiver.changed());
 
     // Assert
-    assert_eq!(state, SystemState::Ready);
+    assert_eq!(state, SystemState::Operational);
 }
 
 #[test]
@@ -291,24 +291,24 @@ fn system_state_watch_broadcasts_to_multiple_receivers() {
     let mut rx2 = watch.receiver().unwrap();
 
     // Act
-    sender.connecting();
+    sender.wifi_connecting();
     let (s1, s2) = futures::executor::block_on(async {
         embassy_futures::join::join(rx1.changed(), rx2.changed()).await
     });
 
     // Assert - both independent receivers observed the state transition
-    assert_eq!(s1, SystemState::Connecting);
-    assert_eq!(s2, SystemState::Connecting);
+    assert_eq!(s1, SystemState::WifiConnecting);
+    assert_eq!(s2, SystemState::WifiConnecting);
 
     // Act - second transition
-    sender.ready();
+    sender.operational();
     let (s3, s4) = futures::executor::block_on(async {
         embassy_futures::join::join(rx1.changed(), rx2.changed()).await
     });
 
     // Assert
-    assert_eq!(s3, SystemState::Ready);
-    assert_eq!(s4, SystemState::Ready);
+    assert_eq!(s3, SystemState::Operational);
+    assert_eq!(s4, SystemState::Operational);
 }
 
 #[test]
@@ -325,7 +325,7 @@ fn system_state_watch_notifies_updating_transition() {
     assert_eq!(receiver.try_get(), Some(SystemState::Updating));
 
     // Act - via helper method
-    sender.ready();
+    sender.operational();
     sender.updating();
 
     // Assert
@@ -339,8 +339,14 @@ fn system_state_sender_queries_current_state() {
     let sender = SystemStateSender::new(&watch);
 
     // Act
-    sender.connected();
+    sender.booting();
+    assert_eq!(sender.current_state(), Some(SystemState::Booting));
+    sender.starting();
+    assert_eq!(sender.current_state(), Some(SystemState::Starting));
+    sender.commissioning();
+    assert_eq!(sender.current_state(), Some(SystemState::Commissioning));
+    sender.ecosystem_connecting();
 
     // Assert
-    assert_eq!(sender.current_state(), Some(SystemState::Connected));
+    assert_eq!(sender.current_state(), Some(SystemState::EcosystemConnecting));
 }

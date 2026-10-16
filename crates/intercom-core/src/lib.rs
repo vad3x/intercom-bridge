@@ -14,6 +14,9 @@ pub mod ports;
 pub mod service;
 
 pub use app::App;
-pub use domain::{SystemDiagnostics, WifiSsid};
+pub use domain::{
+    EcosystemId, EcosystemStatus, EcosystemType, EcosystemValue, SystemDiagnostics, WifiSsid,
+    MAX_ECOSYSTEM_PROPERTIES,
+};
 pub use events::{SystemState, SystemStateReceiver, SystemStateSender, SystemStateWatch};
 pub use service::DiagnosticsService;

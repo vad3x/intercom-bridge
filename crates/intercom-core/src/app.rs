@@ -63,8 +63,8 @@ where
         receiver: &CommandReceiver<'_>,
         access_handle: AccessControllerHandle<'_>,
     ) {
-        info!("publishing Initialized state");
-        state_sender.initialized();
+        info!("publishing Starting state");
+        state_sender.starting();
 
         info!("starting core services");
 

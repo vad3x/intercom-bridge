@@ -1,18 +1,38 @@
-//! Unit tests for DiagnosticsService, SystemDiagnostics domain model, HardwareInfoDriver, and EcosystemInfoDriver.
+//! Unit tests for DiagnosticsService, SystemDiagnostics, EcosystemStatus, HardwareInfoDriver, and EcosystemInfoDriver.
 //!
 //! Follows the Arrange -> Act -> Assert pattern strictly.
 
-use intercom_core::domain::diagnostics::SystemDiagnostics;
+use intercom_core::domain::diagnostics::{SystemDiagnostics, WifiSsid};
+use intercom_core::domain::ecosystem::{
+    EcosystemId, EcosystemStatus, EcosystemType, EcosystemValue,
+};
 use intercom_core::events::{SystemState, SystemStateSender, SystemStateWatch};
 use intercom_core::ports::diagnostics::HardwareInfoDriver;
 use intercom_core::ports::ecosystem::EcosystemInfoDriver;
 use intercom_core::service::diagnostics::DiagnosticsService;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TestEcosystem {
+    ProtoA,
+    ProtoB,
+}
+
+impl EcosystemType for TestEcosystem {
+    fn id(&self) -> EcosystemId {
+        match self {
+            Self::ProtoA => EcosystemId::new("ProtoA"),
+            Self::ProtoB => EcosystemId::new("ProtoB"),
+        }
+    }
+}
+
+const TEST_AVAILABLE_ECOSYSTEMS: &[TestEcosystem] = &[TestEcosystem::ProtoA, TestEcosystem::ProtoB];
+
 pub struct MockHardwareInfoDriver {
     pub uptime_secs: u64,
     pub free_heap_bytes: usize,
     pub total_heap_bytes: usize,
-    pub wifi_ssid: Option<intercom_core::domain::diagnostics::WifiSsid>,
+    pub wifi_ssid: Option<WifiSsid>,
     pub wifi_rssi: Option<i8>,
     pub ip_address: Option<[u8; 4]>,
     pub mac_address: [u8; 6],
@@ -29,7 +49,7 @@ impl MockHardwareInfoDriver {
             uptime_secs: 12345,
             free_heap_bytes: 45000,
             total_heap_bytes: 80000,
-            wifi_ssid: intercom_core::domain::diagnostics::WifiSsid::new("HomeNet-IoT"),
+            wifi_ssid: WifiSsid::new("HomeNet-IoT"),
             wifi_rssi: Some(-65),
             ip_address: Some([192, 168, 1, 100]),
             mac_address: [0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc],
@@ -55,7 +75,7 @@ impl HardwareInfoDriver for MockHardwareInfoDriver {
         self.total_heap_bytes
     }
 
-    fn wifi_ssid(&self) -> Option<intercom_core::domain::diagnostics::WifiSsid> {
+    fn wifi_ssid(&self) -> Option<WifiSsid> {
         self.wifi_ssid
     }
 
@@ -93,23 +113,18 @@ impl HardwareInfoDriver for MockHardwareInfoDriver {
 }
 
 pub struct MockEcosystemInfoDriver {
-    pub paired: bool,
-    pub protocol: &'static str,
+    pub status: Option<EcosystemStatus>,
 }
 
 impl MockEcosystemInfoDriver {
-    pub fn new(paired: bool, protocol: &'static str) -> Self {
-        Self { paired, protocol }
+    pub fn new(status: Option<EcosystemStatus>) -> Self {
+        Self { status }
     }
 }
 
 impl EcosystemInfoDriver for MockEcosystemInfoDriver {
-    fn is_paired(&self) -> bool {
-        self.paired
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        self.protocol
+    fn status(&self) -> Option<EcosystemStatus> {
+        self.status
     }
 }
 
@@ -119,7 +134,7 @@ fn diagnostics_service_snapshot_with_default_ecosystem() {
     let hardware = MockHardwareInfoDriver::new();
     let state_watch = SystemStateWatch::new();
     let state_sender = SystemStateSender::new(&state_watch);
-    state_sender.ready();
+    state_sender.operational();
     let service = DiagnosticsService::new(&hardware, &state_watch);
 
     // Act
@@ -129,10 +144,10 @@ fn diagnostics_service_snapshot_with_default_ecosystem() {
     assert_eq!(
         snapshot,
         SystemDiagnostics {
-            state: SystemState::Ready,
+            state: SystemState::Operational,
             door_locked: true,
             uptime_sec: 12345,
-            wifi_ssid: intercom_core::domain::diagnostics::WifiSsid::new("HomeNet-IoT"),
+            wifi_ssid: WifiSsid::new("HomeNet-IoT"),
             wifi_rssi_dbm: Some(-65),
             ip: Some([192, 168, 1, 100]),
             mac: [0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc],
@@ -140,8 +155,8 @@ fn diagnostics_service_snapshot_with_default_ecosystem() {
             slot_valid: true,
             free_heap_bytes: 45000,
             total_heap_bytes: 80000,
-            ecosystem_paired: false,
-            ecosystem_protocol: "None",
+            available_ecosystems: &[],
+            active_ecosystem: None,
             version: "1.0.0",
             git_commit: "abcdef0",
             build_date: "2026-10-15",
@@ -150,14 +165,22 @@ fn diagnostics_service_snapshot_with_default_ecosystem() {
 }
 
 #[test]
-fn diagnostics_service_snapshot_with_explicit_ecosystem() {
+fn diagnostics_service_snapshot_with_explicit_ecosystem_and_properties() {
     // Arrange
     let hardware = MockHardwareInfoDriver::new();
-    let ecosystem = MockEcosystemInfoDriver::new(true, "Matter");
+    let expected_status = EcosystemStatus::new(TestEcosystem::ProtoA.id(), true)
+        .with_property("door_lock_subscribed", EcosystemValue::Bool(true))
+        .with_property("ring_sensor_subscribed", EcosystemValue::Bool(false));
+    let ecosystem = MockEcosystemInfoDriver::new(Some(expected_status));
     let state_watch = SystemStateWatch::new();
     let state_sender = SystemStateSender::new(&state_watch);
-    state_sender.connected();
-    let service = DiagnosticsService::with_ecosystem(&hardware, &ecosystem, &state_watch);
+    state_sender.ecosystem_connecting();
+    let service = DiagnosticsService::with_ecosystem(
+        &hardware,
+        &ecosystem,
+        TEST_AVAILABLE_ECOSYSTEMS,
+        &state_watch,
+    );
 
     // Act
     let snapshot = service.snapshot();
@@ -166,10 +189,10 @@ fn diagnostics_service_snapshot_with_explicit_ecosystem() {
     assert_eq!(
         snapshot,
         SystemDiagnostics {
-            state: SystemState::Connected,
+            state: SystemState::EcosystemConnecting,
             door_locked: true,
             uptime_sec: 12345,
-            wifi_ssid: intercom_core::domain::diagnostics::WifiSsid::new("HomeNet-IoT"),
+            wifi_ssid: WifiSsid::new("HomeNet-IoT"),
             wifi_rssi_dbm: Some(-65),
             ip: Some([192, 168, 1, 100]),
             mac: [0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc],
@@ -177,11 +200,33 @@ fn diagnostics_service_snapshot_with_explicit_ecosystem() {
             slot_valid: true,
             free_heap_bytes: 45000,
             total_heap_bytes: 80000,
-            ecosystem_paired: true,
-            ecosystem_protocol: "Matter",
+            available_ecosystems: TEST_AVAILABLE_ECOSYSTEMS,
+            active_ecosystem: Some(expected_status),
             version: "1.0.0",
             git_commit: "abcdef0",
             build_date: "2026-10-15",
         }
+    );
+}
+
+#[test]
+fn ecosystem_status_iterates_populated_properties() {
+    // Arrange
+    let status = EcosystemStatus::new(EcosystemId::new("Custom"), false)
+        .with_property("key_bool", EcosystemValue::Bool(true))
+        .with_property("key_int", EcosystemValue::Int(42))
+        .with_property("key_text", EcosystemValue::Text("online"));
+
+    // Act
+    let props: std::vec::Vec<_> = status.iter_properties().collect();
+
+    // Assert
+    assert_eq!(
+        props,
+        std::vec![
+            ("key_bool", EcosystemValue::Bool(true)),
+            ("key_int", EcosystemValue::Int(42)),
+            ("key_text", EcosystemValue::Text("online")),
+        ]
     );
 }

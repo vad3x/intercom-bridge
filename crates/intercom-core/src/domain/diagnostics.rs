@@ -1,10 +1,11 @@
 //! System diagnostics domain model.
 
+use crate::domain::ecosystem::{EcosystemId, EcosystemStatus, EcosystemType};
 use crate::events::SystemState;
 
-/// Real-time health, network, flash, and firmware telemetry snapshot.
+/// Real-time health, network, flash, ecosystem, and firmware telemetry snapshot.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SystemDiagnostics {
+pub struct SystemDiagnostics<T: EcosystemType = EcosystemId> {
     pub state: SystemState,
     pub door_locked: bool,
     pub uptime_sec: u64,
@@ -16,8 +17,8 @@ pub struct SystemDiagnostics {
     pub slot_valid: bool,
     pub free_heap_bytes: usize,
     pub total_heap_bytes: usize,
-    pub ecosystem_paired: bool,
-    pub ecosystem_protocol: &'static str,
+    pub available_ecosystems: &'static [T],
+    pub active_ecosystem: Option<EcosystemStatus>,
     pub version: &'static str,
     pub git_commit: &'static str,
     pub build_date: &'static str,

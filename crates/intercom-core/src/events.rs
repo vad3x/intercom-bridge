@@ -9,21 +9,23 @@ use embassy_sync::watch::{Receiver as WatchReceiver, Watch};
 /// System lifecycle states
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SystemState {
-    /// Starting up, hardware init in progress
-    Initializing,
-    /// Core services running, hardware initialized
-    Initialized,
-    /// Network stack is establishing connection to ecosystem controller
-    Connecting,
-    /// Connected to network and controller session active
-    Connected,
-    /// All endpoints and services fully online and operational
-    Ready,
-    /// Firmware OTA update in progress (flashing flash memory)
+    /// Hardware peripherals initializing on boot
+    Booting,
+    /// Core domain services started, initializing network and ecosystem stack
+    Starting,
+    /// Device is unpaired/uncommissioned; advertising & awaiting initial pairing
+    Commissioning,
+    /// Associating with Wi-Fi and acquiring IP lease
+    WifiConnecting,
+    /// Wi-Fi & LAN operational (HTTP/OTA reachable); awaiting ecosystem controller subscription
+    EcosystemConnecting,
+    /// All endpoints and ecosystem subscriptions active and operational
+    Operational,
+    /// Firmware OTA update in progress (flashing inactive partition)
     Updating,
     /// Factory reset triggered (erasing persistent credentials, rebooting)
     FactoryReset,
-    /// Something went wrong
+    /// Fatal hardware or protocol fault
     Error,
 }
 
@@ -61,24 +63,34 @@ impl<'a> SystemStateSender<'a> {
         self.0.sender().send(state);
     }
 
-    /// Convenience helper to transition to `SystemState::Initialized`.
-    pub fn initialized(&self) {
-        self.send(SystemState::Initialized);
+    /// Convenience helper to transition to `SystemState::Booting`.
+    pub fn booting(&self) {
+        self.send(SystemState::Booting);
     }
 
-    /// Convenience helper to transition to `SystemState::Connecting`.
-    pub fn connecting(&self) {
-        self.send(SystemState::Connecting);
+    /// Convenience helper to transition to `SystemState::Starting`.
+    pub fn starting(&self) {
+        self.send(SystemState::Starting);
     }
 
-    /// Convenience helper to transition to `SystemState::Connected`.
-    pub fn connected(&self) {
-        self.send(SystemState::Connected);
+    /// Convenience helper to transition to `SystemState::Commissioning`.
+    pub fn commissioning(&self) {
+        self.send(SystemState::Commissioning);
     }
 
-    /// Convenience helper to transition to `SystemState::Ready`.
-    pub fn ready(&self) {
-        self.send(SystemState::Ready);
+    /// Convenience helper to transition to `SystemState::WifiConnecting`.
+    pub fn wifi_connecting(&self) {
+        self.send(SystemState::WifiConnecting);
+    }
+
+    /// Convenience helper to transition to `SystemState::EcosystemConnecting`.
+    pub fn ecosystem_connecting(&self) {
+        self.send(SystemState::EcosystemConnecting);
+    }
+
+    /// Convenience helper to transition to `SystemState::Operational`.
+    pub fn operational(&self) {
+        self.send(SystemState::Operational);
     }
 
     /// Convenience helper to transition to `SystemState::Updating`.
