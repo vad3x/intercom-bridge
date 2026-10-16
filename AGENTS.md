@@ -194,7 +194,7 @@ intercom-bridge/
 | `crates/intercom-core/src/ports/inbound.rs` | `AccessControllerHandle` & `CommandChannel` — idiomatic Inbound Port handle for driving access commands |
 | `crates/intercom-core/src/ports/reporter.rs` | `IntercomReporter` & `LockState` — protocol-agnostic domain reporting port |
 | `crates/intercom-core/src/ports/reset.rs` | `SystemResetDriver` — outbound port for credential erasure and system reboot |
-| `crates/intercom-core/src/ports/` | Abstract outbound port traits (`DoorDriver`, `RingDriver`, `IntercomReporter`, `FactoryResetDriver`, `SystemResetDriver`) |
+| `crates/intercom-core/src/ports/` | Abstract outbound port traits (`DoorDriver`, `RingDriver`, `IntercomReporter`, `ResetTriggerDriver`, `SystemResetDriver`) |
 | `crates/intercom-core/src/events.rs` | `SystemState` enum (`Updating`, etc.), `SystemStateWatch` (`Watch`), `SystemStateSender`, `SystemStateReceiver` |
 | `crates/intercom-core/src/config.rs` | Domain access, relock, and reset timing policies (protocol- and hardware-agnostic) |
 | `crates/intercom-adapter-matter/src/config.rs` | Matter endpoint IDs and serial number formatting |
@@ -252,7 +252,7 @@ pub trait IntercomReporter {
 }
 
 pub trait SystemResetDriver {
-    fn erase_credentials(&self);
+    fn erase_credentials(&self, scope: ResetScope);
     fn reboot(&self) -> !;
 }
 ```
