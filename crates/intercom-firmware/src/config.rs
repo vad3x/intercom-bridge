@@ -110,6 +110,39 @@ pub const OTA_PUBLIC_KEY: [u8; 32] = [
 ];
 
 // ============================================================================
+// Smart Home Ecosystems
+// ============================================================================
+
+#[cfg(target_arch = "riscv32")]
+use intercom_adapter_matter::MATTER_ECOSYSTEM;
+#[cfg(not(target_arch = "riscv32"))]
+const MATTER_ECOSYSTEM: EcosystemId = EcosystemId::new("Matter");
+
+use intercom_core::domain::{EcosystemId, EcosystemType};
+
+/// Smart home ecosystems supported by this product configuration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SupportedEcosystem {
+    Matter,
+    HomeAssistant,
+}
+
+impl EcosystemType for SupportedEcosystem {
+    fn id(&self) -> EcosystemId {
+        match self {
+            Self::Matter => MATTER_ECOSYSTEM,
+            Self::HomeAssistant => EcosystemId::new("HomeAssistant"),
+        }
+    }
+}
+
+/// Ecosystems exposed in system diagnostics and the web dashboard.
+pub const AVAILABLE_ECOSYSTEMS: &[SupportedEcosystem] = &[
+    SupportedEcosystem::Matter,
+    SupportedEcosystem::HomeAssistant,
+];
+
+// ============================================================================
 // Private helpers
 // ============================================================================
 
@@ -129,4 +162,35 @@ const fn parse_version(version: &str) -> u32 {
         i += 1;
     }
     parts[0] * 10000 + parts[1] * 100 + parts[2]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_supported_ecosystem_ids() {
+        // Arrange
+        let matter = SupportedEcosystem::Matter;
+        let ha = SupportedEcosystem::HomeAssistant;
+
+        // Act
+        let matter_id = matter.id();
+        let ha_id = ha.id();
+
+        // Assert
+        assert_eq!(matter_id.as_str(), "Matter");
+        assert_eq!(ha_id.as_str(), "HomeAssistant");
+    }
+
+    #[test]
+    fn test_available_ecosystems_list() {
+        // Arrange & Act
+        let ecosystems = AVAILABLE_ECOSYSTEMS;
+
+        // Assert
+        assert_eq!(ecosystems.len(), 2);
+        assert_eq!(ecosystems[0], SupportedEcosystem::Matter);
+        assert_eq!(ecosystems[1], SupportedEcosystem::HomeAssistant);
+    }
 }

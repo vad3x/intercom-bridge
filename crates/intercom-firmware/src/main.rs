@@ -13,7 +13,6 @@
 extern crate alloc;
 
 mod config;
-mod ecosystem_info;
 mod hardware_info;
 mod reset;
 mod utils;
@@ -52,7 +51,6 @@ use intercom_adapter_matter::{
     MatterControllerConfig, MatterPeripherals,
 };
 
-use self::ecosystem_info::FirmwareEcosystemInfo;
 use self::hardware_info::FirmwareHardwareInfo;
 use self::reset::FirmwareResetDriver;
 
@@ -170,6 +168,7 @@ async fn main(_spawner: Spawner) {
             comm_data: None,
         },
         state_sender,
+        readiness,
         FirmwareResetDriver,
     )
     .register(&door_lock)
@@ -200,10 +199,10 @@ async fn main(_spawner: Spawner) {
     info!("Smart Intercom Ready");
 
     let hardware_info = FirmwareHardwareInfo;
-    let ecosystem_info = FirmwareEcosystemInfo;
     let diagnostics_service = DiagnosticsService::with_ecosystem(
         &hardware_info,
-        &ecosystem_info,
+        readiness,
+        config::AVAILABLE_ECOSYSTEMS,
         &STATE_WATCH,
     );
     let mut ota_driver = FlashOtaDriver::new(config::OTA_PUBLIC_KEY);
