@@ -16,8 +16,11 @@ pub const RING_DEBOUNCE_MS: u64 = 30;
 /// Cooldown between ring optocoupler events in milliseconds.
 pub const RING_COOLDOWN_MS: u64 = 2500;
 
-/// How long the maintenance BOOT button must be held to trigger factory reset (ms).
-pub const FACTORY_RESET_HOLD_MS: u64 = 5000;
+/// How long the BOOT button must be held to trigger ecosystem reset (unpair Matter, keep Wi-Fi).
+pub const ECOSYSTEM_RESET_HOLD_MS: u64 = 5000;
+
+/// How long the BOOT button must be held to trigger full factory reset (erase Wi-Fi + Matter).
+pub const FACTORY_RESET_HOLD_MS: u64 = 10000;
 
 // ============================================================================
 // LED Blink Patterns — Asymmetric Duty Cycles (on_ms / off_ms)

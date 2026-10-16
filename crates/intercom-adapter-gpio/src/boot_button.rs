@@ -1,83 +1,85 @@
-//! Smart Intercom - BOOT Button Factory Reset Driver
+//! Smart Intercom - BOOT Button Reset Driver
 //!
-//! Monitors GPIO9 (BOOT button on DFRobot Beetle ESP32-C6) for a long press.
-//! When held for the configured duration, signals the factory reset trigger.
-//! The actual credential erasure and reboot is coordinated by the domain FactoryResetActor.
+//! Monitors GPIO9 (BOOT button) for dual-stage long press:
+//! - Held 5s to 10s and released: Ecosystem Reset (unpairs active ecosystem, preserves Wi-Fi).
+//! - Held >= 10s: Full Factory Reset (erases both Wi-Fi and ecosystem credentials).
 
 use embassy_time::{Duration, Instant, Timer};
 use esp_hal::gpio::{Input, InputConfig, Pull};
 use crate::config;
-use intercom_core::ports::FactoryResetDriver;
+use intercom_core::domain::reset::classify_reset_hold;
+use intercom_core::ports::{ResetScope, ResetTriggerDriver};
 use log::info;
 
-/// GPIO-based BOOT button driver for factory reset.
-///
-/// Waits for the BOOT button (active LOW) to be held continuously for the
-/// configured duration. Uses async edge detection + periodic polling.
+/// GPIO-based BOOT button driver for system reset.
 pub struct GpioBootButtonDriver {
     config: GpioBootButtonConfig,
 }
 
 impl GpioBootButtonDriver {
     pub fn new(config: GpioBootButtonConfig) -> Self {
-        info!("BOOT button factory reset: hold={}ms", config.hold_ms);
+        info!(
+            "BOOT button reset driver: ecosystem_hold={}ms, factory_hold={}ms",
+            config.ecosystem_hold_ms, config.factory_hold_ms
+        );
         Self { config }
     }
 }
 
-/// Configuration for the BOOT button factory reset driver.
+/// Configuration for the BOOT button reset driver.
 pub struct GpioBootButtonConfig {
     /// Input pin (BOOT button, active LOW with pull-up)
     pub pin: Input<'static>,
+    /// How long the button must be held to trigger ecosystem reset (ms)
+    pub ecosystem_hold_ms: u64,
     /// How long the button must be held to trigger factory reset (ms)
-    pub hold_ms: u64,
+    pub factory_hold_ms: u64,
 }
 
 impl GpioBootButtonConfig {
-    /// Create a config with the given pin and default hold duration.
+    /// Create a config with the given pin and default hold durations.
     pub fn new(pin: impl esp_hal::gpio::InputPin + 'static) -> Self {
         Self {
             pin: Input::new(pin, InputConfig::default().with_pull(Pull::Up)),
-            hold_ms: config::FACTORY_RESET_HOLD_MS,
+            ecosystem_hold_ms: config::ECOSYSTEM_RESET_HOLD_MS,
+            factory_hold_ms: config::FACTORY_RESET_HOLD_MS,
         }
     }
 }
 
-impl FactoryResetDriver for GpioBootButtonDriver {
-    async fn wait_for_factory_reset(&mut self) {
-        let hold_duration = Duration::from_millis(self.config.hold_ms);
+impl ResetTriggerDriver for GpioBootButtonDriver {
+    async fn wait_for_reset(&mut self) -> ResetScope {
+        let ecosystem_duration = Duration::from_millis(self.config.ecosystem_hold_ms);
+        let factory_duration = Duration::from_millis(self.config.factory_hold_ms);
 
         loop {
-            // Wait for button press (falling edge — BOOT is active LOW)
             self.config.pin.wait_for_falling_edge().await;
 
             let press_start = Instant::now();
             info!(
-                "BOOT button pressed — hold {}s to factory reset",
-                self.config.hold_ms / 1000
+                "BOOT button pressed — hold {}s for ecosystem reset, {}s for full factory reset",
+                self.config.ecosystem_hold_ms / 1000,
+                self.config.factory_hold_ms / 1000
             );
 
-            // Poll until released or hold duration reached
-            let triggered = loop {
+            let scope = loop {
                 Timer::after(Duration::from_millis(100)).await;
 
-                if self.config.pin.is_high() {
-                    // Released before hold duration elapsed
-                    info!("BOOT button released (ignored)");
-                    break false;
+                let elapsed = Instant::now().duration_since(press_start);
+                let released = self.config.pin.is_high();
+
+                if let Some(scope) = classify_reset_hold(elapsed, released, ecosystem_duration, factory_duration) {
+                    break Some(scope);
                 }
 
-                if Instant::now().duration_since(press_start) >= hold_duration {
-                    break true;
+                if released {
+                    info!("BOOT button released early (ignored)");
+                    break None;
                 }
             };
 
-            if triggered {
-                info!(
-                    "BOOT button held for {}s — factory reset!",
-                    self.config.hold_ms / 1000
-                );
-                return;
+            if let Some(triggered_scope) = scope {
+                return triggered_scope;
             }
         }
     }
