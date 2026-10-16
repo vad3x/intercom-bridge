@@ -82,7 +82,7 @@ espflash save-image --chip esp32c6 --flash-size 8mb target/riscv32imac-unknown-n
 Use the multi-device OTA push CLI tool (`scripts/ota.py`):
 
 ```bash
-# Interactive mode: scans mDNS (_intercom-ota._tcp.local.) and prompts for target (ELF or flat .bin)
+# Interactive mode: scans mDNS (_matter._tcp.local.) and prompts for target (ELF or flat .bin)
 python3 scripts/ota.py target/riscv32imac-unknown-none-elf/release/intercom-bridge
 
 # Push directly to a specific IP address:

@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """Smart Intercom Over-The-Air (OTA) Firmware Update Tool.
 
-Discovers intercom devices on the local network via mDNS (_intercom-ota._tcp.local.),
+Discovers intercom devices on the local network via mDNS (_matter._tcp.local.),
 signs firmware binaries with Ed25519 private key, and streams signed updates over HTTP.
 """
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import hashlib
 import http.client
+import json
 import os
 import re
 import shutil
@@ -35,7 +37,7 @@ try:
 except ImportError:
     HAVE_ZEROCONF = False
 
-MDNS_SERVICE_TYPE = "_intercom-ota._tcp.local."
+MDNS_SERVICE_TYPE = "_matter._tcp.local."
 OTA_HEADER_MAGIC = b"ICOT"
 OTA_HEADER_LEN = 72  # 4 (magic) + 4 (len) + 64 (sig)
 MAX_APP_SLOT_SIZE = 0x350000  # 3.4 MB (3,473,408 bytes)
@@ -60,7 +62,7 @@ class DiscoveredDevice:
 
 
 class OtaMdnsListener:
-    """Zeroconf listener collecting _intercom-ota._tcp.local services."""
+    """Zeroconf listener collecting _matter._tcp.local services."""
 
     def __init__(self):
         self.devices: Dict[str, "zeroconf.ServiceInfo"] = {}
@@ -96,36 +98,23 @@ def check_dependencies(require_zeroconf: bool = True) -> None:
         sys.exit(1)
 
 
-def parse_device_info(info: "zeroconf.ServiceInfo") -> Optional[DiscoveredDevice]:
-    """Extract structured device metadata from a zeroconf ServiceInfo record."""
-    addresses = info.parsed_addresses()
-    if not addresses:
-        return None
-
-    # Prefer IPv4 address
-    ipv4_addrs = [a for a in addresses if re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", a)]
-    ip = ipv4_addrs[0] if ipv4_addrs else addresses[0]
-    port = info.port or 8080
-    hostname = (info.server or "").rstrip(".")
-
-    props = info.decoded_properties or {}
-    name = props.get("name") or info.name.split("._")[0]
-    mac = props.get("mac") or "unknown"
-    sw_ver = props.get("sw_ver") or "unknown"
-    slot = props.get("slot") or "unknown"
-
-    return DiscoveredDevice(
-        name=name,
-        hostname=hostname,
-        ip=ip,
-        port=port,
-        sw_ver=sw_ver,
-        slot=slot,
-        mac=mac,
-    )
+def probe_intercom_status(ip: str, port: int = 8080, timeout: float = 0.6) -> Optional[Dict]:
+    """Probe an IP on port 8080 to check if it is an Intercom Bridge running the HTTP server."""
+    try:
+        conn = http.client.HTTPConnection(ip, port, timeout=timeout)
+        conn.request("GET", "/api/status")
+        res = conn.getresponse()
+        if res.status == 200:
+            data = json.loads(res.read().decode())
+            if isinstance(data, dict) and "active_slot" in data and "mac" in data:
+                return data
+        conn.close()
+    except Exception:
+        pass
+    return None
 
 
-def discover_devices(timeout: float = 3.0) -> List[DiscoveredDevice]:
+def discover_devices(timeout: float = 3.0, port: int = 8080) -> List[DiscoveredDevice]:
     """Scan the local network for intercom OTA services via mDNS."""
     check_dependencies(require_zeroconf=True)
 
@@ -140,14 +129,44 @@ def discover_devices(timeout: float = 3.0) -> List[DiscoveredDevice]:
         browser.cancel()
         zc.close()
 
-    devices: List[DiscoveredDevice] = []
+    # Collect unique candidate IPv4 addresses and associated hostnames
+    candidates: Dict[str, str] = {}
     for info in listener.devices.values():
-        dev = parse_device_info(info)
-        if dev:
-            devices.append(dev)
+        ipv4_addrs = [a for a in info.parsed_addresses() if re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", a)]
+        hostname = (info.server or "").rstrip(".")
+        for ip in ipv4_addrs:
+            if ip not in candidates:
+                candidates[ip] = hostname
 
-    # Sort deterministically by name
-    devices.sort(key=lambda d: d.name)
+    devices: List[DiscoveredDevice] = []
+
+    def verify_candidate(item: Tuple[str, str]) -> Optional[DiscoveredDevice]:
+        ip, hostname = item
+        # Probe HTTP /api/status on port 8080 to verify device identity and read live telemetry
+        status = probe_intercom_status(ip, port=port, timeout=0.6)
+        if status:
+            mac = status.get("mac") or "unknown"
+            sw_ver = status.get("version") or "unknown"
+            slot = status.get("active_slot") or "unknown"
+            return DiscoveredDevice(
+                name="Intercom Bridge",
+                hostname=hostname,
+                ip=ip,
+                port=port,
+                sw_ver=sw_ver,
+                slot=slot,
+                mac=mac,
+            )
+        return None
+
+    if candidates:
+        with ThreadPoolExecutor(max_workers=min(20, max(1, len(candidates)))) as executor:
+            for dev in executor.map(verify_candidate, candidates.items()):
+                if dev:
+                    devices.append(dev)
+
+    # Sort deterministically by name and IP
+    devices.sort(key=lambda d: (d.name, d.ip))
     return devices
 
 
@@ -536,7 +555,7 @@ def main() -> None:
             targets = [direct_dev]
         else:
             # Query mDNS and match against target string
-            discovered = discover_devices(timeout=args.timeout)
+            discovered = discover_devices(timeout=args.timeout, port=args.port)
             matches = match_target(args.target, discovered)
             if len(matches) == 1:
                 targets = matches
@@ -548,15 +567,16 @@ def main() -> None:
                 hostname = args.target.rstrip(".")
                 try:
                     resolved_ip = socket.gethostbyname(hostname)
+                    status = probe_intercom_status(resolved_ip, port=args.port, timeout=1.0)
                     targets = [
                         DiscoveredDevice(
-                            name=f"Hostname Target ({hostname})",
+                            name="Intercom Bridge" if status else f"Hostname Target ({hostname})",
                             hostname=hostname,
                             ip=resolved_ip,
                             port=args.port,
-                            sw_ver="unknown",
-                            slot="unknown",
-                            mac="unknown",
+                            sw_ver=status.get("version") if status else "unknown",
+                            slot=status.get("active_slot") if status else "unknown",
+                            mac=status.get("mac") if status else "unknown",
                         )
                     ]
                 except socket.gaierror:
@@ -566,7 +586,7 @@ def main() -> None:
                     sys.exit(1)
     else:
         # Auto-discovery
-        discovered = discover_devices(timeout=args.timeout)
+        discovered = discover_devices(timeout=args.timeout, port=args.port)
         if not discovered:
             sys.stderr.write(
                 "No Intercom OTA devices found on local network.\n"
