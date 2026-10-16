@@ -84,7 +84,7 @@ pub struct MatterPeripherals {
     pub adc1: esp_hal::peripherals::ADC1<'static>,
 }
 
-/// Device identity exposed via the Matter Basic Information cluster.
+/// Device identity exposed via the Matter Basic Information cluster and DHCPv4.
 pub struct DeviceInfo {
     /// Hardware version number.
     pub hw_ver: u16,
@@ -96,6 +96,8 @@ pub struct DeviceInfo {
     pub sw_ver_str: &'static str,
     /// Device serial number override (if None, derived from hardware MAC).
     pub serial_no: Option<&'static str>,
+    /// DHCPv4 hostname override (if None, derived from hardware MAC as `"intercom-bridge-xxxx"`).
+    pub hostname: Option<&'static str>,
     /// Vendor name shown in Matter/HomeKit.
     pub vendor_name: &'static str,
     /// Product name shown in Matter/HomeKit.
@@ -277,6 +279,18 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
             s
         };
 
+        let hostname: &'static str = if let Some(custom_hostname) = config.device_info.hostname {
+            info!("Using custom DHCP hostname: {}", custom_hostname);
+            custom_hostname
+        } else {
+            static HOSTNAME_CELL: static_cell::StaticCell<[u8; crate::config::MAC_HOSTNAME_LEN]> =
+                static_cell::StaticCell::new();
+            let hostname_buf = HOSTNAME_CELL.init(commissioning::hostname_from_mac(&mac_bytes));
+            let h = core::str::from_utf8(hostname_buf).unwrap();
+            info!("Generated DHCP hostname from MAC {}: {}", mac, h);
+            h
+        };
+
         // Allocate device identity + stack in static cells (safe: run() is called exactly once)
         static DEV_DET_CELL: static_cell::StaticCell<BasicInfoConfig> =
             static_cell::StaticCell::new();
@@ -353,7 +367,8 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
                     weak_rand,
                     true,
                     stack,
-                ),
+                )
+                .with_hostname(hostname),
                 &crypto,
                 (node, handler),
                 kv,

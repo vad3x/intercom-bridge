@@ -52,6 +52,30 @@ pub const fn format_serial_no(mac: &[u8; 6]) -> [u8; MAC_SERIAL_NO_LEN] {
     buf
 }
 
+/// Default DHCP hostname prefix.
+pub const HOSTNAME_PREFIX: &str = "intercom-bridge-";
+
+/// Length of a MAC-derived DHCP hostname (`"intercom-bridge-"` + 4 lowercase hex digits).
+pub const MAC_HOSTNAME_LEN: usize = 20;
+
+/// Formats the last 2 bytes of a 6-byte MAC address into a deterministic DHCP hostname:
+/// `"intercom-bridge-xxxx"` (e.g. `"intercom-bridge-7844"`).
+pub const fn format_hostname(mac: &[u8; 6]) -> [u8; MAC_HOSTNAME_LEN] {
+    const HEX_LOWER: &[u8; 16] = b"0123456789abcdef";
+    let prefix = HOSTNAME_PREFIX.as_bytes();
+    let mut buf = [0u8; MAC_HOSTNAME_LEN];
+    let mut i = 0;
+    while i < prefix.len() {
+        buf[i] = prefix[i];
+        i += 1;
+    }
+    buf[16] = HEX_LOWER[(mac[4] >> 4) as usize];
+    buf[17] = HEX_LOWER[(mac[4] & 0x0F) as usize];
+    buf[18] = HEX_LOWER[(mac[5] >> 4) as usize];
+    buf[19] = HEX_LOWER[(mac[5] & 0x0F) as usize];
+    buf
+}
+
 // ============================================================================
 // Subscription Interval Policies (Matter Spec 8.5.1)
 // ============================================================================

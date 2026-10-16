@@ -157,6 +157,7 @@ async fn main(_spawner: Spawner) {
                 sw_ver: version::SW_VER,
                 sw_ver_str: version::SW_VER_STR,
                 serial_no: None,
+                hostname: None,
                 vendor_name: config::VENDOR_NAME,
                 product_name: config::PRODUCT_NAME,
                 device_name: config::DEVICE_NAME,

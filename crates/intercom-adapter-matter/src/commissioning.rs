@@ -43,6 +43,11 @@ pub const fn serial_no_from_mac(mac: &[u8; 6]) -> [u8; crate::config::MAC_SERIAL
     crate::config::format_serial_no(mac)
 }
 
+/// Derives a standard DHCP hostname buffer `"intercom-bridge-xxxx"` from a 6-byte MAC address.
+pub const fn hostname_from_mac(mac: &[u8; 6]) -> [u8; crate::config::MAC_HOSTNAME_LEN] {
+    crate::config::format_hostname(mac)
+}
+
 /// Derives `BasicCommData` from a 6-byte hardware MAC address.
 pub fn comm_data_from_mac(mac: &[u8; 6]) -> BasicCommData {
     let passcode = passcode_from_mac(mac);
@@ -183,5 +188,18 @@ mod tests {
         assert_eq!(comm_data.discriminator, discriminator_from_mac(&mac));
         let expected_pw: [u8; 4] = passcode_from_mac(&mac).to_le_bytes();
         assert_eq!(comm_data.password.access(), &expected_pw);
+    }
+
+    #[test]
+    fn hostname_from_mac_formats_lowercase_suffix() {
+        // Arrange
+        let mac = [0x98, 0xa3, 0x16, 0xa6, 0x78, 0x44];
+
+        // Act
+        let hostname_buf = hostname_from_mac(&mac);
+        let hostname = core::str::from_utf8(&hostname_buf).unwrap();
+
+        // Assert
+        assert_eq!(hostname, "intercom-bridge-7844");
     }
 }
