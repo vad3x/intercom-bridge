@@ -3,9 +3,9 @@
 //! Handles SPI flash Matter KVS sector erasure and software system reboot.
 
 use intercom_core::ports::SystemResetDriver;
-use log::info;
-#[cfg(target_arch = "riscv32")]
-use log::warn;
+use log::{info, warn};
+use rs_matter::error::Error;
+use rs_matter::persist::{KvBlobStore, NETWORKS_KEY};
 
 #[cfg(target_arch = "riscv32")]
 #[cfg(not(feature = "dummy-persist"))]
@@ -17,11 +17,84 @@ use intercom_adapter_gpio::flash::EspFlash;
 #[cfg(not(feature = "dummy-persist"))]
 use rs_matter_embassy::persist::SeqMapKvBlobStore;
 
+/// A composite `KvBlobStore` that routes Wi-Fi credentials (`NETWORKS_KEY`) to a dedicated
+/// storage partition and all other Matter fabrics/credentials to the Matter KVS partition.
+///
+/// Automatically migrates legacy credentials from `matter_store` to `wifi_store` on first load.
+pub struct PartitionedKvBlobStore<M, W> {
+    pub matter_store: M,
+    pub wifi_store: W,
+}
+
+impl<M, W> PartitionedKvBlobStore<M, W>
+where
+    M: KvBlobStore,
+    W: KvBlobStore,
+{
+    pub const fn new(matter_store: M, wifi_store: W) -> Self {
+        Self {
+            matter_store,
+            wifi_store,
+        }
+    }
+}
+
+impl<M, W> KvBlobStore for PartitionedKvBlobStore<M, W>
+where
+    M: KvBlobStore,
+    W: KvBlobStore,
+{
+    fn load<'a>(&mut self, key: u16, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
+        if key == NETWORKS_KEY {
+            let mut check_buf = [0u8; 128];
+            if self.wifi_store.load(key, &mut check_buf)?.is_some() {
+                return self.wifi_store.load(key, buf);
+            }
+
+            let mut legacy_buf = [0u8; 128];
+            if let Some(legacy_data) = self.matter_store.load(key, &mut legacy_buf)? {
+                info!("Migrating Wi-Fi credentials from matter_kvs to dedicated wifi_kvs partition");
+                let mut store_buf = [0u8; 128];
+                if let Err(e) = self.wifi_store.store(key, legacy_data, &mut store_buf) {
+                    warn!("Failed to store migrated Wi-Fi credentials: {:?}", e);
+                } else {
+                    let mut remove_buf = [0u8; 64];
+                    let _ = self.matter_store.remove(key, &mut remove_buf);
+                }
+
+                return self.wifi_store.load(key, buf);
+            }
+
+            Ok(None)
+        } else {
+            self.matter_store.load(key, buf)
+        }
+    }
+
+    fn store(&mut self, key: u16, data: &[u8], buf: &mut [u8]) -> Result<(), Error> {
+        if key == NETWORKS_KEY {
+            self.wifi_store.store(key, data, buf)
+        } else {
+            self.matter_store.store(key, data, buf)
+        }
+    }
+
+    fn remove(&mut self, key: u16, buf: &mut [u8]) -> Result<(), Error> {
+        if key == NETWORKS_KEY {
+            let res = self.wifi_store.remove(key, buf);
+            let _ = self.matter_store.remove(key, buf);
+            res
+        } else {
+            self.matter_store.remove(key, buf)
+        }
+    }
+}
+
 /// Outbound reset driver implementing persistent credential erasure and hardware reboot.
 pub struct FirmwareResetDriver;
 
 impl SystemResetDriver for FirmwareResetDriver {
-    fn erase_credentials(&self) {
+    fn erase_credentials(&self, _scope: intercom_core::ports::ResetScope) {
         #[cfg(target_arch = "riscv32")]
         {
             #[cfg(not(feature = "dummy-persist"))]

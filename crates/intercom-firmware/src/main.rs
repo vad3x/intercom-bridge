@@ -5,62 +5,92 @@
 //!
 //! Hardware: DFRobot Beetle ESP32-C6
 //! Protocol: Matter over WiFi (BLE for commissioning)
-#![no_std]
-#![no_main]
+#![cfg_attr(target_arch = "riscv32", no_std)]
+#![cfg_attr(target_arch = "riscv32", no_main)]
 #![recursion_limit = "256"]
 #![allow(unexpected_cfgs, async_fn_in_trait)]
 
+#[cfg(not(target_arch = "riscv32"))]
+fn main() {}
+
+#[cfg(target_arch = "riscv32")]
 extern crate alloc;
 
+#[cfg(target_arch = "riscv32")]
 mod config;
+#[cfg(target_arch = "riscv32")]
 mod hardware_info;
+#[cfg(target_arch = "riscv32")]
 mod reset;
+#[cfg(target_arch = "riscv32")]
 mod utils;
+#[cfg(target_arch = "riscv32")]
 mod version;
 
+#[cfg(target_arch = "riscv32")]
 use core::pin::pin;
 
+#[cfg(target_arch = "riscv32")]
 use embassy_executor::Spawner;
+#[cfg(target_arch = "riscv32")]
 use esp_alloc::heap_allocator;
+#[cfg(target_arch = "riscv32")]
 use esp_backtrace as _;
+#[cfg(target_arch = "riscv32")]
 use esp_hal::ram;
+#[cfg(target_arch = "riscv32")]
 use esp_hal::timer::timg::TimerGroup;
+#[cfg(target_arch = "riscv32")]
 use esp_metadata_generated::memory_range;
+#[cfg(target_arch = "riscv32")]
 use log::{info, warn};
+#[cfg(target_arch = "riscv32")]
 use static_cell::StaticCell;
 
+#[cfg(target_arch = "riscv32")]
 #[cfg(feature = "dummy-persist")]
 use rs_matter_embassy::matter::persist::DummyKvBlobStore;
 
+#[cfg(target_arch = "riscv32")]
 use intercom_core::app::App;
+#[cfg(target_arch = "riscv32")]
 use intercom_core::events::{SystemStateSender, SystemStateWatch};
+#[cfg(target_arch = "riscv32")]
 use intercom_core::ports::inbound::{AccessControllerHandle, CommandChannel};
+#[cfg(target_arch = "riscv32")]
 use intercom_core::service::DiagnosticsService;
 
+#[cfg(target_arch = "riscv32")]
 use intercom_adapter_http::{HttpServer, HttpServerConfig};
+#[cfg(target_arch = "riscv32")]
 use intercom_adapter_ota::FlashOtaDriver;
 
+#[cfg(target_arch = "riscv32")]
 use intercom_adapter_gpio::boot_button::{GpioBootButtonConfig, GpioBootButtonDriver};
+#[cfg(target_arch = "riscv32")]
 use intercom_adapter_gpio::door::{GpioDoorConfig, GpioDoorDriver};
+#[cfg(target_arch = "riscv32")]
 use intercom_adapter_gpio::led::GpioLedDriver;
+#[cfg(target_arch = "riscv32")]
 use intercom_adapter_gpio::ring::{GpioRingConfig, GpioRingDriver};
 
+#[cfg(target_arch = "riscv32")]
 use intercom_adapter_matter::{
     ClusterReadinessBarrier, DeviceInfo, IntercomDoorLock, IntercomDoorLockConfig,
     IntercomOccupancy, IntercomOccupancyConfig, MatterAccessControlDriver, MatterController,
     MatterControllerConfig, MatterPeripherals,
 };
 
+#[cfg(target_arch = "riscv32")]
 use self::hardware_info::FirmwareHardwareInfo;
+#[cfg(target_arch = "riscv32")]
 use self::reset::FirmwareResetDriver;
 
-// ============================================================================
-// Memory configuration
-// ============================================================================
-
+#[cfg(target_arch = "riscv32")]
 const RECLAIMED_RAM: usize =
     memory_range!("DRAM2_UNINIT").end - memory_range!("DRAM2_UNINIT").start;
 
+#[cfg(target_arch = "riscv32")]
 esp_bootloader_esp_idf::esp_app_desc!(
     version::SW_VER_STR,
     "intercom-bridge",
@@ -79,6 +109,7 @@ esp_bootloader_esp_idf::esp_app_desc!(
 
 /// Called by `esp-backtrace` after printing the backtrace on panic.
 /// Triggers a software reset so the device recovers automatically.
+#[cfg(target_arch = "riscv32")]
 #[unsafe(no_mangle)]
 pub fn custom_halt() -> ! {
     esp_hal::system::software_reset();
@@ -88,6 +119,7 @@ pub fn custom_halt() -> ! {
 // Main entry point
 // ============================================================================
 
+#[cfg(target_arch = "riscv32")]
 #[esp_rtos::main]
 async fn main(_spawner: Spawner) {
     utils::uptime_logger::init(log::LevelFilter::Debug);

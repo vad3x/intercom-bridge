@@ -2530,6 +2530,7 @@ dependencies = [
  "intercom-core",
  "log",
  "portable-atomic",
+ "rs-matter",
  "rs-matter-embassy",
  "static_cell",
 ]
