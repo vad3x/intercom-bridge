@@ -45,7 +45,7 @@ use rs_matter_embassy::wireless::{EmbassyWifi, EmbassyWifiMatterStack};
 use intercom_core::events::SystemStateSender;
 use intercom_core::ports::SystemResetDriver;
 
-use super::{commissioning, MatterCluster, BUMP_SIZE};
+use super::{commissioning, ClusterReadinessBarrier, MatterCluster, BUMP_SIZE};
 
 // ============================================================================
 // Device identity — replaces rs-matter TEST_DEV_* defaults
@@ -136,6 +136,7 @@ pub struct MatterController<S: KvBlobStore, R: SystemResetDriver, H = EmptyHandl
     endpoint_metas: Vec<EndpointMeta>,
     config: MatterControllerConfig<S>,
     state_sender: SystemStateSender<'static>,
+    readiness: &'static ClusterReadinessBarrier,
     reset: R,
 }
 
@@ -147,6 +148,7 @@ impl<S: KvBlobStore, R: SystemResetDriver> MatterController<S, R> {
     pub fn new(
         config: MatterControllerConfig<S>,
         state_sender: SystemStateSender<'static>,
+        readiness: &'static ClusterReadinessBarrier,
         reset: R,
     ) -> Self {
         Self {
@@ -154,6 +156,7 @@ impl<S: KvBlobStore, R: SystemResetDriver> MatterController<S, R> {
             endpoint_metas: Vec::new(),
             config,
             state_sender,
+            readiness,
             reset,
         }
     }
@@ -202,6 +205,7 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
             endpoint_metas: self.endpoint_metas,
             config: self.config,
             state_sender: self.state_sender,
+            readiness: self.readiness,
             reset: self.reset,
         }
     }
@@ -323,8 +327,13 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
 
         info!("Matter stack initialized, starting concurrent commissioning (BLE + WiFi coex)");
 
-        // Signal that WiFi/CASE negotiation is starting
-        self.state_sender.connecting();
+        let is_commissioned = has_active_controller_fabric(stack.matter());
+        self.readiness.set_paired(is_commissioned);
+        if is_commissioned {
+            self.state_sender.wifi_connecting();
+        } else {
+            self.state_sender.commissioning();
+        }
 
         // Run the Matter stack forever.
         // Concurrent mode (`run_coex`): BLE and WiFi run simultaneously
@@ -333,6 +342,7 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
         // properly transition from BLE-only to WiFi-only.
         let mut monitor = ConnectionMonitor {
             state_sender: self.state_sender,
+            readiness: self.readiness,
             reset: self.reset,
             matter: stack.matter(),
         };
@@ -379,10 +389,11 @@ fn has_active_controller_fabric(matter: &rs_matter::Matter<'_>) -> bool {
 ///
 /// Implements `UserTask`: runs alongside the Matter stack from startup.
 /// Uses `NetifDiag` to check if any interface is operational, and
-/// `NetChangeNotif` to wait for state changes. Signals `connected`
-/// when WiFi becomes operational and `connecting` when it drops.
+/// `NetChangeNotif` to wait for state changes. Signals `wifi_connecting`/`commissioning`
+/// or `ecosystem_connecting`/`operational` when connectivity or pairing state changes.
 struct ConnectionMonitor<'a, R: SystemResetDriver> {
     state_sender: SystemStateSender<'static>,
+    readiness: &'static ClusterReadinessBarrier,
     reset: R,
     matter: &'a rs_matter::Matter<'a>,
 }
@@ -416,32 +427,52 @@ impl<R: SystemResetDriver> UserTask for ConnectionMonitor<'_, R> {
                 Ok(())
             })?;
 
+            let is_commissioned = has_active_controller_fabric(self.matter);
+            self.readiness.set_paired(is_commissioned);
+
             // Signal state transitions
             if is_operational && !was_operational {
-                info!("network up → connected");
-                self.state_sender.connected();
+                info!("network up -> operational");
+                if is_commissioned {
+                    if self.readiness.is_ready() {
+                        self.state_sender.operational();
+                    } else {
+                        self.state_sender.ecosystem_connecting();
+                    }
+                }
             } else if !is_operational && was_operational {
-                info!("network down → reconnecting");
-                self.state_sender.connecting();
+                info!("network down -> reconnecting");
+                self.readiness.reset();
+                if is_commissioned {
+                    self.state_sender.wifi_connecting();
+                } else {
+                    self.state_sender.commissioning();
+                }
+            } else if !was_commissioned && is_commissioned && is_operational {
+                info!("commissioned while network up -> checking readiness");
+                if self.readiness.is_ready() {
+                    self.state_sender.operational();
+                } else {
+                    self.state_sender.ecosystem_connecting();
+                }
+            }
+
+            // Detect transition from commissioned -> uncommissioned
+            // (all controller fabrics removed via RemoveFabric in Apple Home / Google Home).
+            if was_commissioned && !is_commissioned {
+                warn!("Primary controller fabric removed — device decommissioned, triggering reset");
+                self.reset.erase_credentials();
+                self.reset.reboot();
             }
 
             was_operational = is_operational;
+            was_commissioned = is_commissioned;
 
             // Wait for a network state change OR a periodic tick.
             let net_changed = pin!(netif.wait_changed());
             let tick = pin!(Timer::after(Duration::from_secs(3)));
 
             select(net_changed, tick).await;
-
-            // Detect transition from commissioned → uncommissioned
-            // (all controller fabrics removed via RemoveFabric in Apple Home / Google Home).
-            let is_commissioned = has_active_controller_fabric(self.matter);
-            if was_commissioned && !is_commissioned {
-                warn!("Primary controller fabric removed — device decommissioned, triggering reset");
-                self.reset.erase_credentials();
-                self.reset.reboot();
-            }
-            was_commissioned = is_commissioned;
         }
     }
 }

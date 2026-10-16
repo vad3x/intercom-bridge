@@ -197,19 +197,26 @@ impl GpioLedDriver {
 
     fn indicate_state(&self, state: SystemState) {
         match state {
-            SystemState::Initializing => {
-                self.blink(config::INITIALIZING_ON_MS, config::INITIALIZING_OFF_MS, None);
+            SystemState::Booting => {
+                self.blink(config::BOOTING_ON_MS, config::BOOTING_OFF_MS, None);
             }
-            SystemState::Initialized => {
-                self.blink(config::INITIALIZED_ON_MS, config::INITIALIZED_OFF_MS, None);
+            SystemState::Starting => {
+                self.blink(config::STARTING_ON_MS, config::STARTING_OFF_MS, None);
             }
-            SystemState::Connecting => {
-                self.blink(config::CONNECTING_ON_MS, config::CONNECTING_OFF_MS, None);
+            SystemState::Commissioning => {
+                self.blink(config::COMMISSIONING_ON_MS, config::COMMISSIONING_OFF_MS, None);
             }
-            SystemState::Connected => {
-                self.blink(config::CONNECTED_ON_MS, config::CONNECTED_OFF_MS, None);
+            SystemState::WifiConnecting => {
+                self.blink(config::WIFI_CONNECTING_ON_MS, config::WIFI_CONNECTING_OFF_MS, None);
             }
-            SystemState::Ready => {
+            SystemState::EcosystemConnecting => {
+                self.blink(
+                    config::ECOSYSTEM_CONNECTING_ON_MS,
+                    config::ECOSYSTEM_CONNECTING_OFF_MS,
+                    None,
+                );
+            }
+            SystemState::Operational => {
                 self.solid();
             }
             SystemState::Updating => {
@@ -240,6 +247,28 @@ impl GpioLedDriver {
     }
 }
 
+impl IntercomReporter for GpioLedDriver {
+    fn report_ring(&self, ringing: bool) {
+        if ringing {
+            self.blink(
+                config::RING_BLINK_MS,
+                config::RING_BLINK_MS,
+                Some(config::RING_BLINK_COUNT),
+            );
+        }
+    }
+
+    fn report_lock_state(&self, state: LockState) {
+        if matches!(state, LockState::Unlocked) {
+            self.blink(
+                config::UNLOCK_BLINK_MS,
+                config::UNLOCK_BLINK_MS,
+                Some(config::UNLOCK_BLINK_COUNT),
+            );
+        }
+    }
+}
+
 /// Commands sent to the driver's execution loop via `Signal`.
 #[derive(Clone, Copy, Debug)]
 enum IndicatorCommand {
@@ -265,26 +294,4 @@ enum IndicatorCommand {
         burst_count: u8,
         pause_ms: u64,
     },
-}
-
-impl IntercomReporter for GpioLedDriver {
-    fn report_ring(&self, ringing: bool) {
-        if ringing {
-            self.blink(
-                config::RING_BLINK_MS,
-                config::RING_BLINK_MS,
-                Some(config::RING_BLINK_COUNT),
-            );
-        }
-    }
-
-    fn report_lock_state(&self, state: LockState) {
-        if matches!(state, LockState::Unlocked) {
-            self.blink(
-                config::UNLOCK_BLINK_MS,
-                config::UNLOCK_BLINK_MS,
-                Some(config::UNLOCK_BLINK_COUNT),
-            );
-        }
-    }
 }

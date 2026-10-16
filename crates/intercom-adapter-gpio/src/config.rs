@@ -23,25 +23,29 @@ pub const FACTORY_RESET_HOLD_MS: u64 = 5000;
 // LED Blink Patterns — Asymmetric Duty Cycles (on_ms / off_ms)
 //
 // Duty cycle increases with system readiness:
-//   Initializing (17%) → Initialized (30%) → Connecting (50%) → Connected (90%) → Ready (solid)
+//   Booting (17%) → Starting (30%) → Commissioning (2 Hz) / WifiConnecting (1 Hz) → EcosystemConnecting (90%) → Operational (solid)
 // Error and FactoryReset break the pattern intentionally to stand out.
 // ============================================================================
 
-/// Initializing: slow heartbeat — brief flash, long dark (~17% duty)
-pub const INITIALIZING_ON_MS: u64 = 200;
-pub const INITIALIZING_OFF_MS: u64 = 1000;
+/// Booting: slow heartbeat — brief flash, long dark (~17% duty)
+pub const BOOTING_ON_MS: u64 = 200;
+pub const BOOTING_OFF_MS: u64 = 1000;
 
-/// Initialized: faster heartbeat — hardware ready, waiting (30% duty)
-pub const INITIALIZED_ON_MS: u64 = 300;
-pub const INITIALIZED_OFF_MS: u64 = 700;
+/// Starting: faster heartbeat — hardware ready, starting stack (30% duty)
+pub const STARTING_ON_MS: u64 = 300;
+pub const STARTING_OFF_MS: u64 = 700;
 
-/// Connecting: even medium blink — actively connecting (50% duty)
-pub const CONNECTING_ON_MS: u64 = 500;
-pub const CONNECTING_OFF_MS: u64 = 500;
+/// Commissioning: rapid 2 Hz blink — awaiting initial pairing (50% duty)
+pub const COMMISSIONING_ON_MS: u64 = 250;
+pub const COMMISSIONING_OFF_MS: u64 = 250;
 
-/// Connected: mostly on, brief wink — almost ready (90% duty)
-pub const CONNECTED_ON_MS: u64 = 900;
-pub const CONNECTED_OFF_MS: u64 = 100;
+/// WifiConnecting: even medium 1 Hz blink — associating with Wi-Fi (50% duty)
+pub const WIFI_CONNECTING_ON_MS: u64 = 500;
+pub const WIFI_CONNECTING_OFF_MS: u64 = 500;
+
+/// EcosystemConnecting: mostly on, brief wink — LAN up, awaiting hub subscription (90% duty)
+pub const ECOSYSTEM_CONNECTING_ON_MS: u64 = 900;
+pub const ECOSYSTEM_CONNECTING_OFF_MS: u64 = 100;
 
 /// Error: burst pattern — 2 quick flashes then a long pause (irregular, unmistakable)
 pub const ERROR_ON_MS: u64 = 100;

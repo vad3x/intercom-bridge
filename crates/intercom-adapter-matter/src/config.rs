@@ -3,6 +3,15 @@
 //! Protocol-specific endpoint IDs, device serial formatting, and constants
 //! defined by the Matter Specification.
 
+use intercom_core::domain::EcosystemId;
+
+// ============================================================================
+// Ecosystem Identity
+// ============================================================================
+
+/// Strongly-typed identifier for the Matter smart home ecosystem.
+pub const MATTER_ECOSYSTEM: EcosystemId = EcosystemId::new("Matter");
+
 // ============================================================================
 // Matter Endpoints
 // ============================================================================
