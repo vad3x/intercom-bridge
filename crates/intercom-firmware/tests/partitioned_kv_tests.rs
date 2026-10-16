@@ -281,3 +281,79 @@ fn test_partitioned_kv_store_update_existing_networks_key() {
         Some(b"new_ssid_pass".as_slice())
     );
 }
+
+struct FailingStore;
+
+impl KvBlobStore for FailingStore {
+    fn load<'a>(&mut self, _key: u16, _buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
+        Ok(None)
+    }
+
+    fn store(&mut self, _key: u16, _data: &[u8], _buf: &mut [u8]) -> Result<(), Error> {
+        Err(rs_matter::error::ErrorCode::ResourceExhausted.into())
+    }
+
+    fn remove(&mut self, _key: u16, _buf: &mut [u8]) -> Result<(), Error> {
+        Ok(())
+    }
+}
+
+#[test]
+fn test_partitioned_kv_store_buffer_too_small_returns_error() {
+    // Arrange
+    let matter_store = MockKvStore::new();
+    let mut wifi_store = MockKvStore::new();
+    let mut setup_buf = [0u8; 128];
+    wifi_store
+        .store(NETWORKS_KEY, b"long_credentials_data", &mut setup_buf)
+        .unwrap();
+    let mut partitioned = PartitionedKvBlobStore::new(matter_store, wifi_store);
+    let mut tiny_buf = [0u8; 4];
+
+    // Act
+    let result = partitioned.load(NETWORKS_KEY, &mut tiny_buf);
+
+    // Assert
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().code(), rs_matter::error::ErrorCode::BufferTooSmall);
+}
+
+#[test]
+fn test_partitioned_kv_store_legacy_buffer_too_small_returns_error() {
+    // Arrange
+    let mut matter_store = MockKvStore::new();
+    let wifi_store = MockKvStore::new();
+    let mut setup_buf = [0u8; 128];
+    matter_store
+        .store(NETWORKS_KEY, b"long_legacy_credentials", &mut setup_buf)
+        .unwrap();
+    let mut partitioned = PartitionedKvBlobStore::new(matter_store, wifi_store);
+    let mut tiny_buf = [0u8; 4];
+
+    // Act
+    let result = partitioned.load(NETWORKS_KEY, &mut tiny_buf);
+
+    // Assert
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().code(), rs_matter::error::ErrorCode::BufferTooSmall);
+}
+
+#[test]
+fn test_partitioned_kv_store_migration_populates_buf_even_if_wifi_store_fails() {
+    // Arrange
+    let mut matter_store = MockKvStore::new();
+    let wifi_store = FailingStore;
+    let mut setup_buf = [0u8; 128];
+    matter_store
+        .store(NETWORKS_KEY, b"legacy_wifi_creds", &mut setup_buf)
+        .unwrap();
+    let mut partitioned = PartitionedKvBlobStore::new(matter_store, wifi_store);
+    let mut read_buf = [0u8; 128];
+
+    // Act
+    let result = partitioned.load(NETWORKS_KEY, &mut read_buf);
+
+    // Assert
+    assert_eq!(result.unwrap(), Some(b"legacy_wifi_creds".as_slice()));
+    assert_eq!(&read_buf[..17], b"legacy_wifi_creds");
+}

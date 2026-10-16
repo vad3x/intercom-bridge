@@ -493,7 +493,7 @@ fn test_get_invalid_route_returns_404_not_found() {
 struct MockResetDriver;
 
 impl intercom_core::ports::SystemResetDriver for MockResetDriver {
-    fn erase_credentials(&self) {}
+    fn erase_credentials(&self, _scope: intercom_core::ports::ResetScope) {}
     fn reboot(&self) -> ! {
         panic!("MOCK_REBOOT_TRIGGERED");
     }

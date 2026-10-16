@@ -43,7 +43,7 @@ use rs_matter_embassy::wireless::esp::EspWifiDriver;
 use rs_matter_embassy::wireless::{EmbassyWifi, EmbassyWifiMatterStack};
 
 use intercom_core::events::SystemStateSender;
-use intercom_core::ports::SystemResetDriver;
+use intercom_core::ports::{ResetScope, SystemResetDriver};
 
 use super::{commissioning, ClusterReadinessBarrier, MatterCluster, BUMP_SIZE};
 
@@ -425,7 +425,7 @@ impl<R: SystemResetDriver> UserTask for ConnectionMonitor<'_, R> {
         let has_primary_fabric = has_active_controller_fabric(self.matter);
         if has_any_fabrics && !has_primary_fabric {
             warn!("Device booted with only an orphaned hub fabric — triggering decommission reset");
-            self.reset.erase_credentials();
+            self.reset.erase_credentials(ResetScope::Ecosystem);
             self.reset.reboot();
         }
 
@@ -476,7 +476,7 @@ impl<R: SystemResetDriver> UserTask for ConnectionMonitor<'_, R> {
             // (all controller fabrics removed via RemoveFabric in Apple Home / Google Home).
             if was_commissioned && !is_commissioned {
                 warn!("Primary controller fabric removed — device decommissioned, triggering reset");
-                self.reset.erase_credentials();
+                self.reset.erase_credentials(ResetScope::Ecosystem);
                 self.reset.reboot();
             }
 

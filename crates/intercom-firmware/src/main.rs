@@ -195,7 +195,7 @@ async fn main(_spawner: Spawner) {
                 device_name: config::DEVICE_NAME,
             },
             #[cfg(not(feature = "dummy-persist"))]
-            store: reset::create_kv_blob_store(config::MATTER_KVS_RANGE),
+            store: reset::create_kv_blob_store(config::MATTER_KVS_RANGE, config::WIFI_KVS_RANGE),
             #[cfg(feature = "dummy-persist")]
             store: DummyKvBlobStore,
             comm_data: None,
