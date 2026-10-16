@@ -65,11 +65,26 @@ impl IntercomDoorLock {
     /// Bumps dataver and signals the `run()` background task to push
     /// a subscription report to HomeKit immediately.
     pub fn lock(&self) {
-        info!("lock() called → state=Locked, signalling subscription notify");
-        self.lock_state
-            .store(DlLockState::Locked as u8, Ordering::Relaxed);
-        self.dataver.changed();
-        self.state_changed.signal(());
+        let prev = self.lock_state.swap(DlLockState::Locked as u8, Ordering::SeqCst);
+        if prev != DlLockState::Locked as u8 {
+            info!("lock() called → state=Locked, signalling subscription notify");
+            self.dataver.changed();
+            self.state_changed.signal(());
+        }
+    }
+
+    /// Unlock the door (update Matter state).
+    ///
+    /// Called by `MatterAccessControlDriver` when the door is unlocked out-of-band (e.g. web dashboard).
+    /// Bumps dataver and signals the `run()` background task to push
+    /// a subscription report to HomeKit immediately.
+    pub fn unlock(&self) {
+        let prev = self.lock_state.swap(DlLockState::Unlocked as u8, Ordering::SeqCst);
+        if prev != DlLockState::Unlocked as u8 {
+            info!("unlock() called → state=Unlocked, signalling subscription notify");
+            self.dataver.changed();
+            self.state_changed.signal(());
+        }
     }
 
     /// The subset of the DoorLock cluster we support.

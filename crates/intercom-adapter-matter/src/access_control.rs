@@ -32,7 +32,7 @@ impl IntercomReporter for MatterAccessControlDriver<'_> {
     fn report_lock_state(&self, state: LockState) {
         match state {
             LockState::Locked => self.door_lock.lock(),
-            LockState::Unlocked => {} // Handled upon command invoke
+            LockState::Unlocked => self.door_lock.unlock(),
         }
     }
 }
