@@ -182,7 +182,7 @@ fn test_get_dashboard_returns_gzipped_html() {
     let access_handle = AccessControllerHandle::new(cmd_channel.sender());
     let hardware = MockHardwareInfo;
     let state_watch = SystemStateWatch::new();
-    state_watch.sender().send(SystemState::Ready);
+    state_watch.sender().send(SystemState::Operational);
     let diagnostics = DiagnosticsService::new(&hardware, &state_watch);
     let mut ota_driver = MockOtaFlashDriver::new(false);
     let mut server = HttpServer::new_unbound(
@@ -227,7 +227,7 @@ fn test_get_status_returns_valid_telemetry_json() {
     let access_handle = AccessControllerHandle::new(cmd_channel.sender());
     let hardware = MockHardwareInfo;
     let state_watch = SystemStateWatch::new();
-    state_watch.sender().send(SystemState::Ready);
+    state_watch.sender().send(SystemState::Operational);
     let diagnostics = DiagnosticsService::new(&hardware, &state_watch);
     let mut ota_driver = MockOtaFlashDriver::new(false);
     let mut server = HttpServer::new_unbound(
@@ -255,7 +255,7 @@ fn test_get_status_returns_valid_telemetry_json() {
 
     let body_str = core::str::from_utf8(&response[header_end + 4..]).unwrap();
     let v: Value = serde_json::from_str(body_str).expect("invalid JSON");
-    assert_eq!(v["state"], "Ready");
+    assert_eq!(v["state"], "Operational");
     assert_eq!(v["door_locked"], true);
     assert_eq!(v["uptime_sec"], 1234);
     assert_eq!(v["wifi_ssid"], "TestNet");
@@ -266,6 +266,8 @@ fn test_get_status_returns_valid_telemetry_json() {
     assert_eq!(v["slot_valid"], true);
     assert_eq!(v["free_heap_bytes"], 120_000);
     assert_eq!(v["total_heap_bytes"], 320_000);
+    assert_eq!(v["available_ecosystems"], serde_json::json!([]));
+    assert!(v["active_ecosystem"].is_null());
     assert_eq!(v["version"], "1.2.3");
     assert_eq!(v["git_commit"], "deadbeef");
     assert_eq!(v["build_date"], "2026-10-15");
@@ -278,7 +280,7 @@ fn test_get_logs_returns_text_plain_logs() {
     let access_handle = AccessControllerHandle::new(cmd_channel.sender());
     let hardware = MockHardwareInfo;
     let state_watch = SystemStateWatch::new();
-    state_watch.sender().send(SystemState::Ready);
+    state_watch.sender().send(SystemState::Operational);
     let diagnostics = DiagnosticsService::new(&hardware, &state_watch);
     let mut ota_driver = MockOtaFlashDriver::new(false);
     let mut server = HttpServer::new_unbound(
@@ -315,7 +317,7 @@ fn test_post_action_ring_dispatches_command() {
     let access_handle = AccessControllerHandle::new(cmd_channel.sender());
     let hardware = MockHardwareInfo;
     let state_watch = SystemStateWatch::new();
-    state_watch.sender().send(SystemState::Ready);
+    state_watch.sender().send(SystemState::Operational);
     let diagnostics = DiagnosticsService::new(&hardware, &state_watch);
     let mut ota_driver = MockOtaFlashDriver::new(false);
     let mut server = HttpServer::new_unbound(
@@ -343,7 +345,7 @@ fn test_post_action_unlock_dispatches_command() {
     let access_handle = AccessControllerHandle::new(cmd_channel.sender());
     let hardware = MockHardwareInfo;
     let state_watch = SystemStateWatch::new();
-    state_watch.sender().send(SystemState::Ready);
+    state_watch.sender().send(SystemState::Operational);
     let diagnostics = DiagnosticsService::new(&hardware, &state_watch);
     let mut ota_driver = MockOtaFlashDriver::new(false);
     let mut server = HttpServer::new_unbound(
@@ -371,7 +373,7 @@ fn test_post_ota_flash_success() {
     let access_handle = AccessControllerHandle::new(cmd_channel.sender());
     let hardware = MockHardwareInfo;
     let state_watch = SystemStateWatch::new();
-    state_watch.sender().send(SystemState::Ready);
+    state_watch.sender().send(SystemState::Operational);
     let diagnostics = DiagnosticsService::new(&hardware, &state_watch);
     let mut ota_driver = MockOtaFlashDriver::new(false);
     let mut server = HttpServer::new_unbound(
@@ -407,7 +409,7 @@ fn test_post_ota_flash_driver_error_returns_400() {
     let access_handle = AccessControllerHandle::new(cmd_channel.sender());
     let hardware = MockHardwareInfo;
     let state_watch = SystemStateWatch::new();
-    state_watch.sender().send(SystemState::Ready);
+    state_watch.sender().send(SystemState::Operational);
     let diagnostics = DiagnosticsService::new(&hardware, &state_watch);
     let mut ota_driver = MockOtaFlashDriver::new(true); // Should fail
     let mut server = HttpServer::new_unbound(
@@ -441,7 +443,7 @@ fn test_post_ota_flash_missing_content_length_returns_400() {
     let access_handle = AccessControllerHandle::new(cmd_channel.sender());
     let hardware = MockHardwareInfo;
     let state_watch = SystemStateWatch::new();
-    state_watch.sender().send(SystemState::Ready);
+    state_watch.sender().send(SystemState::Operational);
     let diagnostics = DiagnosticsService::new(&hardware, &state_watch);
     let mut ota_driver = MockOtaFlashDriver::new(false);
     let mut server = HttpServer::new_unbound(
@@ -468,7 +470,7 @@ fn test_get_invalid_route_returns_404_not_found() {
     let access_handle = AccessControllerHandle::new(cmd_channel.sender());
     let hardware = MockHardwareInfo;
     let state_watch = SystemStateWatch::new();
-    state_watch.sender().send(SystemState::Ready);
+    state_watch.sender().send(SystemState::Operational);
     let diagnostics = DiagnosticsService::new(&hardware, &state_watch);
     let mut ota_driver = MockOtaFlashDriver::new(false);
     let mut server = HttpServer::new_unbound(
@@ -505,7 +507,7 @@ fn test_post_ota_flash_triggers_reboot() {
     let access_handle = AccessControllerHandle::new(cmd_channel.sender());
     let hardware = MockHardwareInfo;
     let state_watch = SystemStateWatch::new();
-    state_watch.sender().send(SystemState::Ready);
+    state_watch.sender().send(SystemState::Operational);
     let diagnostics = DiagnosticsService::new(&hardware, &state_watch);
     let mut ota_driver = MockOtaFlashDriver::new(false);
     let reset_driver = MockResetDriver;
@@ -540,7 +542,7 @@ fn test_post_ota_flash_sets_updating_state() {
     let access_handle = AccessControllerHandle::new(cmd_channel.sender());
     let hardware = MockHardwareInfo;
     let state_watch = SystemStateWatch::new();
-    state_watch.sender().send(SystemState::Ready);
+    state_watch.sender().send(SystemState::Operational);
     let state_sender = intercom_core::events::SystemStateSender::new(&state_watch);
     let diagnostics = DiagnosticsService::new(&hardware, &state_watch);
     let mut ota_driver = MockOtaFlashDriver::new(false);

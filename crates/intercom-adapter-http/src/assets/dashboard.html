@@ -218,11 +218,12 @@
 <body>
   <header>
     <div class="header-title">⚡ Intercom Bridge</div>
-    <span id="status-badge">● Ready</span>
+    <span id="status-badge">● Operational</span>
   </header>
 
   <nav class="tabs">
     <button id="tab-btn-overview" class="tab-btn active">Overview</button>
+    <button id="tab-btn-ecosystem" class="tab-btn">Ecosystem</button>
     <button id="tab-btn-logs" class="tab-btn">System Logs</button>
   </nav>
 
@@ -250,12 +251,47 @@
           <div id="val-heap" class="card-value">--</div>
         </div>
         <div class="card">
-          <div class="card-label">Ecosystem (Matter)</div>
+          <div class="card-label">Active Ecosystem</div>
           <div id="val-ecosystem" class="card-value">--</div>
         </div>
         <div class="card">
           <div class="card-label">Firmware Version</div>
           <div id="val-version" class="card-value">--</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-ecosystem" class="tab-content">
+      <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));">
+        <div class="card">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+            <div class="card-label" style="font-size:1rem; color:var(--text); margin-bottom:0;">Matter</div>
+            <span id="eco-matter-badge" style="font-size:0.75rem; font-weight:600; padding:3px 8px; border-radius:9999px; background:var(--badge-bg); color:var(--badge-text);">Active</span>
+          </div>
+          <div style="display:flex; flex-direction:column; gap:10px; margin-bottom:16px; font-size:0.9rem;">
+            <div style="display:flex; justify-content:space-between; border-bottom:1px solid rgba(51,65,85,0.5); padding-bottom:6px;">
+              <span style="color:var(--text-muted);">Fabric Pairing</span>
+              <span id="eco-matter-pairing" style="font-weight:600;">--</span>
+            </div>
+            <div style="display:flex; justify-content:space-between; border-bottom:1px solid rgba(51,65,85,0.5); padding-bottom:6px;">
+              <span style="color:var(--text-muted);">🔒 Door Lock (EP1)</span>
+              <span id="eco-matter-lock" style="font-weight:600;">--</span>
+            </div>
+            <div style="display:flex; justify-content:space-between; border-bottom:1px solid rgba(51,65,85,0.5); padding-bottom:6px;">
+              <span style="color:var(--text-muted);">🔔 Ring Sensor (EP2)</span>
+              <span id="eco-matter-ring" style="font-weight:600;">--</span>
+            </div>
+          </div>
+          <button id="eco-matter-btn" class="btn" style="width:100%; border-color:var(--success); color:var(--success);" disabled>✓ Active Ecosystem</button>
+        </div>
+
+        <div class="card" style="opacity:0.85;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+            <div class="card-label" style="font-size:1rem; color:var(--text); margin-bottom:0;">Home Assistant</div>
+            <span style="font-size:0.75rem; font-weight:600; padding:3px 8px; border-radius:9999px; background:rgba(148,163,184,0.15); color:var(--text-muted);">Planned</span>
+          </div>
+          <p style="color:var(--text-muted); font-size:0.9rem; line-height:1.4; margin-bottom:24px;">Native direct integration for Home Assistant. Currently in planning.</p>
+          <button class="btn" style="width:100%;" disabled>Switch Ecosystem (Coming Soon)</button>
         </div>
       </div>
     </section>
@@ -300,9 +336,17 @@
       const btnClearLogs = document.getElementById('btn-clear-logs');
 
       const tabBtnOverview = document.getElementById('tab-btn-overview');
+      const tabBtnEcosystem = document.getElementById('tab-btn-ecosystem');
       const tabBtnLogs = document.getElementById('tab-btn-logs');
       const tabOverview = document.getElementById('tab-overview');
+      const tabEcosystem = document.getElementById('tab-ecosystem');
       const tabLogs = document.getElementById('tab-logs');
+
+      const ecoMatterBadge = document.getElementById('eco-matter-badge');
+      const ecoMatterPairing = document.getElementById('eco-matter-pairing');
+      const ecoMatterLock = document.getElementById('eco-matter-lock');
+      const ecoMatterRing = document.getElementById('eco-matter-ring');
+      const ecoMatterBtn = document.getElementById('eco-matter-btn');
 
       function showToast(msg, isError) {
         if (!toast) return;
@@ -315,22 +359,22 @@
 
       function switchTab(tab) {
         activeTab = tab;
-        if (tab === 'overview') {
-          tabBtnOverview.classList.add('active');
-          tabBtnLogs.classList.remove('active');
-          tabOverview.classList.add('active');
-          tabLogs.classList.remove('active');
+        tabBtnOverview.classList.toggle('active', tab === 'overview');
+        tabBtnEcosystem.classList.toggle('active', tab === 'ecosystem');
+        tabBtnLogs.classList.toggle('active', tab === 'logs');
+        tabOverview.classList.toggle('active', tab === 'overview');
+        tabEcosystem.classList.toggle('active', tab === 'ecosystem');
+        tabLogs.classList.toggle('active', tab === 'logs');
+
+        if (tab === 'overview' || tab === 'ecosystem') {
           fetchStatus();
-        } else {
-          tabBtnLogs.classList.add('active');
-          tabBtnOverview.classList.remove('active');
-          tabLogs.classList.add('active');
-          tabOverview.classList.remove('active');
+        } else if (tab === 'logs') {
           fetchLogs();
         }
       }
 
       tabBtnOverview.addEventListener('click', () => switchTab('overview'));
+      tabBtnEcosystem.addEventListener('click', () => switchTab('ecosystem'));
       tabBtnLogs.addEventListener('click', () => switchTab('logs'));
 
       function debounceButton(btn) {
@@ -414,15 +458,18 @@
             setOnline();
             if (data.state) {
               badge.textContent = '● ' + data.state;
-              if (data.state === 'Updating') {
-                badge.style.background = 'rgba(245, 158, 11, 0.15)';
-                badge.style.color = 'var(--warning)';
-              } else if (data.state === 'Ringing') {
-                badge.style.background = 'rgba(59, 130, 246, 0.15)';
-                badge.style.color = 'var(--primary)';
-              } else {
+              if (data.state === 'Operational') {
                 badge.style.background = 'var(--badge-bg)';
                 badge.style.color = 'var(--badge-text)';
+              } else if (data.state === 'EcosystemConnecting') {
+                badge.style.background = 'rgba(59, 130, 246, 0.15)';
+                badge.style.color = 'var(--primary)';
+              } else if (data.state === 'FactoryReset' || data.state === 'Error') {
+                badge.style.background = 'rgba(239, 68, 68, 0.15)';
+                badge.style.color = 'var(--danger)';
+              } else {
+                badge.style.background = 'rgba(245, 158, 11, 0.15)';
+                badge.style.color = 'var(--warning)';
               }
             }
             valUptime.textContent = formatUptime(data.uptime_sec);
@@ -435,8 +482,62 @@
             }
             valSlot.textContent = data.active_slot ? (data.active_slot + (data.slot_valid ? ' (valid)' : '')) : '--';
             valHeap.textContent = formatHeap(data.free_heap_bytes, data.total_heap_bytes);
-            valEcosystem.textContent = (data.ecosystem_protocol || 'Matter') + ': ' + (data.ecosystem_paired ? 'Paired' : 'Unpaired');
+            if (data.active_ecosystem) {
+              valEcosystem.textContent = data.active_ecosystem.type + ': ' + (data.active_ecosystem.paired ? 'Paired' : 'Unpaired');
+            } else {
+              valEcosystem.textContent = 'None';
+            }
             valVersion.textContent = 'v' + (data.version || '--') + (data.git_commit ? (' (' + data.git_commit + ')') : '');
+
+            const eco = data.active_ecosystem;
+            if (eco && eco.type === 'Matter') {
+              if (ecoMatterBadge) {
+                ecoMatterBadge.textContent = eco.paired ? 'Active' : 'Unpaired';
+                ecoMatterBadge.style.background = eco.paired ? 'var(--badge-bg)' : 'rgba(245, 158, 11, 0.15)';
+                ecoMatterBadge.style.color = eco.paired ? 'var(--badge-text)' : 'var(--warning)';
+              }
+              if (ecoMatterPairing) {
+                ecoMatterPairing.textContent = eco.paired ? 'Paired' : 'Unpaired';
+                ecoMatterPairing.style.color = eco.paired ? 'var(--success)' : 'var(--warning)';
+              }
+              const props = eco.properties || {};
+              if (ecoMatterLock) {
+                const lockSub = props.door_lock_subscribed;
+                ecoMatterLock.textContent = lockSub === true ? 'Subscribed' : (lockSub === false ? 'Unsubscribed' : 'Ready');
+                ecoMatterLock.style.color = lockSub === true ? 'var(--success)' : 'var(--text-muted)';
+              }
+              if (ecoMatterRing) {
+                const ringSub = props.ring_sensor_subscribed;
+                ecoMatterRing.textContent = ringSub === true ? 'Subscribed' : (ringSub === false ? 'Unsubscribed' : 'Ready');
+                ecoMatterRing.style.color = ringSub === true ? 'var(--success)' : 'var(--text-muted)';
+              }
+              if (ecoMatterBtn) {
+                ecoMatterBtn.textContent = '✓ Active Ecosystem';
+                ecoMatterBtn.disabled = true;
+              }
+            } else {
+              if (ecoMatterBadge) {
+                ecoMatterBadge.textContent = 'Inactive';
+                ecoMatterBadge.style.background = 'rgba(148, 163, 184, 0.15)';
+                ecoMatterBadge.style.color = 'var(--text-muted)';
+              }
+              if (ecoMatterPairing) {
+                ecoMatterPairing.textContent = '--';
+                ecoMatterPairing.style.color = 'var(--text)';
+              }
+              if (ecoMatterLock) {
+                ecoMatterLock.textContent = '--';
+                ecoMatterLock.style.color = 'var(--text)';
+              }
+              if (ecoMatterRing) {
+                ecoMatterRing.textContent = '--';
+                ecoMatterRing.style.color = 'var(--text)';
+              }
+              if (ecoMatterBtn) {
+                ecoMatterBtn.textContent = 'Switch to Matter';
+                ecoMatterBtn.disabled = false;
+              }
+            }
           })
           .catch(() => {
             setOffline();
@@ -465,7 +566,7 @@
       // Periodic polling: 3000ms
       setInterval(() => {
         if (document.visibilityState === 'hidden') return;
-        if (activeTab === 'overview') {
+        if (activeTab === 'overview' || activeTab === 'ecosystem') {
           fetchStatus();
         } else if (activeTab === 'logs' && chkAutoRefresh && chkAutoRefresh.checked) {
           fetchLogs();
@@ -474,7 +575,7 @@
 
       document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') {
-          if (activeTab === 'overview') fetchStatus();
+          if (activeTab === 'overview' || activeTab === 'ecosystem') fetchStatus();
           else if (activeTab === 'logs') fetchLogs();
         }
       });

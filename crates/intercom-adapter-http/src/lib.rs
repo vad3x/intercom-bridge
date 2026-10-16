@@ -42,6 +42,9 @@ mod tests {
         assert!(html.contains("btn-ring"));
         assert!(html.contains("btn-unlock"));
         assert!(html.contains("logs-pre"));
+        assert!(html.contains("tab-btn-ecosystem"));
+        assert!(html.contains("tab-ecosystem"));
+        assert!(html.contains("Home Assistant"));
         assert!(DASHBOARD_HTML_GZ.len() < 5120, "Gzip asset exceeds 5 KiB limit");
     }
 }

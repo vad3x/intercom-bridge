@@ -112,8 +112,24 @@ fn test_parse_route_not_found_on_unknown_or_wrong_method() {
 #[test]
 fn test_format_status_json_success() {
     // Arrange
+    const AVAILABLE: &[intercom_core::domain::EcosystemId] = &[
+        intercom_core::domain::EcosystemId::new("Matter"),
+        intercom_core::domain::EcosystemId::new("HomeAssistant"),
+    ];
+    let active = intercom_core::domain::EcosystemStatus::new(
+        intercom_core::domain::EcosystemId::new("Matter"),
+        true,
+    )
+    .with_property(
+        "door_lock_subscribed",
+        intercom_core::domain::EcosystemValue::Bool(true),
+    )
+    .with_property(
+        "ring_sensor_subscribed",
+        intercom_core::domain::EcosystemValue::Bool(false),
+    );
     let diag = SystemDiagnostics {
-        state: SystemState::Ready,
+        state: SystemState::Operational,
         door_locked: true,
         uptime_sec: 14250,
         wifi_ssid: intercom_core::domain::diagnostics::WifiSsid::new("MyHomeNetwork"),
@@ -124,8 +140,8 @@ fn test_format_status_json_success() {
         slot_valid: true,
         free_heap_bytes: 151552,
         total_heap_bytes: 215040,
-        ecosystem_paired: true,
-        ecosystem_protocol: "Matter",
+        available_ecosystems: AVAILABLE,
+        active_ecosystem: Some(active),
         version: "0.1.0",
         git_commit: "a3f89b",
         build_date: "2026-10-15",
@@ -138,7 +154,7 @@ fn test_format_status_json_success() {
     let val: Value = serde_json::from_str(json_str).expect("valid json format");
 
     // Assert
-    assert_eq!(val["state"], "Ready");
+    assert_eq!(val["state"], "Operational");
     assert_eq!(val["door_locked"], true);
     assert_eq!(val["uptime_sec"], 14250);
     assert_eq!(val["wifi_ssid"], "MyHomeNetwork");
@@ -149,8 +165,11 @@ fn test_format_status_json_success() {
     assert_eq!(val["slot_valid"], true);
     assert_eq!(val["free_heap_bytes"], 151552);
     assert_eq!(val["total_heap_bytes"], 215040);
-    assert_eq!(val["ecosystem_paired"], true);
-    assert_eq!(val["ecosystem_protocol"], "Matter");
+    assert_eq!(val["available_ecosystems"], serde_json::json!(["Matter", "HomeAssistant"]));
+    assert_eq!(val["active_ecosystem"]["type"], "Matter");
+    assert_eq!(val["active_ecosystem"]["paired"], true);
+    assert_eq!(val["active_ecosystem"]["properties"]["door_lock_subscribed"], true);
+    assert_eq!(val["active_ecosystem"]["properties"]["ring_sensor_subscribed"], false);
     assert_eq!(val["version"], "0.1.0");
     assert_eq!(val["git_commit"], "a3f89b");
     assert_eq!(val["build_date"], "2026-10-15");
@@ -159,8 +178,8 @@ fn test_format_status_json_success() {
 #[test]
 fn test_format_status_json_with_none_options() {
     // Arrange
-    let diag = SystemDiagnostics {
-        state: SystemState::Connecting,
+    let diag: SystemDiagnostics = SystemDiagnostics {
+        state: SystemState::WifiConnecting,
         door_locked: false,
         uptime_sec: 42,
         wifi_ssid: None,
@@ -171,8 +190,8 @@ fn test_format_status_json_with_none_options() {
         slot_valid: false,
         free_heap_bytes: 100000,
         total_heap_bytes: 200000,
-        ecosystem_paired: false,
-        ecosystem_protocol: "None",
+        available_ecosystems: &[],
+        active_ecosystem: None,
         version: "0.2.0",
         git_commit: "deadbeef",
         build_date: "2026-10-16",
@@ -185,7 +204,7 @@ fn test_format_status_json_with_none_options() {
     let val: Value = serde_json::from_str(json_str).expect("valid json format");
 
     // Assert
-    assert_eq!(val["state"], "Connecting");
+    assert_eq!(val["state"], "WifiConnecting");
     assert_eq!(val["door_locked"], false);
     assert_eq!(val["uptime_sec"], 42);
     assert!(val["wifi_ssid"].is_null());
@@ -196,8 +215,8 @@ fn test_format_status_json_with_none_options() {
     assert_eq!(val["slot_valid"], false);
     assert_eq!(val["free_heap_bytes"], 100000);
     assert_eq!(val["total_heap_bytes"], 200000);
-    assert_eq!(val["ecosystem_paired"], false);
-    assert_eq!(val["ecosystem_protocol"], "None");
+    assert_eq!(val["available_ecosystems"], serde_json::json!([]));
+    assert!(val["active_ecosystem"].is_null());
     assert_eq!(val["version"], "0.2.0");
     assert_eq!(val["git_commit"], "deadbeef");
     assert_eq!(val["build_date"], "2026-10-16");
@@ -206,8 +225,8 @@ fn test_format_status_json_with_none_options() {
 #[test]
 fn test_format_status_json_buffer_overflow_protection() {
     // Arrange
-    let diag = SystemDiagnostics {
-        state: SystemState::Ready,
+    let diag: SystemDiagnostics = SystemDiagnostics {
+        state: SystemState::Operational,
         door_locked: true,
         uptime_sec: 14250,
         wifi_ssid: intercom_core::domain::diagnostics::WifiSsid::new("MyHomeNetwork"),
@@ -218,8 +237,8 @@ fn test_format_status_json_buffer_overflow_protection() {
         slot_valid: true,
         free_heap_bytes: 151552,
         total_heap_bytes: 215040,
-        ecosystem_paired: true,
-        ecosystem_protocol: "Matter",
+        available_ecosystems: &[],
+        active_ecosystem: None,
         version: "0.1.0",
         git_commit: "a3f89b",
         build_date: "2026-10-15",

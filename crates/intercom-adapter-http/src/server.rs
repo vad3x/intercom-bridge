@@ -7,6 +7,7 @@
 use embassy_net::tcp::TcpSocket;
 use embassy_net::Stack;
 use embassy_time::{Duration, Timer};
+use intercom_core::domain::ecosystem::{EcosystemId, EcosystemType};
 use intercom_core::events::SystemStateSender;
 use intercom_core::ports::diagnostics::HardwareInfoDriver;
 use intercom_core::ports::ecosystem::EcosystemInfoDriver;
@@ -28,9 +29,15 @@ use crate::DASHBOARD_HTML_GZ;
 // ============================================================================
 
 /// Shared application state passed to HTTP request handlers.
-pub(crate) struct AppState<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver> {
+pub(crate) struct AppState<
+    'a,
+    H: HardwareInfoDriver,
+    E: EcosystemInfoDriver,
+    O: OtaFlashDriver,
+    T: EcosystemType = EcosystemId,
+> {
     pub(crate) access_handle: AccessControllerHandle<'a>,
-    pub(crate) diagnostics: &'a DiagnosticsService<'a, H, E>,
+    pub(crate) diagnostics: &'a DiagnosticsService<'a, H, E, T>,
     pub(crate) ota_driver: &'a core::cell::RefCell<&'a mut O>,
     pub(crate) state_sender: Option<SystemStateSender<'a>>,
     pub(crate) tarpit_delay: Duration,
@@ -40,16 +47,16 @@ pub(crate) struct AppState<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O:
     pub(crate) log_provider: fn(&mut [u8]) -> usize,
 }
 
-impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver> Clone
-    for AppState<'a, H, E, O>
+impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, T: EcosystemType> Clone
+    for AppState<'a, H, E, O, T>
 {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver> Copy
-    for AppState<'a, H, E, O>
+impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, T: EcosystemType> Copy
+    for AppState<'a, H, E, O, T>
 {
 }
 
@@ -69,10 +76,11 @@ pub struct HttpServer<
     E: EcosystemInfoDriver,
     O: OtaFlashDriver,
     R: SystemResetDriver = (),
+    T: EcosystemType = EcosystemId,
 > {
     stack: Option<Stack<'static>>,
     access_handle: AccessControllerHandle<'a>,
-    diagnostics: &'a DiagnosticsService<'a, H, E>,
+    diagnostics: &'a DiagnosticsService<'a, H, E, T>,
     ota_driver: &'a mut O,
     reset_driver: Option<&'a R>,
     state_sender: Option<SystemStateSender<'a>>,
@@ -80,13 +88,13 @@ pub struct HttpServer<
     config: HttpServerConfig,
 }
 
-impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver>
-    HttpServer<'a, H, E, O, ()>
+impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, T: EcosystemType>
+    HttpServer<'a, H, E, O, (), T>
 {
     /// Create an unbound `HttpServer` without a network stack or reset driver, suitable for testing.
     pub fn new_unbound(
         access_handle: AccessControllerHandle<'a>,
-        diagnostics: &'a DiagnosticsService<'a, H, E>,
+        diagnostics: &'a DiagnosticsService<'a, H, E, T>,
         ota_driver: &'a mut O,
         log_provider: fn(&mut [u8]) -> usize,
         mut config: HttpServerConfig,
@@ -105,14 +113,20 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver>
     }
 }
 
-impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, R: SystemResetDriver>
-    HttpServer<'a, H, E, O, R>
+impl<
+        'a,
+        H: HardwareInfoDriver,
+        E: EcosystemInfoDriver,
+        O: OtaFlashDriver,
+        R: SystemResetDriver,
+        T: EcosystemType,
+    > HttpServer<'a, H, E, O, R, T>
 {
     /// Create a new `HttpServer` bound to an `embassy_net::Stack`.
     pub fn new(
         stack: Stack<'static>,
         access_handle: AccessControllerHandle<'a>,
-        diagnostics: &'a DiagnosticsService<'a, H, E>,
+        diagnostics: &'a DiagnosticsService<'a, H, E, T>,
         ota_driver: &'a mut O,
         reset_driver: &'a R,
         state_sender: Option<SystemStateSender<'a>>,
@@ -135,7 +149,7 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, R: Sy
     pub fn with_reset_driver<R2: SystemResetDriver>(
         self,
         reset_driver: &'a R2,
-    ) -> HttpServer<'a, H, E, O, R2> {
+    ) -> HttpServer<'a, H, E, O, R2, T> {
         HttpServer {
             stack: self.stack,
             access_handle: self.access_handle,
@@ -265,8 +279,14 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, R: Sy
 // Private Helpers, Services & Stream Adapters
 // ============================================================================
 
-fn build_router<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver>(
-    app_state: AppState<'a, H, E, O>,
+fn build_router<
+    'a,
+    H: HardwareInfoDriver,
+    E: EcosystemInfoDriver,
+    O: OtaFlashDriver,
+    T: EcosystemType,
+>(
+    app_state: AppState<'a, H, E, O, T>,
 ) -> picoserve::Router<impl picoserve::routing::PathRouter + 'a> {
     picoserve::Router::new()
         .route(
@@ -280,7 +300,9 @@ fn build_router<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDr
         .route(
             "/api/status",
             picoserve::routing::get(
-                |picoserve::extract::State(state): picoserve::extract::State<AppState<'a, H, E, O>>| async move {
+                |picoserve::extract::State(state): picoserve::extract::State<
+                    AppState<'a, H, E, O, T>,
+                >| async move {
                     let diag = state.diagnostics.snapshot();
                     let mut json_buf = [0u8; JSON_BUFFER_SIZE];
                     let json_str = match crate::router::format_status_json(&diag, &mut json_buf) {
@@ -297,7 +319,9 @@ fn build_router<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDr
         .route(
             "/api/logs",
             picoserve::routing::get(
-                |picoserve::extract::State(state): picoserve::extract::State<AppState<'a, H, E, O>>| async move {
+                |picoserve::extract::State(state): picoserve::extract::State<
+                    AppState<'a, H, E, O, T>,
+                >| async move {
                     let mut log_buf = [0u8; LOG_BUFFER_SIZE];
                     let log_len = (state.log_provider)(&mut log_buf);
                     let log_str =
@@ -310,7 +334,9 @@ fn build_router<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDr
         .route(
             "/api/action/ring",
             picoserve::routing::post(
-                |picoserve::extract::State(state): picoserve::extract::State<AppState<'a, H, E, O>>| async move {
+                |picoserve::extract::State(state): picoserve::extract::State<
+                    AppState<'a, H, E, O, T>,
+                >| async move {
                     state.access_handle.send(AccessCommand::Ring);
                     picoserve::response::Response::ok("{\"status\":\"ok\"}")
                         .with_content_type("application/json")
@@ -320,7 +346,9 @@ fn build_router<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDr
         .route(
             "/api/action/unlock",
             picoserve::routing::post(
-                |picoserve::extract::State(state): picoserve::extract::State<AppState<'a, H, E, O>>| async move {
+                |picoserve::extract::State(state): picoserve::extract::State<
+                    AppState<'a, H, E, O, T>,
+                >| async move {
                     state.access_handle.send(AccessCommand::Unlock);
                     picoserve::response::Response::ok("{\"status\":\"ok\"}")
                         .with_content_type("application/json")
@@ -329,22 +357,27 @@ fn build_router<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDr
         )
         .route(
             "/api/v1/ota/flash",
-            picoserve::routing::post_service(OtaFlashService),
+            picoserve::routing::post_service(OtaFlashService(core::marker::PhantomData)),
         )
         .with_state(app_state)
 }
 
-struct OtaFlashService;
+struct OtaFlashService<T: EcosystemType>(core::marker::PhantomData<fn() -> T>);
 
-impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver>
-    picoserve::routing::RequestHandlerService<AppState<'a, H, E, O>> for OtaFlashService
+impl<
+        'a,
+        H: HardwareInfoDriver,
+        E: EcosystemInfoDriver,
+        O: OtaFlashDriver,
+        T: EcosystemType,
+    > picoserve::routing::RequestHandlerService<AppState<'a, H, E, O, T>> for OtaFlashService<T>
 {
     async fn call_request_handler_service<
         R: picoserve::io::Read,
         W: picoserve::response::ResponseWriter<Error = R::Error>,
     >(
         &self,
-        state: &AppState<'a, H, E, O>,
+        state: &AppState<'a, H, E, O, T>,
         _path_parameters: (),
         mut request: picoserve::request::Request<'_, R>,
         response_writer: W,
@@ -396,7 +429,7 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver>
             Err(_) => {
                 state.had_error.set(true);
                 if let Some(sender) = state.state_sender {
-                    sender.ready();
+                    sender.operational();
                 }
                 Timer::after(state.tarpit_delay).await;
                 picoserve::response::Response::new(

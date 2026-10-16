@@ -5,6 +5,7 @@
 
 use core::fmt::Write;
 use intercom_core::domain::diagnostics::SystemDiagnostics;
+use intercom_core::domain::ecosystem::{EcosystemType, EcosystemValue};
 use intercom_core::events::SystemState;
 
 // ============================================================================
@@ -65,7 +66,10 @@ pub fn parse_route(request_line: &str) -> Route {
 /// Formats `SystemDiagnostics` into caller-provided buffer as compact JSON.
 ///
 /// Returns the number of bytes written, or `Err(())` if the buffer is too small.
-pub fn format_status_json(diag: &SystemDiagnostics, out: &mut [u8]) -> Result<usize, ()> {
+pub fn format_status_json<T: EcosystemType>(
+    diag: &SystemDiagnostics<T>,
+    out: &mut [u8],
+) -> Result<usize, ()> {
     let mut writer = BufferWriter::new(out);
 
     write!(
@@ -97,7 +101,7 @@ pub fn format_status_json(diag: &SystemDiagnostics, out: &mut [u8]) -> Result<us
     let [m0, m1, m2, m3, m4, m5] = diag.mac;
     write!(
         writer,
-        ",\"mac\":\"{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}\",\"active_slot\":\"{}\",\"slot_valid\":{},\"free_heap_bytes\":{},\"total_heap_bytes\":{},\"ecosystem_paired\":{},\"ecosystem_protocol\":\"{}\",\"version\":\"{}\",\"git_commit\":\"{}\",\"build_date\":\"{}\"}}",
+        ",\"mac\":\"{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}\",\"active_slot\":\"{}\",\"slot_valid\":{},\"free_heap_bytes\":{},\"total_heap_bytes\":{},\"available_ecosystems\":[",
         m0,
         m1,
         m2,
@@ -108,11 +112,48 @@ pub fn format_status_json(diag: &SystemDiagnostics, out: &mut [u8]) -> Result<us
         diag.slot_valid,
         diag.free_heap_bytes,
         diag.total_heap_bytes,
-        diag.ecosystem_paired,
-        diag.ecosystem_protocol,
-        diag.version,
-        diag.git_commit,
-        diag.build_date
+    )
+    .map_err(|_| ())?;
+
+    for (idx, eco) in diag.available_ecosystems.iter().enumerate() {
+        if idx > 0 {
+            write!(writer, ",").map_err(|_| ())?;
+        }
+        write!(writer, "\"{}\"", eco.id().as_str()).map_err(|_| ())?;
+    }
+
+    write!(writer, "],\"active_ecosystem\":").map_err(|_| ())?;
+    match &diag.active_ecosystem {
+        Some(active) => {
+            write!(
+                writer,
+                "{{\"type\":\"{}\",\"paired\":{},\"properties\":{{",
+                active.ecosystem_type.as_str(),
+                active.paired
+            )
+            .map_err(|_| ())?;
+
+            for (idx, (key, val)) in active.iter_properties().enumerate() {
+                if idx > 0 {
+                    write!(writer, ",").map_err(|_| ())?;
+                }
+                match val {
+                    EcosystemValue::Bool(b) => write!(writer, "\"{}\":{}", key, b).map_err(|_| ())?,
+                    EcosystemValue::Int(n) => write!(writer, "\"{}\":{}", key, n).map_err(|_| ())?,
+                    EcosystemValue::Text(s) => {
+                        write!(writer, "\"{}\":\"{}\"", key, s).map_err(|_| ())?
+                    }
+                }
+            }
+            write!(writer, "}}}}").map_err(|_| ())?;
+        }
+        None => write!(writer, "null").map_err(|_| ())?,
+    }
+
+    write!(
+        writer,
+        ",\"version\":\"{}\",\"git_commit\":\"{}\",\"build_date\":\"{}\"}}",
+        diag.version, diag.git_commit, diag.build_date
     )
     .map_err(|_| ())?;
 
@@ -125,11 +166,12 @@ pub fn format_status_json(diag: &SystemDiagnostics, out: &mut [u8]) -> Result<us
 
 fn state_to_str(state: SystemState) -> &'static str {
     match state {
-        SystemState::Initializing => "Initializing",
-        SystemState::Initialized => "Initialized",
-        SystemState::Connecting => "Connecting",
-        SystemState::Connected => "Connected",
-        SystemState::Ready => "Ready",
+        SystemState::Booting => "Booting",
+        SystemState::Starting => "Starting",
+        SystemState::Commissioning => "Commissioning",
+        SystemState::WifiConnecting => "WifiConnecting",
+        SystemState::EcosystemConnecting => "EcosystemConnecting",
+        SystemState::Operational => "Operational",
         SystemState::Updating => "Updating",
         SystemState::FactoryReset => "FactoryReset",
         SystemState::Error => "Error",
