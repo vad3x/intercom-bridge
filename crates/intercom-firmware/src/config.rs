@@ -185,11 +185,14 @@ mod tests {
 
     #[test]
     fn test_available_ecosystems_list() {
-        // Arrange & Act
+        // Arrange
+        let expected_count = 2;
+
+        // Act
         let ecosystems = AVAILABLE_ECOSYSTEMS;
 
         // Assert
-        assert_eq!(ecosystems.len(), 2);
+        assert_eq!(ecosystems.len(), expected_count);
         assert_eq!(ecosystems[0], SupportedEcosystem::Matter);
         assert_eq!(ecosystems[1], SupportedEcosystem::HomeAssistant);
     }
