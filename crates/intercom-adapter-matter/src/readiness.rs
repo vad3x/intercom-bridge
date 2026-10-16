@@ -42,8 +42,9 @@ impl ClusterReadinessBarrier {
 
     /// Mark the DoorLock cluster as subscription-primed.
     pub fn mark_door_lock_ready(&self) {
+        let was_ready = self.is_ready();
         self.door_lock_ready.store(true, Ordering::Release);
-        if self.is_ready() {
+        if !was_ready && self.is_ready() {
             info!("all clusters ready -> publishing Operational state");
             self.state_sender.operational();
         }
@@ -51,8 +52,9 @@ impl ClusterReadinessBarrier {
 
     /// Mark the Occupancy/Ring cluster as subscription-primed.
     pub fn mark_ring_ready(&self) {
+        let was_ready = self.is_ready();
         self.ring_ready.store(true, Ordering::Release);
-        if self.is_ready() {
+        if !was_ready && self.is_ready() {
             info!("all clusters ready -> publishing Operational state");
             self.state_sender.operational();
         }
@@ -185,5 +187,52 @@ mod tests {
             status.property("ring_sensor_subscribed"),
             Some(&EcosystemValue::Bool(false))
         );
+    }
+
+    #[test]
+    fn readiness_barrier_deduplicates_repeated_marks() {
+        // Arrange
+        static WATCH: SystemStateWatch = SystemStateWatch::new();
+        let sender = SystemStateSender::new(&WATCH);
+        let barrier = ClusterReadinessBarrier::new(sender);
+        barrier.mark_door_lock_ready();
+        barrier.mark_ring_ready();
+        assert_eq!(sender.current_state(), Some(SystemState::Operational));
+
+        // Act - repeated calls when already ready
+        barrier.mark_door_lock_ready();
+        barrier.mark_ring_ready();
+
+        // Assert
+        assert!(barrier.is_ready());
+        assert_eq!(sender.current_state(), Some(SystemState::Operational));
+    }
+
+    #[test]
+    fn readiness_barrier_rearms_after_reset() {
+        // Arrange
+        static WATCH: SystemStateWatch = SystemStateWatch::new();
+        let sender = SystemStateSender::new(&WATCH);
+        let barrier = ClusterReadinessBarrier::new(sender);
+        barrier.mark_door_lock_ready();
+        barrier.mark_ring_ready();
+        assert_eq!(sender.current_state(), Some(SystemState::Operational));
+
+        // Act - reset clears readiness
+        barrier.reset();
+        sender.ecosystem_connecting();
+        assert_eq!(sender.current_state(), Some(SystemState::EcosystemConnecting));
+        assert!(!barrier.is_ready());
+
+        // Marking door lock only does not transition yet
+        barrier.mark_door_lock_ready();
+        assert_eq!(sender.current_state(), Some(SystemState::EcosystemConnecting));
+
+        // Marking ring completes readiness and re-arms Operational
+        barrier.mark_ring_ready();
+
+        // Assert
+        assert!(barrier.is_ready());
+        assert_eq!(sender.current_state(), Some(SystemState::Operational));
     }
 }

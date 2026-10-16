@@ -4,7 +4,7 @@
 //! Handles lock/unlock commands, pushes subscription reports when state changes,
 //! and notifies readiness via the `ClusterReadinessBarrier`.
 
-use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use core::sync::atomic::{AtomicU8, Ordering};
 
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::signal::Signal;
@@ -46,9 +46,6 @@ pub struct IntercomDoorLock {
     /// Signal used to wake the `run()` background task when an out-of-band
     /// state change (e.g. auto-relock) needs to push a subscription report.
     state_changed: Signal<NoopRawMutex, ()>,
-    /// Guards `readiness` so it fires only once per connection cycle
-    /// (on the first subscription priming read from Apple Home).
-    ready_notified: AtomicBool,
 }
 
 impl IntercomDoorLock {
@@ -59,7 +56,6 @@ impl IntercomDoorLock {
             dataver: Dataver::new(1),
             lock_state: AtomicU8::new(DlLockState::Locked as u8),
             state_changed: Signal::new(),
-            ready_notified: AtomicBool::new(false),
         }
     }
 
@@ -115,9 +111,7 @@ impl MatterCluster for IntercomDoorLock {
 
 impl AsyncHandler for IntercomDoorLock {
     async fn read(&self, ctx: impl ReadContext, reply: impl ReadReply) -> Result<(), Error> {
-        if !self.ready_notified.swap(true, Ordering::Relaxed) {
-            self.config.readiness.mark_door_lock_ready();
-        }
+        self.config.readiness.mark_door_lock_ready();
 
         if let Some(writer) = reply.with_dataver(self.dataver.get())? {
             if ctx.attr().is_system() {

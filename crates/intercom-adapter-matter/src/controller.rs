@@ -432,7 +432,7 @@ impl<R: SystemResetDriver> UserTask for ConnectionMonitor<'_, R> {
 
             // Signal state transitions
             if is_operational && !was_operational {
-                info!("network up -> operational");
+                info!("network interface operational");
                 if is_commissioned {
                     if self.readiness.is_ready() {
                         self.state_sender.operational();

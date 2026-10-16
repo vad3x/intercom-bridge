@@ -46,9 +46,6 @@ pub struct IntercomOccupancy {
     /// Signal used to wake the `run()` background task when occupancy changes
     /// and a subscription report needs to be pushed to HomeKit.
     state_changed: Signal<NoopRawMutex, ()>,
-    /// Guards `readiness` so it fires only once per connection cycle
-    /// (on the first subscription priming read from Apple Home).
-    ready_notified: AtomicBool,
 }
 
 impl IntercomOccupancy {
@@ -61,7 +58,6 @@ impl IntercomOccupancy {
             dataver: Dataver::new(2),
             occupancy: AtomicBool::new(false),
             state_changed: Signal::new(),
-            ready_notified: AtomicBool::new(false),
         }
     }
 
@@ -108,9 +104,7 @@ impl MatterCluster for IntercomOccupancy {
 
 impl AsyncHandler for IntercomOccupancy {
     async fn read(&self, ctx: impl ReadContext, reply: impl ReadReply) -> Result<(), Error> {
-        if !self.ready_notified.swap(true, Ordering::Relaxed) {
-            self.config.readiness.mark_ring_ready();
-        }
+        self.config.readiness.mark_ring_ready();
 
         if let Some(writer) = reply.with_dataver(self.dataver.get())? {
             if ctx.attr().is_system() {
