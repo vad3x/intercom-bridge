@@ -230,3 +230,28 @@ fn ecosystem_status_iterates_populated_properties() {
         ]
     );
 }
+
+#[test]
+fn ecosystem_status_property_lookup_and_overwrite() {
+    // Arrange
+    let status = EcosystemStatus::new(EcosystemId::new("Matter"), true)
+        .with_property("door_lock_subscribed", EcosystemValue::Bool(false))
+        .with_property("ring_sensor_subscribed", EcosystemValue::Bool(true));
+
+    // Act
+    let lock_before = status.property("door_lock_subscribed");
+    let ring_val = status.property("ring_sensor_subscribed");
+    let missing_val = status.property("nonexistent_key");
+
+    let updated_status = status.with_property("door_lock_subscribed", EcosystemValue::Bool(true));
+    let lock_after = updated_status.property("door_lock_subscribed");
+
+    // Assert
+    assert_eq!(lock_before, Some(&EcosystemValue::Bool(false)));
+    assert_eq!(ring_val, Some(&EcosystemValue::Bool(true)));
+    assert_eq!(missing_val, None);
+    assert_eq!(lock_after, Some(&EcosystemValue::Bool(true)));
+
+    let prop_count = updated_status.iter_properties().count();
+    assert_eq!(prop_count, 2);
+}

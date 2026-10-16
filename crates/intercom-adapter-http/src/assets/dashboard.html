@@ -503,13 +503,13 @@
               const props = eco.properties || {};
               if (ecoMatterLock) {
                 const lockSub = props.door_lock_subscribed;
-                ecoMatterLock.textContent = lockSub === true ? 'Subscribed' : (lockSub === false ? 'Unsubscribed' : 'Ready');
-                ecoMatterLock.style.color = lockSub === true ? 'var(--success)' : 'var(--text-muted)';
+                ecoMatterLock.textContent = lockSub === true ? 'Subscribed' : (lockSub === false ? 'Waiting' : 'Ready');
+                ecoMatterLock.style.color = lockSub === true ? 'var(--success)' : (lockSub === false ? 'var(--warning)' : 'var(--text-muted)');
               }
               if (ecoMatterRing) {
                 const ringSub = props.ring_sensor_subscribed;
-                ecoMatterRing.textContent = ringSub === true ? 'Subscribed' : (ringSub === false ? 'Unsubscribed' : 'Ready');
-                ecoMatterRing.style.color = ringSub === true ? 'var(--success)' : 'var(--text-muted)';
+                ecoMatterRing.textContent = ringSub === true ? 'Subscribed' : (ringSub === false ? 'Waiting' : 'Ready');
+                ecoMatterRing.style.color = ringSub === true ? 'var(--success)' : (ringSub === false ? 'var(--warning)' : 'var(--text-muted)');
               }
               if (ecoMatterBtn) {
                 ecoMatterBtn.textContent = '✓ Active Ecosystem';

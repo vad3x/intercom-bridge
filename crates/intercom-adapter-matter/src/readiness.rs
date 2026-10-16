@@ -177,7 +177,7 @@ mod tests {
         let status = barrier.status().unwrap();
 
         // Assert
-        assert_eq!(status.id, MATTER_ECOSYSTEM);
+        assert_eq!(status.ecosystem_type, MATTER_ECOSYSTEM);
         assert!(status.paired);
         assert_eq!(
             status.property("door_lock_subscribed"),

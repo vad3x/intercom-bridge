@@ -59,21 +59,56 @@ impl EcosystemStatus {
         }
     }
 
-    /// Builder method to append a key-value property into the next available slot.
+    /// Builder method to set or update a key-value property.
+    ///
+    /// If `key` already exists in `self.properties`, its value is updated;
+    /// otherwise it is inserted into the first empty slot.
     pub const fn with_property(mut self, key: &'static str, value: EcosystemValue) -> Self {
         let mut i = 0;
+        let mut first_none = None;
         while i < MAX_ECOSYSTEM_PROPERTIES {
-            if self.properties[i].is_none() {
-                self.properties[i] = Some((key, value));
-                break;
+            if let Some((k, _)) = self.properties[i] {
+                if str_eq(k, key) {
+                    self.properties[i] = Some((key, value));
+                    return self;
+                }
+            } else if first_none.is_none() {
+                first_none = Some(i);
             }
             i += 1;
         }
+        if let Some(slot) = first_none {
+            self.properties[slot] = Some((key, value));
+        }
         self
+    }
+
+    /// Return the value of the property with the given key, if present.
+    pub fn property(&self, key: &str) -> Option<&EcosystemValue> {
+        self.properties.iter().find_map(|prop| match prop {
+            Some((k, v)) if *k == key => Some(v),
+            _ => None,
+        })
     }
 
     /// Iterate over all populated `(key, value)` properties in insertion order.
     pub fn iter_properties(&self) -> impl Iterator<Item = (&'static str, EcosystemValue)> + '_ {
         self.properties.iter().filter_map(|prop| *prop)
     }
+}
+
+const fn str_eq(a: &str, b: &str) -> bool {
+    let a = a.as_bytes();
+    let b = b.as_bytes();
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < a.len() {
+        if a[i] != b[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
 }
