@@ -11,34 +11,34 @@ use log::info;
 use crate::events::SystemStateSender;
 use crate::ports::inbound::{AccessControllerHandle, CommandReceiver};
 use crate::ports::reporter::IntercomReporter;
-use crate::ports::{DoorDriver, FactoryResetDriver, RingDriver, SystemResetDriver};
+use crate::ports::{DoorDriver, ResetTriggerDriver, RingDriver, SystemResetDriver};
 use crate::service::access::AccessController;
-use crate::service::reset::FactoryResetService;
+use crate::service::reset::ResetService;
 use crate::service::ring::RingWatcher;
 
 /// The Smart Intercom application.
 ///
 /// Generic over port driver implementations.
 /// Owns all core domain services, runs them concurrently.
-pub struct App<R, D, REP, F, RST>
+pub struct App<R, D, REP, T, RST>
 where
     R: RingDriver,
     D: DoorDriver,
     REP: IntercomReporter,
-    F: FactoryResetDriver,
+    T: ResetTriggerDriver,
     RST: SystemResetDriver,
 {
     ring_watcher: RingWatcher<R>,
     access_controller: AccessController<D, REP>,
-    reset_service: FactoryResetService<F, RST>,
+    reset_service: ResetService<T, RST>,
 }
 
-impl<R, D, REP, F, RST> App<R, D, REP, F, RST>
+impl<R, D, REP, T, RST> App<R, D, REP, T, RST>
 where
     R: RingDriver,
     D: DoorDriver,
     REP: IntercomReporter,
-    F: FactoryResetDriver,
+    T: ResetTriggerDriver,
     RST: SystemResetDriver,
 {
     /// Create the application from port driver implementations.
@@ -46,13 +46,13 @@ where
         ring: R,
         door: D,
         reporter: REP,
-        factory_reset: F,
+        reset_trigger: T,
         reset: RST,
     ) -> Self {
         Self {
             ring_watcher: RingWatcher::new(ring),
             access_controller: AccessController::new(door, reporter),
-            reset_service: FactoryResetService::new(factory_reset, reset),
+            reset_service: ResetService::new(reset_trigger, reset),
         }
     }
 

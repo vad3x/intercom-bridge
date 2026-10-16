@@ -7,7 +7,7 @@ use intercom_core::events::{SystemState, SystemStateSender, SystemStateWatch};
 use intercom_core::ports::inbound::{AccessCommand, AccessControllerHandle, CommandChannel};
 use intercom_core::ports::reporter::{IntercomReporter, LockState};
 use intercom_core::ports::{
-    DoorDriver, FactoryResetDriver, RingDriver, SystemResetDriver,
+    DoorDriver, ResetScope, ResetTriggerDriver, RingDriver, SystemResetDriver,
 };
 use intercom_core::service::access::AccessController;
 use intercom_core::service::ring::RingWatcher;
@@ -71,7 +71,7 @@ impl MockResetDriver {
 }
 
 impl SystemResetDriver for &MockResetDriver {
-    fn erase_credentials(&self) {
+    fn erase_credentials(&self, _scope: ResetScope) {
         self.erased.store(true, Ordering::SeqCst);
     }
 
@@ -81,24 +81,19 @@ impl SystemResetDriver for &MockResetDriver {
     }
 }
 
-struct MockFactoryResetDriver {
-    triggered: AtomicBool,
+struct MockResetTriggerDriver {
+    scope: ResetScope,
 }
 
-impl MockFactoryResetDriver {
-    fn new(triggered: bool) -> Self {
-        Self {
-            triggered: AtomicBool::new(triggered),
-        }
+impl MockResetTriggerDriver {
+    fn new(scope: ResetScope) -> Self {
+        Self { scope }
     }
 }
 
-impl FactoryResetDriver for &MockFactoryResetDriver {
-    async fn wait_for_factory_reset(&mut self) {
-        while !self.triggered.load(Ordering::SeqCst) {
-            embassy_futures::yield_now().await;
-        }
-        self.triggered.store(false, Ordering::SeqCst);
+impl ResetTriggerDriver for &MockResetTriggerDriver {
+    async fn wait_for_reset(&mut self) -> ResetScope {
+        self.scope
     }
 }
 
@@ -196,7 +191,7 @@ fn app_compilation_and_mock_instantiation() {
     let ring = MockRingDriver::new(false);
     let door = MockDoorDriver::new();
     let reporter = MockReporter::new();
-    let factory_reset = MockFactoryResetDriver::new(false);
+    let reset_trigger = MockResetTriggerDriver::new(ResetScope::Factory);
     let reset = MockResetDriver::new();
 
     // Act
@@ -204,7 +199,7 @@ fn app_compilation_and_mock_instantiation() {
         &ring,
         &door,
         &reporter,
-        &factory_reset,
+        &reset_trigger,
         &reset,
     );
 
@@ -350,3 +345,84 @@ fn system_state_sender_queries_current_state() {
     // Assert
     assert_eq!(sender.current_state(), Some(SystemState::EcosystemConnecting));
 }
+
+#[test]
+fn test_reset_service_erases_ecosystem_scope_and_reboots() {
+    // Arrange
+    use intercom_core::ports::{ResetScope, ResetTriggerDriver, SystemResetDriver};
+    use intercom_core::service::ResetService;
+    use intercom_core::events::{SystemState, SystemStateWatch};
+    use core::sync::atomic::{AtomicBool, Ordering};
+
+    struct MockTrigger { scope: ResetScope }
+    impl ResetTriggerDriver for MockTrigger {
+        async fn wait_for_reset(&mut self) -> ResetScope { self.scope }
+    }
+
+    struct MockReset {
+        erased_scope: core::cell::Cell<Option<ResetScope>>,
+        reboot_called: AtomicBool,
+    }
+    impl SystemResetDriver for MockReset {
+        fn erase_credentials(&self, scope: ResetScope) { self.erased_scope.set(Some(scope)); }
+        fn reboot(&self) -> ! {
+            self.reboot_called.store(true, Ordering::SeqCst);
+            panic!("Mock reboot");
+        }
+    }
+
+    let trigger = MockTrigger { scope: ResetScope::Ecosystem };
+    let reset = MockReset {
+        erased_scope: core::cell::Cell::new(None),
+        reboot_called: AtomicBool::new(false),
+    };
+    let mut service = ResetService::new(trigger, reset);
+    let state_watch = SystemStateWatch::new();
+    let state_sender = intercom_core::events::SystemStateSender::new(&state_watch);
+
+    // Act
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        futures::executor::block_on(service.run(state_sender));
+    }));
+
+    // Assert
+    assert_eq!(service.reset.erased_scope.get(), Some(ResetScope::Ecosystem));
+    assert_eq!(state_watch.try_get(), Some(SystemState::FactoryReset));
+}
+
+#[test]
+fn test_reset_service_erases_factory_scope_and_reboots() {
+    // Arrange
+    use intercom_core::ports::{ResetScope, ResetTriggerDriver, SystemResetDriver};
+    use intercom_core::service::ResetService;
+    use intercom_core::events::{SystemState, SystemStateWatch};
+
+    struct MockTrigger { scope: ResetScope }
+    impl ResetTriggerDriver for MockTrigger {
+        async fn wait_for_reset(&mut self) -> ResetScope { self.scope }
+    }
+
+    struct MockReset {
+        erased_scope: core::cell::Cell<Option<ResetScope>>,
+    }
+    impl SystemResetDriver for MockReset {
+        fn erase_credentials(&self, scope: ResetScope) { self.erased_scope.set(Some(scope)); }
+        fn reboot(&self) -> ! { panic!("Mock reboot"); }
+    }
+
+    let trigger = MockTrigger { scope: ResetScope::Factory };
+    let reset = MockReset { erased_scope: core::cell::Cell::new(None) };
+    let mut service = ResetService::new(trigger, reset);
+    let state_watch = SystemStateWatch::new();
+    let state_sender = intercom_core::events::SystemStateSender::new(&state_watch);
+
+    // Act
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        futures::executor::block_on(service.run(state_sender));
+    }));
+
+    // Assert
+    assert_eq!(service.reset.erased_scope.get(), Some(ResetScope::Factory));
+    assert_eq!(state_watch.try_get(), Some(SystemState::FactoryReset));
+}
+

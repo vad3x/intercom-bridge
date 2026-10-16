@@ -5,9 +5,12 @@
 pub mod access;
 pub mod diagnostics;
 pub mod ecosystem;
+pub mod reset;
 
 pub use access::{AccessEffects, AccessStateMachine};
 pub use diagnostics::{SystemDiagnostics, WifiSsid};
 pub use ecosystem::{
     EcosystemId, EcosystemStatus, EcosystemType, EcosystemValue, MAX_ECOSYSTEM_PROPERTIES,
 };
+pub use reset::{classify_reset_hold, ResetScope};
+

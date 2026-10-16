@@ -7,5 +7,5 @@ pub mod ring;
 
 pub use access::AccessController;
 pub use diagnostics::DiagnosticsService;
-pub use reset::FactoryResetService;
+pub use reset::ResetService;
 pub use ring::RingWatcher;

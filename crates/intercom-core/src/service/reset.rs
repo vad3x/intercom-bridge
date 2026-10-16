@@ -1,45 +1,35 @@
-//! Smart Intercom - Factory Reset Service
-//!
-//! Monitors a factory reset trigger via `FactoryResetDriver`,
-//! updates system lifecycle state to `FactoryReset`, erases persistent credentials
-//! via `SystemResetDriver`, and reboots the hardware.
+//! Smart Intercom - System Reset Service
 
 use embassy_time::{Duration, Timer};
 use log::info;
 
 use crate::config::FACTORY_RESET_REBOOT_DELAY_MS;
 use crate::events::SystemStateSender;
-use crate::ports::{FactoryResetDriver, SystemResetDriver};
+use crate::ports::{ResetScope, ResetTriggerDriver, SystemResetDriver};
 
-/// Factory reset lifecycle service.
-///
-/// Generic over `FactoryResetDriver` (inbound trigger) and `SystemResetDriver`
-/// (outbound reset effect).
-pub struct FactoryResetService<F: FactoryResetDriver, R: SystemResetDriver> {
-    driver: F,
-    reset: R,
+/// System reset lifecycle service.
+pub struct ResetService<T: ResetTriggerDriver, R: SystemResetDriver> {
+    pub driver: T,
+    pub reset: R,
 }
 
-impl<F: FactoryResetDriver, R: SystemResetDriver> FactoryResetService<F, R> {
-    /// Create a new factory reset service.
-    pub fn new(driver: F, reset: R) -> Self {
+impl<T: ResetTriggerDriver, R: SystemResetDriver> ResetService<T, R> {
+    pub fn new(driver: T, reset: R) -> Self {
         Self { driver, reset }
     }
 
-    /// Run the factory reset monitor (never returns — controller reboots).
-    ///
-    /// Waits for the driver to detect a factory reset trigger, notifies the
-    /// lifecycle watch sender, erases credentials, waits for reboot delay,
-    /// and triggers reboot.
     pub async fn run(&mut self, state_sender: SystemStateSender<'_>) {
-        info!("monitoring for factory reset trigger");
+        info!("monitoring for reset trigger");
 
-        self.driver.wait_for_factory_reset().await;
+        let scope = self.driver.wait_for_reset().await;
 
-        info!("=== FACTORY RESET TRIGGERED ===");
+        match scope {
+            ResetScope::Ecosystem => info!("=== ECOSYSTEM RESET TRIGGERED ==="),
+            ResetScope::Factory => info!("=== FACTORY RESET TRIGGERED ==="),
+        }
 
         state_sender.factory_reset();
-        self.reset.erase_credentials();
+        self.reset.erase_credentials(scope);
 
         Timer::after(Duration::from_millis(FACTORY_RESET_REBOOT_DELAY_MS)).await;
 
