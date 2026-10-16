@@ -4,7 +4,7 @@ use rs_matter::persist::{KvBlobStore, BASIC_INFO_KEY, NETWORKS_KEY};
 
 // Mock in-memory KvBlobStore for testing
 struct MockKvStore {
-    items: [(u16, Option<[u8; 64]>, usize); 8],
+    items: [(u16, Option<[u8; 512]>, usize); 8],
 }
 
 impl MockKvStore {
@@ -17,6 +17,11 @@ impl MockKvStore {
 
 impl KvBlobStore for MockKvStore {
     fn load<'a>(&mut self, key: u16, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
+        for (_, data, len) in &self.items {
+            if data.is_some() && *len > buf.len() {
+                return Err(rs_matter::error::ErrorCode::BufferTooSmall.into());
+            }
+        }
         for (k, data, len) in &self.items {
             if *k == key {
                 if let Some(bytes) = data {
@@ -32,7 +37,7 @@ impl KvBlobStore for MockKvStore {
         for (k, stored, len) in &mut self.items {
             if *k == key || stored.is_none() {
                 *k = key;
-                let mut arr = [0u8; 64];
+                let mut arr = [0u8; 512];
                 arr[..data.len()].copy_from_slice(data);
                 *stored = Some(arr);
                 *len = data.len();
@@ -42,7 +47,12 @@ impl KvBlobStore for MockKvStore {
         panic!("Mock store full");
     }
 
-    fn remove(&mut self, key: u16, _buf: &mut [u8]) -> Result<(), Error> {
+    fn remove(&mut self, key: u16, buf: &mut [u8]) -> Result<(), Error> {
+        for (_, data, len) in &self.items {
+            if data.is_some() && *len > buf.len() {
+                return Err(rs_matter::error::ErrorCode::BufferTooSmall.into());
+            }
+        }
         for (k, stored, len) in &mut self.items {
             if *k == key {
                 *stored = None;
@@ -356,4 +366,47 @@ fn test_partitioned_kv_store_migration_populates_buf_even_if_wifi_store_fails() 
     // Assert
     assert_eq!(result.unwrap(), Some(b"legacy_wifi_creds".as_slice()));
     assert_eq!(&read_buf[..17], b"legacy_wifi_creds");
+}
+
+#[test]
+fn test_partitioned_kv_store_migration_succeeds_with_large_matter_items_present() {
+    // Arrange
+    let mut matter_store = MockKvStore::new();
+    let wifi_store = MockKvStore::new();
+    let mut setup_buf = [0u8; 1024];
+    let large_matter_data = [0xAAu8; 512];
+    matter_store
+        .store(1, &large_matter_data, &mut setup_buf)
+        .unwrap();
+    matter_store
+        .store(NETWORKS_KEY, b"migrated_wifi_creds", &mut setup_buf)
+        .unwrap();
+
+    let mut partitioned = PartitionedKvBlobStore::new(matter_store, wifi_store);
+    let mut read_buf = [0u8; 1024];
+
+    // Act
+    let loaded = partitioned.load(NETWORKS_KEY, &mut read_buf).unwrap();
+
+    // Assert
+    assert_eq!(loaded, Some(b"migrated_wifi_creds".as_slice()));
+    let mut check_buf = [0u8; 1024];
+    assert_eq!(
+        partitioned
+            .wifi_store
+            .load(NETWORKS_KEY, &mut check_buf)
+            .unwrap(),
+        Some(b"migrated_wifi_creds".as_slice())
+    );
+    assert_eq!(
+        partitioned
+            .matter_store
+            .load(NETWORKS_KEY, &mut check_buf)
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        partitioned.matter_store.load(1, &mut check_buf).unwrap(),
+        Some(large_matter_data.as_slice())
+    );
 }

@@ -55,6 +55,11 @@ impl ResetTriggerDriver for GpioBootButtonDriver {
         loop {
             self.config.pin.wait_for_falling_edge().await;
 
+            Timer::after(Duration::from_millis(30)).await;
+            if self.config.pin.is_high() {
+                continue;
+            }
+
             let press_start = Instant::now();
             info!(
                 "BOOT button pressed — hold {}s for ecosystem reset, {}s for full factory reset",

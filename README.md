@@ -45,12 +45,12 @@ The project is structured as a **Virtual Cargo Workspace** following the Ports a
 │                                                                             │
 │  Inbound & Outbound Ports:                                                  │
 │   ├── AccessControllerHandle (Inbound)    ├── IntercomReporter (Outbound)    │
-│   ├── RingDriver (Outbound)               ├── FactoryResetDriver (Outbound)  │
+│   ├── RingDriver (Outbound)               ├── ResetTriggerDriver (Outbound)  │
 │   ├── DoorDriver (Outbound)               └── SystemResetDriver (Outbound)   │
 │                                                                             │
 │  Application Services & Domain Core:                                        │
 │   ├── AccessController (AccessStateMachine)                                 │
-│   ├── RingWatcher                         ├── FactoryResetService           │
+│   ├── RingWatcher                         ├── ResetService                  │
 │   ├── SystemStateWatch (Lifecycle)        └── CommandChannel (MPSC)         │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```

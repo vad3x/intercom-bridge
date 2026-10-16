@@ -14,7 +14,7 @@ The central, hardware-agnostic and protocol-agnostic domain and application orch
 Autonomous async services orchestrating domain rules and port interfaces:
 - **AccessController**: Deep application use case coordinating entrance door unlock actuation, auto-relock safety deadlines, and visitor ring announcements.
 - **RingWatcher**: Monitors physical ring triggers and dispatches them to the core domain via `AccessControllerHandle`.
-- **FactoryResetService**: Coordinates credential erasure and reboot sequence upon maintenance button trigger.
+- **ResetService**: Coordinates credential erasure and reboot sequence upon maintenance button trigger.
 
 ### Lifecycle Watch
 The continuous state broadcast (`Watch`) providing zero-drop, zero-allocation system lifecycle updates to observers without queue limits.
@@ -30,7 +30,7 @@ Abstract traits defined by `intercom-core` representing required capabilities:
 - **IntercomReporter**: Reports visitor chime/ring activity and lock latch state (`LockState`) to external ecosystems and local feedback adapters (protocol-agnostic, zero Matter or hardware terms).
 - **DoorDriver**: Triggers physical entrance door unlock actuation.
 - **RingDriver**: Blocks until a debounced hardware ring event occurs.
-- **FactoryResetDriver**: Waits for maintenance button hold triggers.
+- **ResetTriggerDriver**: Waits for maintenance button hold triggers.
 - **SystemResetDriver**: Erases persistent credentials and triggers hardware reboot.
 
 ## Adapters (Edge Implementations)
