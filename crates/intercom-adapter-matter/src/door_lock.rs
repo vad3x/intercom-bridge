@@ -101,6 +101,7 @@ impl IntercomDoorLock {
                 | door_lock::AttributeId::AutoRelockTime
                 | door_lock::AttributeId::OperatingMode
                 | door_lock::AttributeId::SupportedOperatingModes
+                | door_lock::AttributeId::RequirePINforRemoteOperation
         ))
         .with_cmds(with!(
             door_lock::CommandId::LockDoor | door_lock::CommandId::UnlockDoor
@@ -165,6 +166,10 @@ impl AsyncHandler for IntercomDoorLock {
                     x if x == door_lock::AttributeId::SupportedOperatingModes as u16 => {
                         Reply::set(writer, DlSupportedOperatingModes::NORMAL)
                     }
+                    // RequirePINforRemoteOperation (id=51): bool (false = remote unlock allowed without PIN)
+                    x if x == door_lock::AttributeId::RequirePINforRemoteOperation as u16 => {
+                        Reply::set(writer, false)
+                    }
                     _ => Err(ErrorCode::AttributeNotFound.into()),
                 }
             }
@@ -178,6 +183,8 @@ impl AsyncHandler for IntercomDoorLock {
         match ctx.attr().attr_id as u16 {
             // AutoRelockTime (id=35) - allow controllers to configure auto-relock
             x if x == door_lock::AttributeId::AutoRelockTime as u16 => Ok(()),
+            // RequirePINforRemoteOperation (id=51) - allow controllers to configure PIN requirement
+            x if x == door_lock::AttributeId::RequirePINforRemoteOperation as u16 => Ok(()),
             _ => Err(ErrorCode::AttributeNotFound.into()),
         }
     }
