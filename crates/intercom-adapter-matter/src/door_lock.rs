@@ -98,6 +98,7 @@ impl IntercomDoorLock {
             door_lock::AttributeId::LockState
                 | door_lock::AttributeId::LockType
                 | door_lock::AttributeId::ActuatorEnabled
+                | door_lock::AttributeId::AutoRelockTime
                 | door_lock::AttributeId::OperatingMode
                 | door_lock::AttributeId::SupportedOperatingModes
         ))
@@ -149,6 +150,13 @@ impl AsyncHandler for IntercomDoorLock {
                     x if x == door_lock::AttributeId::ActuatorEnabled as u16 => {
                         Reply::set(writer, true)
                     }
+                    // AutoRelockTime (id=35): u32
+                    x if x == door_lock::AttributeId::AutoRelockTime as u16 => {
+                        Reply::set(
+                            writer,
+                            intercom_core::config::AUTO_RELOCK_SEC as u32,
+                        )
+                    }
                     // OperatingMode (id=37): OperatingModeEnum
                     x if x == door_lock::AttributeId::OperatingMode as u16 => {
                         Reply::set(writer, OperatingModeEnum::Normal)
@@ -167,8 +175,11 @@ impl AsyncHandler for IntercomDoorLock {
 
     async fn write(&self, ctx: impl WriteContext) -> Result<(), Error> {
         ctx.attr().check_dataver(self.dataver.get())?;
-        // None of our DoorLock attributes are writable
-        Err(ErrorCode::AttributeNotFound.into())
+        match ctx.attr().attr_id as u16 {
+            // AutoRelockTime (id=35) - allow controllers to configure auto-relock
+            x if x == door_lock::AttributeId::AutoRelockTime as u16 => Ok(()),
+            _ => Err(ErrorCode::AttributeNotFound.into()),
+        }
     }
 
     async fn invoke(&self, ctx: impl InvokeContext, _reply: impl InvokeReply) -> Result<(), Error> {

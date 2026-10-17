@@ -75,9 +75,13 @@ impl IntercomOccupancy {
 
     /// The subset of OccupancySensing we support.
     ///
-    /// We expose the three mandatory attributes; no commands.
+    /// We expose the three mandatory attributes and advertise PIR sensing capabilities; no commands.
     pub const CLUSTER: Cluster<'static> = occupancy_sensing::FULL_CLUSTER
         .with_revision(5)
+        .with_features(
+            occupancy_sensing::Feature::OTHER.bits()
+                | occupancy_sensing::Feature::PASSIVE_INFRARED.bits(),
+        )
         .with_attrs(with!(
             occupancy_sensing::AttributeId::Occupancy
                 | occupancy_sensing::AttributeId::OccupancySensorType
