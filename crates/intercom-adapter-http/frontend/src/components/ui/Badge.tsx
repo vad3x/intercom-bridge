@@ -1,61 +1,55 @@
-import type { JSX, ParentComponent } from 'solid-js';
+import type { Component, ComponentProps } from 'solid-js';
+import { splitProps } from 'solid-js';
 
-export interface BadgeProps {
-  variant?:
-    | 'primary'
-    | 'secondary'
-    | 'accent'
-    | 'success'
-    | 'warning'
-    | 'error'
-    | 'info'
-    | 'neutral';
-  size?: 'xs' | 'sm' | 'md' | 'lg';
-  outline?: boolean;
-  class?: string;
-  children?: JSX.Element;
+export interface BadgeProps extends ComponentProps<'span'> {
+  variant?: 'success' | 'warning' | 'error' | 'info' | 'ghost' | 'neutral';
+  size?: 'xs' | 'sm' | 'md';
 }
 
-export const Badge: ParentComponent<BadgeProps> = (props) => {
-  const variantClass = () => {
-    switch (props.variant) {
-      case 'primary':
-        return 'badge-primary';
-      case 'secondary':
-        return 'badge-secondary';
-      case 'accent':
-        return 'badge-accent';
+export const Badge: Component<BadgeProps> = (props) => {
+  const [local, rest] = splitProps(props, ['variant', 'size', 'class', 'children']);
+
+  const variantClasses = () => {
+    switch (local.variant) {
       case 'success':
-        return 'badge-success';
+        return 'bg-success/15 text-success border-success/30';
       case 'warning':
-        return 'badge-warning';
+        return 'bg-warning/15 text-warning border-warning/40';
       case 'error':
-        return 'badge-error';
+        return 'bg-error/15 text-error border-error/30';
       case 'info':
-        return 'badge-info';
+        return 'bg-info/15 text-info border-info/30';
+      case 'ghost':
+        return 'bg-base-content/5 text-base-content/70 border-base-content/15';
       default:
-        return 'badge-neutral';
+        return 'bg-base-content/10 text-base-content/80 border-base-content/20';
     }
   };
 
-  const sizeClass = () => {
-    switch (props.size) {
+  const sizeClasses = () => {
+    switch (local.size) {
       case 'xs':
-        return 'badge-xs';
-      case 'sm':
-        return 'badge-sm';
-      case 'lg':
-        return 'badge-lg';
+        return 'px-2 py-0.5 text-[10px]';
+      case 'md':
+        return 'px-3 py-1 text-xs';
       default:
-        return 'badge-sm';
+        return 'px-2.5 py-0.5 text-xs';
     }
   };
+
+  const classes = () =>
+    [
+      'inline-flex items-center gap-1.5 font-semibold uppercase tracking-wider rounded-full border shadow-sm transition-colors',
+      variantClasses(),
+      sizeClasses(),
+      local.class || '',
+    ]
+      .filter(Boolean)
+      .join(' ');
 
   return (
-    <span
-      class={`badge ${variantClass()} ${sizeClass()} ${props.outline ? 'badge-outline' : ''} ${props.class || ''}`}
-    >
-      {props.children}
+    <span class={classes()} {...rest}>
+      {local.children}
     </span>
   );
 };

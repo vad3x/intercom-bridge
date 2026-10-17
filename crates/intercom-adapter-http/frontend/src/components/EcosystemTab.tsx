@@ -50,44 +50,42 @@ export const EcosystemTab: Component<EcosystemTabProps> = (props) => {
                   <td class="text-right">{renderSubBadge(propsObj().door_lock_subscribed)}</td>
                 </tr>
                 <tr class="border-b border-base-content/10">
-                  <td class="text-base-content/70">🔔 Ring / Occupancy (EP2)</td>
+                  <td class="text-base-content/70">🔔 Chime / Ring (EP2)</td>
                   <td class="text-right">{renderSubBadge(propsObj().ring_sensor_subscribed)}</td>
                 </tr>
               </tbody>
             </table>
           </div>
 
-          <p class="text-xs text-base-content/60 mt-2">
-            Readiness barrier ensures Apple HomeKit controllers prime cluster subscriptions before
-            marking the bridge Operational.
-          </p>
+          <div class="mt-4">
+            <button
+              type="button"
+              class="btn btn-sm btn-block btn-success btn-outline pointer-events-none"
+            >
+              <Check class="w-4 h-4 mr-1" /> Active Ecosystem
+            </button>
+          </div>
         </CardBody>
       </Card>
 
-      {/* Smart Home Integration Info */}
-      <Card bordered>
+      {/* Home Assistant Planned Card */}
+      <Card bordered class="opacity-80">
         <CardBody>
-          <CardTitle class="text-base font-bold text-base-content mb-2">
-            Ecosystem Integrations
-          </CardTitle>
-          <p class="text-sm text-base-content/80 mb-3">
-            Intercom Bridge bridges analog intercom hardware to major smart home ecosystems via
-            Matter.
+          <div class="flex items-center justify-between mb-2">
+            <CardTitle class="text-base font-bold text-base-content m-0">Home Assistant</CardTitle>
+            <Badge variant="ghost">Planned</Badge>
+          </div>
+
+          <p class="text-sm text-base-content/70 my-4 leading-relaxed">
+            Native direct integration for Home Assistant via ESPHome/native API. Currently in
+            planning.
           </p>
-          <ul class="space-y-2 text-sm text-base-content/70">
-            <li class="flex items-center gap-2">
-              <Check class="w-4 h-4 text-success" />
-              <span>Apple Home (HomeKit door lock + doorbell chime)</span>
-            </li>
-            <li class="flex items-center gap-2">
-              <Check class="w-4 h-4 text-success" />
-              <span>Home Assistant Matter integration</span>
-            </li>
-            <li class="flex items-center gap-2">
-              <Check class="w-4 h-4 text-success" />
-              <span>Google Home & Amazon Alexa compatible</span>
-            </li>
-          </ul>
+
+          <div class="mt-auto pt-4">
+            <button type="button" class="btn btn-sm btn-block btn-disabled">
+              Switch Ecosystem (Coming Soon)
+            </button>
+          </div>
         </CardBody>
       </Card>
     </div>

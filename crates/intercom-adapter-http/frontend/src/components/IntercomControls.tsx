@@ -15,109 +15,135 @@ export const IntercomControls: Component<IntercomControlsProps> = (props) => {
   const isLocked = () => !props.isUnlocking && (props.doorLocked ?? true);
 
   return (
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-      {/* Door Strike / Lock Control Card */}
-      <Card bordered>
-        <CardBody class="flex flex-col justify-between">
-          <div>
-            <div class="flex items-center justify-between mb-4">
-              <CardTitle>Door Access</CardTitle>
+    <div class="space-y-4">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Door Access Tile */}
+        <Card bordered>
+          <CardBody>
+            <div class="flex items-center justify-between pb-3 border-b border-base-content/10">
+              <div class="flex items-center gap-2.5">
+                <div
+                  class={`p-2 rounded-lg transition-colors ${
+                    isLocked() ? 'bg-success/20 text-success' : 'bg-warning/20 text-warning'
+                  }`}
+                >
+                  {isLocked() ? <Lock class="w-4 h-4" /> : <Unlock class="w-4 h-4" />}
+                </div>
+                <div>
+                  <div class="font-semibold text-sm text-base-content">Door Strike</div>
+                  <div class="text-xs text-base-content/60">
+                    {props.isUnlocking
+                      ? 'Actuating Strike'
+                      : isLocked()
+                        ? 'Secured (LOCKED)'
+                        : 'Unlatched (UNLOCKED)'}
+                  </div>
+                </div>
+              </div>
               <Badge variant={isLocked() ? 'success' : 'warning'}>
+                <span
+                  class={`w-2 h-2 rounded-full ${
+                    isLocked() ? 'bg-success' : 'bg-warning animate-pulse'
+                  }`}
+                />
+                <span>{props.isUnlocking ? 'unlocking' : isLocked() ? 'locked' : 'unlocked'}</span>
+              </Badge>
+            </div>
+
+            <div class="flex flex-col items-center justify-center py-4 text-center">
+              <CardTitle class="mb-2">Entrance Door</CardTitle>
+              <div
+                class={`text-3xl sm:text-4xl font-black my-1 ${
+                  isLocked() ? 'text-success' : 'text-warning'
+                }`}
+              >
                 {props.isUnlocking ? 'Unlocking...' : isLocked() ? 'Locked' : 'Unlocked'}
-              </Badge>
-            </div>
-
-            <div class="flex flex-col items-center justify-center py-6 text-center">
-              <div
-                class={`w-24 h-24 rounded-full flex items-center justify-center transition-all duration-300 ${
-                  isLocked()
-                    ? 'bg-success/15 text-success'
-                    : 'bg-warning/20 text-warning animate-pulse'
-                }`}
-              >
-                {props.isUnlocking ? (
-                  <Loader2 class="w-12 h-12 animate-spin" />
-                ) : isLocked() ? (
-                  <Lock class="w-12 h-12" />
-                ) : (
-                  <Unlock class="w-12 h-12" />
-                )}
               </div>
-              <p class="mt-4 font-semibold text-lg">
-                {props.isUnlocking
-                  ? 'Actuating Door Strike...'
-                  : isLocked()
-                    ? 'Entrance Door Secured'
-                    : 'Entrance Door Unlocked'}
-              </p>
-              <p class="text-xs text-base-content/60 mt-1">
+              <div class="text-xs text-base-content/60 mt-1">
                 PhotoMOS Relay • Auto-relocks after strike pulse
-              </p>
+              </div>
+              <div class="w-full mt-5">
+                <button
+                  type="button"
+                  class="btn btn-primary w-full gap-2 font-medium"
+                  disabled={props.isUnlocking}
+                  onClick={props.onUnlock}
+                >
+                  {props.isUnlocking ? (
+                    <>
+                      <Loader2 class="w-4 h-4 animate-spin" />
+                      Unlocking Door...
+                    </>
+                  ) : (
+                    <>
+                      <Unlock class="w-4 h-4" />
+                      Unlock Entrance Door
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
-          </div>
+          </CardBody>
+        </Card>
 
-          <button
-            type="button"
-            class="btn btn-primary w-full gap-2 text-base font-bold shadow-md"
-            disabled={props.isUnlocking}
-            onClick={props.onUnlock}
-          >
-            {props.isUnlocking ? (
-              <>
-                <Loader2 class="w-5 h-5 animate-spin" />
-                Unlocking...
-              </>
-            ) : (
-              <>
-                <Unlock class="w-5 h-5" />
-                Unlock Door
-              </>
-            )}
-          </button>
-        </CardBody>
-      </Card>
-
-      {/* Doorbell Ring Status & Test Card */}
-      <Card bordered>
-        <CardBody class="flex flex-col justify-between">
-          <div>
-            <div class="flex items-center justify-between mb-4">
-              <CardTitle>Doorbell Sensor</CardTitle>
-              <Badge variant={props.isRinging ? 'warning' : 'neutral'}>
-                {props.isRinging ? 'Ringing' : 'Idle'}
+        {/* Doorbell Chime Sensor Tile */}
+        <Card bordered>
+          <CardBody>
+            <div class="flex items-center justify-between pb-3 border-b border-base-content/10">
+              <div class="flex items-center gap-2.5">
+                <div
+                  class={`p-2 rounded-lg transition-colors ${
+                    props.isRinging
+                      ? 'bg-warning/20 text-warning'
+                      : 'bg-base-300 text-base-content/60'
+                  }`}
+                >
+                  <Bell class="w-4 h-4" />
+                </div>
+                <div>
+                  <div class="font-semibold text-sm text-base-content">Chime Sensor</div>
+                  <div class="text-xs text-base-content/60">
+                    {props.isRinging ? 'Ring Detected' : 'Monitoring Input'}
+                  </div>
+                </div>
+              </div>
+              <Badge variant={props.isRinging ? 'warning' : 'ghost'}>
+                <span
+                  class={`w-2 h-2 rounded-full ${
+                    props.isRinging ? 'bg-warning animate-pulse' : 'bg-base-content/30'
+                  }`}
+                />
+                <span>{props.isRinging ? 'ringing' : 'idle'}</span>
               </Badge>
             </div>
 
-            <div class="flex flex-col items-center justify-center py-6 text-center">
+            <div class="flex flex-col items-center justify-center py-4 text-center">
+              <CardTitle class="mb-2">Doorbell Chime</CardTitle>
               <div
-                class={`w-24 h-24 rounded-full flex items-center justify-center transition-all duration-300 ${
-                  props.isRinging
-                    ? 'bg-warning/20 text-warning animate-bounce'
-                    : 'bg-base-200 text-base-content/60'
+                class={`text-3xl sm:text-4xl font-black my-1 ${
+                  props.isRinging ? 'text-warning' : 'text-base-content/80'
                 }`}
               >
-                <Bell class="w-12 h-12" />
+                {props.isRinging ? 'Ringing!' : 'Idle'}
               </div>
-              <p class="mt-4 font-semibold text-lg">
-                {props.isRinging ? 'Doorbell Ring Detected!' : 'Doorbell Chime Idle'}
-              </p>
-              <p class="text-xs text-base-content/60 mt-1">
-                Optocoupler Input • Bridges analog chime to Matter Occupancy
-              </p>
+              <div class="text-xs text-base-content/60 mt-1">
+                Optocoupler Input • Matter Occupancy Endpoint 2
+              </div>
+              <div class="w-full mt-5">
+                <button
+                  type="button"
+                  class="btn btn-outline btn-secondary w-full gap-2 font-medium"
+                  disabled={props.isRinging}
+                  onClick={props.onRing}
+                >
+                  <Sparkles class="w-4 h-4" />
+                  Test Doorbell Ring
+                </button>
+              </div>
             </div>
-          </div>
-
-          <button
-            type="button"
-            class="btn btn-secondary w-full gap-2 text-base font-bold shadow-md"
-            disabled={props.isRinging}
-            onClick={props.onRing}
-          >
-            <Sparkles class="w-5 h-5" />
-            Test Doorbell Ring
-          </button>
-        </CardBody>
-      </Card>
+          </CardBody>
+        </Card>
+      </div>
     </div>
   );
 };

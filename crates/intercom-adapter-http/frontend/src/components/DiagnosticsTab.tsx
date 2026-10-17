@@ -62,7 +62,7 @@ export const DiagnosticsTab: Component<DiagnosticsTabProps> = (props) => {
                 </tr>
                 <tr class="border-b border-base-content/10">
                   <td class="text-base-content/70">Wi-Fi SSID</td>
-                  <td class="text-right font-mono">{props.status?.wifi_ssid || 'Disconnected'}</td>
+                  <td class="text-right font-mono">{props.status?.wifi_ssid || 'N/A'}</td>
                 </tr>
                 <tr class="border-b border-base-content/10">
                   <td class="text-base-content/70">Wi-Fi RSSI</td>
@@ -78,49 +78,51 @@ export const DiagnosticsTab: Component<DiagnosticsTabProps> = (props) => {
         </CardBody>
       </Card>
 
-      {/* Memory & Partitions */}
+      {/* Firmware & Memory */}
       <Card bordered>
         <CardBody>
-          <CardTitle>Memory & Firmware</CardTitle>
-
-          <div class="my-2">
-            <div class="flex justify-between text-xs mb-1">
-              <span class="text-base-content/70">Heap Utilization</span>
-              <span class="font-mono">
-                {heapInfo().usedKb} KB / {heapInfo().totalKb} KB ({heapInfo().pct}%)
-              </span>
-            </div>
-            <progress class="progress progress-primary w-full" value={heapInfo().pct} max="100" />
-          </div>
-
-          <div class="overflow-x-auto mt-2">
+          <CardTitle>Firmware & Memory</CardTitle>
+          <div class="overflow-x-auto">
             <table class="table table-sm">
               <tbody>
                 <tr class="border-b border-base-content/10">
-                  <td class="text-base-content/70">Active Partition</td>
-                  <td class="text-right font-mono">
-                    <Badge variant="primary">{props.status?.active_slot || 'ota_0'}</Badge>
+                  <td class="text-base-content/70">Active Slot</td>
+                  <td class="text-right font-mono font-bold">
+                    {props.status?.active_slot || '--'}
                   </td>
                 </tr>
                 <tr class="border-b border-base-content/10">
-                  <td class="text-base-content/70">Slot Boot Valid</td>
+                  <td class="text-base-content/70">Slot Valid</td>
                   <td class="text-right">
-                    <Badge variant={props.status?.slot_valid ? 'success' : 'warning'}>
+                    <Badge variant={props.status?.slot_valid ? 'success' : 'error'}>
                       {props.status?.slot_valid ? 'Valid' : 'Pending'}
                     </Badge>
                   </td>
                 </tr>
                 <tr class="border-b border-base-content/10">
-                  <td class="text-base-content/70">Firmware Version</td>
-                  <td class="text-right font-mono">{props.status?.version || '0.1.0'}</td>
+                  <td class="text-base-content/70">Heap Memory</td>
+                  <td class="text-right font-mono">
+                    <div>
+                      {heapInfo().usedKb} / {heapInfo().totalKb} KB ({heapInfo().pct}%)
+                    </div>
+                    <progress
+                      class="progress progress-primary w-28 h-2 mt-1"
+                      value={heapInfo().pct}
+                      max="100"
+                    />
+                  </td>
+                </tr>
+                <tr class="border-b border-base-content/10">
+                  <td class="text-base-content/70">Version</td>
+                  <td class="text-right font-mono">{props.status?.version || '--'}</td>
                 </tr>
                 <tr class="border-b border-base-content/10">
                   <td class="text-base-content/70">Git Commit</td>
-                  <td class="text-right font-mono">{props.status?.git_commit || 'dev'}</td>
+                  <td class="text-right font-mono text-xs">{props.status?.git_commit || '--'}</td>
                 </tr>
                 <tr class="border-b border-base-content/10">
                   <td class="text-base-content/70">Build Date</td>
-                  <td class="text-right font-mono">{props.status?.build_date || '--'}</td>
+                  <td class="text-right font-mono text-xs">{props.status?.build_date || '--'}</td>
                 </tr>
               </tbody>
             </table>
