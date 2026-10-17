@@ -10,4 +10,8 @@ build-std = ["core", "alloc", "panic_abort"]
 
 [alias]
 qr = ["run", "-p", "intercom-pairing-tool", "--target", "x86_64-apple-darwin", "--"]
+fe-dev = ["fe", "dev"]
+fe-build = ["fe", "build"]
+fe-check = ["fe", "check"]
+fe-install = ["fe", "install"]
 

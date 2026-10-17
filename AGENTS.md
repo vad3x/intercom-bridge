@@ -20,13 +20,14 @@ For accessing rust/cargo CLI, use `mise`. The project uses a nightly Rust toolch
 - **Matter:** `rs-matter` + `rs-matter-embassy` (bare-metal Matter over WiFi)
 - **Protocol:** Matter over WiFi (BLE for commissioning)
 - **OTA Updates:** HTTP streaming over Wi-Fi (port 8080) with Ed25519 signature verification and dual-bank bootloader rollback
+- **Web Dashboard:** Embedded HTTP server (port 8080) serving pre-gzipped Solid.js + DaisyUI + Tailwind SPA and REST API
 
 
 ## Build, Test & Flash
 
 ```bash
 # Run host unit tests (runs in ~1s on macOS/Linux without hardware)
-cargo test -p intercom-core -p intercom-adapter-ota --target x86_64-apple-darwin
+cargo test -p intercom-core -p intercom-adapter-http -p intercom-adapter-ota --target x86_64-apple-darwin
 
 # Build debug firmware binary (intercom-bridge)
 mise exec -- cargo build -p intercom-firmware
@@ -59,6 +60,24 @@ cargo qr -- --json
 ```
 
 The `.cargo/config.toml` configures the RISC-V target (`riscv32imac-unknown-none-elf`), `build-std`, and the `espflash` runner with `--erase-parts otadata`. Erasing `otadata` ensures that whenever firmware is flashed via USB, the 2nd-stage bootloader automatically boots the newly flashed binary in `ota_0`, preserving `nvs` (Wi-Fi) and `matter_kvs` (Matter credentials). USB ports are typically `/dev/cu.usbmodem*` (native ESP32-C6 USB) or `/dev/cu.usbserial*` (UART bridge).
+
+## Frontend Web Dashboard (Solid.js + DaisyUI + Bun)
+
+The embedded HTTP server serves a single-file dashboard (`assets/dashboard.html`). Root cargo aliases run all frontend tasks seamlessly from anywhere in the repository:
+
+```bash
+# Start local hot-reloading dev server (proxies /api to test board):
+cargo fe-dev      # or `cargo fe dev`
+
+# Run Biome linter and formatter in ~10ms:
+cargo fe-check    # or `cargo fe check`
+
+# Build single-file production asset for firmware (assets/dashboard.html):
+cargo fe-build    # or `cargo fe build`
+
+# Install frontend dependencies:
+cargo fe-install  # or `cargo fe install`
+```
 
 ### Remote Firmware Updates (OTA over Wi-Fi)
 
@@ -167,6 +186,11 @@ intercom-bridge/
 │   │       ├── led.rs              # GpioLedDriver (active-low LED, blink patterns)
 │   │       ├── boot_button.rs      # GpioBootButtonDriver (maintenance button)
 │   │       └── flash.rs            # EspFlash (ROM SPI flash persistence)
+│   ├── intercom-adapter-http/      # Pre-gzipped Web Dashboard & REST API on port 8080
+│   │   ├── assets/                 # Embedded dashboard.html production bundle
+│   │   ├── frontend/               # Modern Solid.js + DaisyUI + Tailwind SPA source
+│   │   ├── src/                    # Router, HTTP handlers, static asset streaming
+│   │   └── tests/                  # Router and server unit/integration tests
 │   ├── intercom-adapter-matter/    # Smart home protocol adapters (rs-matter)
 │   │   └── src/
 │   │       ├── config.rs           # Matter endpoint IDs and serial format
@@ -180,7 +204,8 @@ intercom-bridge/
 │   │       ├── lib.rs              # Crate root, error types, and re-exports
 │   │       ├── bootloader.rs       # ESP-IDF otadata parser & dual-slot state machine
 │   │       ├── writer.rs           # Streaming flash sector writer & Ed25519 verifier
-│   │       └── server.rs           # Async HTTP OTA listener (port 8080)
+│   │       └── driver.rs           # FlashOtaDriver coordinating writer and bootloader
+│   ├── intercom-pairing-tool/      # Host CLI (`cargo qr`) for Matter QR & manual pairing codes
 │   └── intercom-firmware/          # Composition root binary (intercom-bridge)
 │       └── src/
 │           ├── config.rs           # Hardware version, device info, flash partition layout
@@ -189,6 +214,7 @@ intercom-bridge/
 │           └── utils/
 │               └── uptime_logger.rs# Custom HH:MM:SS.mmm logger
 ├── scripts/
+│   ├── cargo-fe                    # Frontend CLI runner (dev, build, check, install)
 │   ├── generate_keys.py            # Ed25519 keypair generator for firmware signing
 │   ├── ota.py                      # Multi-device mDNS discovery & OTA firmware pusher
 │   └── monitor.py                  # Non-intrusive serial monitor without chip reset
@@ -203,7 +229,7 @@ intercom-bridge/
 
 | File | Purpose |
 |------|---------|
-| `crates/intercom-firmware/src/main.rs` | Composition root: hardware init, creates channels & `SystemStateWatch`, instantiates adapters, wires them into `App` + `MatterController` + `OtaServer`, runs via `join4` |
+| `crates/intercom-firmware/src/main.rs` | Composition root: hardware init, creates channels & `SystemStateWatch`, instantiates adapters, wires them into `App` + `MatterController` + `HttpServer`, runs via `join4` |
 | `crates/intercom-core/src/domain/access.rs` | `AccessStateMachine` — pure, deterministic domain state machine (zero async/runtime dependencies) |
 | `crates/intercom-core/src/service/access.rs` | `AccessController` — deep application use case orchestrating strike relay, auto-relock, and ring announcements |
 | `crates/intercom-core/src/ports/inbound.rs` | `AccessControllerHandle` & `CommandChannel` — idiomatic Inbound Port handle for driving access commands |
@@ -212,6 +238,9 @@ intercom-bridge/
 | `crates/intercom-core/src/ports/` | Abstract outbound port traits (`DoorDriver`, `RingDriver`, `IntercomReporter`, `ResetTriggerDriver`, `SystemResetDriver`) |
 | `crates/intercom-core/src/events.rs` | `SystemState` enum (`Updating`, etc.), `SystemStateWatch` (`Watch`), `SystemStateSender`, `SystemStateReceiver` |
 | `crates/intercom-core/src/config.rs` | Domain access, relock, and reset timing policies (protocol- and hardware-agnostic) |
+| `crates/intercom-adapter-http/src/server.rs` | Async HTTP server: static pre-gzipped dashboard & REST endpoints (`/api/status`, `/api/actions/*`, `/api/logs`, `/api/ota/flash`) |
+| `crates/intercom-adapter-http/src/router.rs` | HTTP request parser and routing engine |
+| `crates/intercom-adapter-http/frontend/` | Solid.js single-page application source (Vite + DaisyUI + Tailwind + Bun) |
 | `crates/intercom-adapter-matter/src/config.rs` | Matter endpoint IDs and serial number formatting |
 | `crates/intercom-firmware/src/config.rs` | Hardware version, product identification, flash layout, and `OTA_PUBLIC_KEY` |
 | `crates/intercom-adapter-matter/src/readiness.rs` | `ClusterReadinessBarrier` — internal Apple Home subscription readiness coordination |
@@ -220,11 +249,12 @@ intercom-bridge/
 | `crates/intercom-adapter-matter/src/occupancy.rs` | `IntercomOccupancy` — Matter OccupancySensing cluster |
 | `crates/intercom-adapter-matter/src/access_control.rs` | `MatterAccessControlDriver` — implements `IntercomReporter` port |
 | `crates/intercom-adapter-gpio/src/` | GPIO implementations of port traits using `esp-hal` |
-| `crates/intercom-adapter-ota/src/server.rs` | Async HTTP OTA server: throttled single-connection listener streaming signed updates |
 | `crates/intercom-adapter-ota/src/bootloader.rs` | ESP-IDF `otadata` state machine: slot selection, sequence calculation, rollback protection |
 | `crates/intercom-adapter-ota/src/writer.rs` | Streaming flash writer: sector buffering, Ed25519 signature verification |
+| `crates/intercom-adapter-ota/src/driver.rs` | `FlashOtaDriver`: coordinates streaming flash writer and bootloader slot commit |
 | `scripts/ota.py` | Host CLI: mDNS discovery, Ed25519 signing, and streaming HTTP firmware push |
 | `scripts/generate_keys.py` | Host tool: generates Ed25519 private key and outputs Rust public key array |
+| `scripts/cargo-fe` | Host frontend helper for `cargo fe-dev`, `cargo fe-build`, `cargo fe-check`, `cargo fe-install` |
 
 ## Architecture Patterns
 
