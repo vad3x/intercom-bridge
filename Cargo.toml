@@ -11,6 +11,7 @@ members = [
     "crates/intercom-adapter-matter",
     "crates/intercom-adapter-ota",
     "crates/intercom-firmware",
+    "crates/intercom-pairing-tool",
 ]
 default-members = ["crates/intercom-firmware"]
 resolver = "2"
