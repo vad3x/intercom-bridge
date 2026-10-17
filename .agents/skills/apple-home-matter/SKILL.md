@@ -115,8 +115,31 @@ Apple Home only renders controls for standard Matter device types:
 * **Root Cause:** Existing fabric credentials remain stored in flash partition (`matter_kvs` or `nvs`).
 * **Fix:** Erase Matter non-volatile storage:
   ```bash
-  espflash erase-parts --port /dev/cu.usbmodem14201 matter_kvs nvs
+  espflash erase-parts --port <PORT> matter_kvs nvs
   ```
+
+---
+
+### Failure 5: Device Not Returning to Pairing Mode After Removing From Apple Home
+* **Symptom:** User taps "Remove Accessory" in the Apple Home app, but the accessory never re-enters BLE pairing mode and remains considered commissioned.
+* **Root Cause (Apple Home 2-Fabric Model):**
+  - Apple Home creates two separate fabrics:
+    1. Primary Controller Fabric: `vendor_id = 4937` (`0x1349`, Apple Inc. iOS / iPadOS Commissioner).
+    2. Operational Home Hub Fabric: `vendor_id = 4996` (`0x1384`, Apple Inc. Home Hub — HomePod / Apple TV).
+  - When removing an accessory from Apple Home, iOS only sends `RemoveFabric` for its primary commissioner fabric (`4937`), leaving the Home Hub fabric (`4996`) orphaned in flash.
+  - Naive firmware checks like `matter.has_fabrics()` continue to return `true` because the orphaned hub fabric is still present in storage.
+* **Fix (Pure Software Auto-Reset):**
+  - Define `APPLE_HOME_HUB_VENDOR_ID = 4996` (`0x1384`).
+  - Check for active controller fabrics:
+    ```rust
+    fn has_active_controller_fabric(matter: &rs_matter::Matter<'_>) -> bool {
+        matter.with_state(|state| {
+            state.fabrics.iter().any(|f| f.vendor_id() != APPLE_HOME_HUB_VENDOR_ID)
+        })
+    }
+    ```
+  - **On boot:** If only orphaned fabric `4996` exists (`has_fabrics() && !has_active_controller_fabric()`), wipe `matter_kvs` and reboot.
+  - **At runtime:** When transitioning from commissioned to having no controller fabrics, trigger `on_decommissioned()`, wipe `matter_kvs`, and reset into pairing mode.
 
 ---
 
