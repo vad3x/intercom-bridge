@@ -44,20 +44,31 @@ export const Navbar: Component<NavbarProps> = (props) => {
   };
 
   const ecoStatus = () => {
-    if (!eco()) {
-      return { variant: 'error' as const, dotClass: 'bg-error', name: 'none' };
+    const active = eco();
+    const typeName = active?.type
+      ? active.type.charAt(0).toUpperCase() + active.type.slice(1)
+      : 'Matter';
+
+    if (!props.status) {
+      return {
+        variant: 'warning' as const,
+        dotClass: 'bg-warning animate-pulse',
+        name: 'Matter',
+      };
     }
-    if (eco()?.paired) {
+
+    if (active?.paired) {
       return {
         variant: 'success' as const,
         dotClass: 'bg-success animate-pulse',
-        name: eco()?.type || 'matter',
+        name: typeName,
       };
     }
+
     return {
       variant: 'warning' as const,
       dotClass: 'bg-warning',
-      name: eco()?.type || 'matter',
+      name: typeName,
     };
   };
 
