@@ -122,7 +122,7 @@ pub fn custom_halt() -> ! {
 #[cfg(target_arch = "riscv32")]
 #[esp_rtos::main]
 async fn main(_spawner: Spawner) {
-    utils::uptime_logger::init(log::LevelFilter::Debug);
+    utils::uptime_logger::init(log::LevelFilter::Info);
 
     info!(
         "Smart Intercom v{} (build: {}, date: {}, rev: {})",
