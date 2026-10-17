@@ -387,7 +387,7 @@ fn test_reset_service_erases_ecosystem_scope_and_reboots() {
 
     // Assert
     assert_eq!(service.reset.erased_scope.get(), Some(ResetScope::Ecosystem));
-    assert_eq!(state_watch.try_get(), Some(SystemState::FactoryReset));
+    assert_eq!(state_watch.try_get(), Some(SystemState::EcosystemReset));
 }
 
 #[test]

@@ -219,7 +219,9 @@ async fn main(_spawner: Spawner) {
 
     let access_driver = MatterAccessControlDriver::new(&door_lock, &occupancy);
     let reporter = (access_driver, indicator);
-    let boot_button = GpioBootButtonDriver::new(GpioBootButtonConfig::new(peripherals.GPIO9));
+    let boot_button = GpioBootButtonDriver::new(
+        GpioBootButtonConfig::new(peripherals.GPIO9).with_indicator(indicator),
+    );
 
     let app = App::new(
         ring,

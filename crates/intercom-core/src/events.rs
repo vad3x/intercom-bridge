@@ -23,6 +23,8 @@ pub enum SystemState {
     Operational,
     /// Firmware OTA update in progress (flashing inactive partition)
     Updating,
+    /// Ecosystem reset triggered (unpairing active ecosystem credentials, keeping Wi-Fi, rebooting)
+    EcosystemReset,
     /// Factory reset triggered (erasing persistent credentials, rebooting)
     FactoryReset,
     /// Fatal hardware or protocol fault
@@ -96,6 +98,11 @@ impl<'a> SystemStateSender<'a> {
     /// Convenience helper to transition to `SystemState::Updating`.
     pub fn updating(&self) {
         self.send(SystemState::Updating);
+    }
+
+    /// Convenience helper to transition to `SystemState::EcosystemReset`.
+    pub fn ecosystem_reset(&self) {
+        self.send(SystemState::EcosystemReset);
     }
 
     /// Convenience helper to transition to `SystemState::FactoryReset`.

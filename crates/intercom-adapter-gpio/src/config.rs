@@ -56,6 +56,10 @@ pub const ERROR_OFF_MS: u64 = 100;
 pub const ERROR_BURST_COUNT: u8 = 2;
 pub const ERROR_PAUSE_MS: u64 = 700;
 
+/// Ecosystem reset: medium 2 Hz blink — unpairing active ecosystem (50% duty)
+pub const ECOSYSTEM_RESET_ON_MS: u64 = 250;
+pub const ECOSYSTEM_RESET_OFF_MS: u64 = 250;
+
 /// Factory reset: ultra-rapid strobe — critical action in progress (50% duty, very fast)
 pub const FACTORY_RESET_ON_MS: u64 = 50;
 pub const FACTORY_RESET_OFF_MS: u64 = 50;

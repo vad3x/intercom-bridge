@@ -7,6 +7,7 @@
 use embassy_time::{Duration, Instant, Timer};
 use esp_hal::gpio::{Input, InputConfig, Pull};
 use crate::config;
+use crate::led::GpioLedDriver;
 use intercom_core::domain::reset::classify_reset_hold;
 use intercom_core::ports::{ResetScope, ResetTriggerDriver};
 use log::info;
@@ -19,8 +20,10 @@ pub struct GpioBootButtonDriver {
 impl GpioBootButtonDriver {
     pub fn new(config: GpioBootButtonConfig) -> Self {
         info!(
-            "BOOT button reset driver: ecosystem_hold={}ms, factory_hold={}ms",
-            config.ecosystem_hold_ms, config.factory_hold_ms
+            "BOOT button reset driver: ecosystem_hold={}ms, factory_hold={}ms, feedback={}",
+            config.ecosystem_hold_ms,
+            config.factory_hold_ms,
+            config.indicator.is_some()
         );
         Self { config }
     }
@@ -30,6 +33,8 @@ impl GpioBootButtonDriver {
 pub struct GpioBootButtonConfig {
     /// Input pin (BOOT button, active LOW with pull-up)
     pub pin: Input<'static>,
+    /// Optional LED indicator for live hold feedback
+    pub indicator: Option<&'static GpioLedDriver>,
     /// How long the button must be held to trigger ecosystem reset (ms)
     pub ecosystem_hold_ms: u64,
     /// How long the button must be held to trigger factory reset (ms)
@@ -41,9 +46,16 @@ impl GpioBootButtonConfig {
     pub fn new(pin: impl esp_hal::gpio::InputPin + 'static) -> Self {
         Self {
             pin: Input::new(pin, InputConfig::default().with_pull(Pull::Up)),
+            indicator: None,
             ecosystem_hold_ms: config::ECOSYSTEM_RESET_HOLD_MS,
             factory_hold_ms: config::FACTORY_RESET_HOLD_MS,
         }
+    }
+
+    /// Attach an LED indicator for live visual feedback during long press.
+    pub fn with_indicator(mut self, indicator: &'static GpioLedDriver) -> Self {
+        self.indicator = Some(indicator);
+        self
     }
 }
 
@@ -67,18 +79,49 @@ impl ResetTriggerDriver for GpioBootButtonDriver {
                 self.config.factory_hold_ms / 1000
             );
 
+            if let Some(led) = self.config.indicator {
+                led.hold_feedback_press();
+            }
+
+            let mut stage1_notified = false;
+
             let scope = loop {
                 Timer::after(Duration::from_millis(100)).await;
 
                 let elapsed = Instant::now().duration_since(press_start);
-                let released = self.config.pin.is_high();
+                let pin_high = self.config.pin.is_high();
+                let released = if pin_high {
+                    // Debounce release to filter out mechanical contact bounce during long holds
+                    Timer::after(Duration::from_millis(30)).await;
+                    self.config.pin.is_high()
+                } else {
+                    false
+                };
+
+                // Visual feedback when Stage 1 (Ecosystem reset, 5s) is armed
+                if !stage1_notified && elapsed >= ecosystem_duration {
+                    stage1_notified = true;
+                    info!("BOOT button hold 5s reached (Ecosystem Reset armed)");
+                    if let Some(led) = self.config.indicator {
+                        led.hold_feedback_stage1();
+                    }
+                }
 
                 if let Some(scope) = classify_reset_hold(elapsed, released, ecosystem_duration, factory_duration) {
+                    if scope == ResetScope::Factory {
+                        info!("BOOT button hold 10s reached (Factory Reset triggered)");
+                        if let Some(led) = self.config.indicator {
+                            led.hold_feedback_stage2();
+                        }
+                    }
                     break Some(scope);
                 }
 
                 if released {
                     info!("BOOT button released early (ignored)");
+                    if let Some(led) = self.config.indicator {
+                        led.restore_state();
+                    }
                     break None;
                 }
             };

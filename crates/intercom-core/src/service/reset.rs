@@ -24,11 +24,16 @@ impl<T: ResetTriggerDriver, R: SystemResetDriver> ResetService<T, R> {
         let scope = self.driver.wait_for_reset().await;
 
         match scope {
-            ResetScope::Ecosystem => info!("=== ECOSYSTEM RESET TRIGGERED ==="),
-            ResetScope::Factory => info!("=== FACTORY RESET TRIGGERED ==="),
+            ResetScope::Ecosystem => {
+                info!("=== ECOSYSTEM RESET TRIGGERED ===");
+                state_sender.ecosystem_reset();
+            }
+            ResetScope::Factory => {
+                info!("=== FACTORY RESET TRIGGERED ===");
+                state_sender.factory_reset();
+            }
         }
 
-        state_sender.factory_reset();
         self.reset.erase_credentials(scope);
 
         Timer::after(Duration::from_millis(FACTORY_RESET_REBOOT_DELAY_MS)).await;

@@ -25,6 +25,7 @@ use crate::config;
 pub struct GpioLedDriver {
     pin: RefCell<Output<'static>>,
     signal: Signal<CriticalSectionRawMutex, IndicatorCommand>,
+    current_state: RefCell<Option<SystemState>>,
 }
 
 impl GpioLedDriver {
@@ -35,6 +36,7 @@ impl GpioLedDriver {
         Self {
             pin: RefCell::new(Output::new(pin, Level::High, OutputConfig::default())), // Start OFF
             signal: Signal::new(),
+            current_state: RefCell::new(None),
         }
     }
 
@@ -42,6 +44,28 @@ impl GpioLedDriver {
     /// Runs concurrently in the composition root.
     pub async fn run(&self, mut state_rx: SystemStateReceiver<'_>) {
         join(self.command_loop(), self.observe_state(&mut state_rx)).await;
+    }
+
+    /// Indicate that the reset/BOOT button is currently being pressed (stage 0: 0s-5s).
+    pub fn hold_feedback_press(&self) {
+        self.signal.signal(IndicatorCommand::Off);
+    }
+
+    /// Indicate that stage 1 (Ecosystem reset, 5s) has been reached.
+    pub fn hold_feedback_stage1(&self) {
+        self.blink(config::ECOSYSTEM_RESET_ON_MS, config::ECOSYSTEM_RESET_OFF_MS, None);
+    }
+
+    /// Indicate that stage 2 (Factory reset, 10s) has been reached.
+    pub fn hold_feedback_stage2(&self) {
+        self.blink(config::FACTORY_RESET_ON_MS, config::FACTORY_RESET_OFF_MS, None);
+    }
+
+    /// Re-apply the current system lifecycle state (e.g. after button is released early).
+    pub fn restore_state(&self) {
+        if let Some(state) = *self.current_state.borrow() {
+            self.indicate_state(state);
+        }
     }
 
     /// Command loop — processes indicator commands and drives hardware pin timing.
@@ -60,11 +84,13 @@ impl GpioLedDriver {
     /// State observer loop — updates indicator pattern based on system lifecycle transitions.
     async fn observe_state(&self, state_rx: &mut SystemStateReceiver<'_>) {
         if let Some(state) = state_rx.try_get() {
+            *self.current_state.borrow_mut() = Some(state);
             self.indicate_state(state);
         }
 
         loop {
             let state = state_rx.changed().await;
+            *self.current_state.borrow_mut() = Some(state);
             self.indicate_state(state);
         }
     }
@@ -99,6 +125,10 @@ impl GpioLedDriver {
         match cmd {
             IndicatorCommand::On => {
                 self.led_on();
+                None
+            }
+            IndicatorCommand::Off => {
+                self.led_off();
                 None
             }
             IndicatorCommand::Strobe => {
@@ -222,6 +252,13 @@ impl GpioLedDriver {
             SystemState::Updating => {
                 self.strobe();
             }
+            SystemState::EcosystemReset => {
+                self.blink(
+                    config::ECOSYSTEM_RESET_ON_MS,
+                    config::ECOSYSTEM_RESET_OFF_MS,
+                    None,
+                );
+            }
             SystemState::FactoryReset => {
                 self.blink(config::FACTORY_RESET_ON_MS, config::FACTORY_RESET_OFF_MS, None);
             }
@@ -274,6 +311,8 @@ impl IntercomReporter for GpioLedDriver {
 enum IndicatorCommand {
     /// Steady on.
     On,
+    /// Steady off.
+    Off,
     /// Rapid strobe blink (OTA update).
     Strobe,
     /// Blink with given on/off durations (ms).

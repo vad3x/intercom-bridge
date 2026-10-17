@@ -173,6 +173,7 @@ fn state_to_str(state: SystemState) -> &'static str {
         SystemState::EcosystemConnecting => "EcosystemConnecting",
         SystemState::Operational => "Operational",
         SystemState::Updating => "Updating",
+        SystemState::EcosystemReset => "EcosystemReset",
         SystemState::FactoryReset => "FactoryReset",
         SystemState::Error => "Error",
     }
