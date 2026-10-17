@@ -1,4 +1,4 @@
-import { Check, Cpu, Globe, Home, Layers, Radio } from 'lucide-solid';
+import { Check, Cpu, Globe, Home, Layers, Radio, RotateCcw, TriangleAlert } from 'lucide-solid';
 import { type Component, For, Show, createSignal } from 'solid-js';
 import type { ActiveEcosystem, FabricInfo } from '../types';
 import { Badge } from './ui/Badge';
@@ -6,6 +6,8 @@ import { Card, CardBody, CardTitle } from './ui/Card';
 
 export interface EcosystemTabProps {
   ecosystem: ActiveEcosystem | null | undefined;
+  onResetMatter?: () => Promise<void> | void;
+  isResettingMatter?: boolean;
 }
 
 interface VendorMeta {
@@ -135,6 +137,7 @@ const FabricRow: Component<{ fabric: FabricInfo }> = (props) => {
 };
 
 export const EcosystemTab: Component<EcosystemTabProps> = (props) => {
+  const [confirmReset, setConfirmReset] = createSignal(false);
   const isPaired = () => props.ecosystem?.paired ?? false;
   const propsObj = () => props.ecosystem?.properties || {};
   const fabrics = () => props.ecosystem?.fabrics || [];
@@ -225,6 +228,59 @@ export const EcosystemTab: Component<EcosystemTabProps> = (props) => {
             >
               <Check class="w-4 h-4 mr-1" /> Active Ecosystem
             </button>
+          </div>
+
+          {/* Matter KVS Reset Action */}
+          <div class="mt-2 pt-2 border-t border-base-content/10">
+            <Show
+              when={confirmReset()}
+              fallback={
+                <button
+                  type="button"
+                  onClick={() => setConfirmReset(true)}
+                  disabled={props.isResettingMatter}
+                  class="btn btn-sm btn-outline btn-error btn-block"
+                >
+                  <RotateCcw class="w-4 h-4 mr-1" />
+                  Reset Matter KVS
+                </button>
+              }
+            >
+              <div class="bg-error/10 border border-error/30 rounded-lg p-3 space-y-2">
+                <div class="text-xs text-error font-semibold flex items-center gap-1.5">
+                  <TriangleAlert class="w-4 h-4 shrink-0" />
+                  Reset Matter KVS Storage?
+                </div>
+                <p class="text-[11px] text-base-content/70 leading-normal">
+                  This will unpair all connected hubs, erase all Matter fabric credentials, and
+                  reboot the device. Wi-Fi credentials will remain intact.
+                </p>
+                <div class="flex gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setConfirmReset(false);
+                      await props.onResetMatter?.();
+                    }}
+                    disabled={props.isResettingMatter}
+                    class="btn btn-xs btn-error flex-1"
+                  >
+                    <Show when={props.isResettingMatter} fallback="Confirm Reset">
+                      <span class="loading loading-spinner loading-xs mr-1" />
+                      Resetting...
+                    </Show>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmReset(false)}
+                    disabled={props.isResettingMatter}
+                    class="btn btn-xs btn-ghost"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </Show>
           </div>
         </CardBody>
       </Card>

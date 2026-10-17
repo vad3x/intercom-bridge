@@ -162,9 +162,12 @@ impl AsyncHandler for IntercomDoorLock {
                     x if x == door_lock::AttributeId::OperatingMode as u16 => {
                         Reply::set(writer, OperatingModeEnum::Normal)
                     }
-                    // SupportedOperatingModes (id=38): DlSupportedOperatingModes
+                    // SupportedOperatingModes (id=38): DlSupportedOperatingModes (0xFFF6 = Normal mode supported)
                     x if x == door_lock::AttributeId::SupportedOperatingModes as u16 => {
-                        Reply::set(writer, DlSupportedOperatingModes::NORMAL)
+                        Reply::set(
+                            writer,
+                            DlSupportedOperatingModes::from_bits_retain(0xFFF6),
+                        )
                     }
                     // RequirePINforRemoteOperation (id=51): bool (false = remote unlock allowed without PIN)
                     x if x == door_lock::AttributeId::RequirePINforRemoteOperation as u16 => {

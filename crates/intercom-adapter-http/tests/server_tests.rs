@@ -572,3 +572,93 @@ fn test_post_ota_flash_sets_updating_state() {
     assert_eq!(state_sender.current_state(), Some(SystemState::Updating));
 }
 
+struct RecordingResetDriver {
+    erased_scope: std::sync::atomic::AtomicU8,
+}
+
+impl intercom_core::ports::SystemResetDriver for RecordingResetDriver {
+    fn erase_credentials(&self, scope: intercom_core::ports::ResetScope) {
+        let val = match scope {
+            intercom_core::ports::ResetScope::Ecosystem => 1,
+            intercom_core::ports::ResetScope::Factory => 2,
+        };
+        self.erased_scope.store(val, std::sync::atomic::Ordering::SeqCst);
+    }
+    fn reboot(&self) -> ! {
+        assert_eq!(
+            self.erased_scope.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "expected ResetScope::Ecosystem to be erased before reboot"
+        );
+        panic!("MOCK_ECOSYSTEM_RESET_REBOOT_TRIGGERED");
+    }
+}
+
+#[test]
+#[should_panic(expected = "MOCK_ECOSYSTEM_RESET_REBOOT_TRIGGERED")]
+fn test_post_action_reset_matter_erases_ecosystem_and_reboots() {
+    // Arrange
+    let cmd_channel = CommandChannel::new();
+    let access_handle = AccessControllerHandle::new(cmd_channel.sender());
+    let hardware = MockHardwareInfo;
+    let state_watch = SystemStateWatch::new();
+    state_watch.sender().send(SystemState::Operational);
+    let diagnostics = DiagnosticsService::new(&hardware, &state_watch);
+    let mut ota_driver = MockOtaFlashDriver::new(false);
+    let reset_driver = RecordingResetDriver {
+        erased_scope: std::sync::atomic::AtomicU8::new(0),
+    };
+    let mut server = HttpServer::new_unbound(
+        access_handle,
+        &diagnostics,
+        &mut ota_driver,
+        test_log_provider,
+        HttpServerConfig::default(),
+    )
+    .with_reset_driver(&reset_driver);
+
+    let mut stream =
+        MockStream::new(b"POST /api/action/reset/matter HTTP/1.1\r\nHost: 192.168.1.142\r\n\r\n");
+
+    // Act
+    let _ = block_on(server.handle_request(&mut stream));
+
+    // Assert: should_panic triggered on reset_driver.reboot()
+}
+
+#[test]
+fn test_post_action_reset_matter_sets_ecosystem_reset_state() {
+    // Arrange
+    let cmd_channel = CommandChannel::new();
+    let access_handle = AccessControllerHandle::new(cmd_channel.sender());
+    let hardware = MockHardwareInfo;
+    let state_watch = SystemStateWatch::new();
+    state_watch.sender().send(SystemState::Operational);
+    let state_sender = intercom_core::events::SystemStateSender::new(&state_watch);
+    let diagnostics = DiagnosticsService::new(&hardware, &state_watch);
+    let mut ota_driver = MockOtaFlashDriver::new(false);
+    let mut server = HttpServer::new_unbound(
+        access_handle,
+        &diagnostics,
+        &mut ota_driver,
+        test_log_provider,
+        HttpServerConfig::default(),
+    )
+    .with_state_sender(state_sender);
+
+    let mut stream =
+        MockStream::new(b"POST /api/action/reset/matter HTTP/1.1\r\nHost: 192.168.1.142\r\n\r\n");
+
+    // Act
+    let result = block_on(server.handle_request(&mut stream));
+
+    // Assert
+    assert!(result.is_ok());
+    assert!(stream.written_str().contains("HTTP/1.1 200 "));
+    assert_eq!(
+        state_sender.current_state(),
+        Some(SystemState::EcosystemReset)
+    );
+}
+
+

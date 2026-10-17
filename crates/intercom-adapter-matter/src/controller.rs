@@ -126,27 +126,7 @@ struct EndpointMeta {
 /// Starts above the cluster handler datavers (which use 1, 2, …).
 static DESC_DATAVER_COUNTER: portable_atomic::AtomicU32 = portable_atomic::AtomicU32::new(100);
 
-/// A parts matcher for composite devices.
-///
-/// For Endpoint 0 (Root Node), matches all application endpoints (spec 9.5.1).
-/// For Endpoint 1 (Door Lock), matches Endpoint 2 (Occupancy Sensor) as a composed child part
-/// (spec 9.5.3 Composed Devices).
-/// For Endpoint 2 (Occupancy Sensor), has no child parts.
-#[derive(Debug)]
-struct ComposedPartsMatcher;
 
-impl rs_matter::utils::sync::DynBase for ComposedPartsMatcher {}
-
-impl desc::PartsMatcher for ComposedPartsMatcher {
-    fn matches(&self, our_endpoint: rs_matter::dm::EndptId, endpoint: rs_matter::dm::EndptId) -> bool {
-        (our_endpoint == rs_matter::dm::endpoints::ROOT_ENDPOINT_ID
-            && endpoint != rs_matter::dm::endpoints::ROOT_ENDPOINT_ID)
-            || (our_endpoint == crate::config::DOOR_LOCK_ENDPOINT_ID
-                && endpoint == crate::config::OCCUPANCY_SENSOR_ENDPOINT_ID)
-    }
-}
-
-static COMPOSED_PARTS_MATCHER: ComposedPartsMatcher = ComposedPartsMatcher;
 
 /// Vendor ID for Apple Inc. HomeKit Accessory Protocol / Home Hub (HomePod, Apple TV).
 ///
@@ -218,7 +198,7 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
 
         let new_handler = ChainedHandler::new_with_matcher(
             move |e, c| e == endpoint_id && c == desc::DescHandler::CLUSTER.id,
-            Async(desc::DescHandler::new_matching(Dataver::new(dataver_seed), &COMPOSED_PARTS_MATCHER).adapt()),
+            Async(desc::DescHandler::new(Dataver::new(dataver_seed)).adapt()),
             ChainedHandler::new_with_matcher(
                 move |e, c| e == endpoint_id && c == identify::CLUSTER.id,
                 Async(identify::IdentifyHandler::new(Dataver::new(id_dataver_seed)).adapt()),

@@ -47,6 +47,16 @@ export function App() {
     }
   };
 
+  const handleResetMatter = async () => {
+    try {
+      await store.resetMatter();
+      showToast('Matter KVS reset initiated. Rebooting...', 'info');
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Failed to reset Matter KVS';
+      showToast(msg, 'error');
+    }
+  };
+
   onMount(() => {
     store.poll();
     const interval = setInterval(store.poll, 2500);
@@ -107,7 +117,11 @@ export function App() {
             />
           </Match>
           <Match when={activeTab() === 'ecosystem'}>
-            <EcosystemTab ecosystem={store.status()?.active_ecosystem} />
+            <EcosystemTab
+              ecosystem={store.status()?.active_ecosystem}
+              onResetMatter={handleResetMatter}
+              isResettingMatter={store.isResettingMatter()}
+            />
           </Match>
           <Match when={activeTab() === 'diagnostics'}>
             <DiagnosticsTab status={store.status()} />

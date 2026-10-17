@@ -13,7 +13,7 @@ use intercom_core::ports::diagnostics::HardwareInfoDriver;
 use intercom_core::ports::ecosystem::EcosystemInfoDriver;
 use intercom_core::ports::inbound::{AccessCommand, AccessControllerHandle};
 use intercom_core::ports::ota::{OtaFlashDriver, OtaStream};
-use intercom_core::ports::SystemResetDriver;
+use intercom_core::ports::{ResetScope, SystemResetDriver};
 use intercom_core::service::DiagnosticsService;
 use log::{info, warn};
 use picoserve::response::IntoResponse;
@@ -44,6 +44,7 @@ pub(crate) struct AppState<
     pub(crate) read_request_timeout: Duration,
     pub(crate) had_error: &'a core::cell::Cell<bool>,
     pub(crate) reboot_requested: &'a core::cell::Cell<bool>,
+    pub(crate) reset_requested: &'a core::cell::Cell<Option<ResetScope>>,
     pub(crate) log_provider: fn(&mut [u8]) -> usize,
 }
 
@@ -182,6 +183,7 @@ impl<
         let ota_driver_cell = core::cell::RefCell::new(&mut *self.ota_driver);
         let had_error = core::cell::Cell::new(false);
         let reboot_requested = core::cell::Cell::new(false);
+        let reset_requested = core::cell::Cell::new(None);
         let app_state = AppState {
             access_handle: self.access_handle,
             diagnostics: self.diagnostics,
@@ -191,6 +193,7 @@ impl<
             read_request_timeout: self.config.read_request_timeout,
             had_error: &had_error,
             reboot_requested: &reboot_requested,
+            reset_requested: &reset_requested,
             log_provider: self.log_provider,
         };
 
@@ -199,6 +202,13 @@ impl<
         let serve_res = picoserve::Server::new(&router, &picoserve_config, &mut http_buffer)
             .serve(socket)
             .await;
+
+        if let Some(scope) = reset_requested.get() {
+            if let Some(reset) = self.reset_driver {
+                reset.erase_credentials(scope);
+                reset.reboot();
+            }
+        }
 
         if reboot_requested.get() {
             if let Some(reset) = self.reset_driver {
@@ -233,6 +243,7 @@ impl<
         let ota_driver_cell = core::cell::RefCell::new(&mut *self.ota_driver);
         let had_error = core::cell::Cell::new(false);
         let reboot_requested = core::cell::Cell::new(false);
+        let reset_requested = core::cell::Cell::new(None);
         let app_state = AppState {
             access_handle: self.access_handle,
             diagnostics: self.diagnostics,
@@ -242,6 +253,7 @@ impl<
             read_request_timeout: self.config.read_request_timeout,
             had_error: &had_error,
             reboot_requested: &reboot_requested,
+            reset_requested: &reset_requested,
             log_provider: self.log_provider,
         };
 
@@ -263,6 +275,18 @@ impl<
             let _ = picoserve::Server::new(&router, &picoserve_config, &mut http_buffer)
                 .serve(socket)
                 .await;
+
+            if let Some(scope) = reset_requested.get() {
+                info!(
+                    "Reset requested ({:?}); erasing credentials and rebooting in {:?}...",
+                    scope, self.config.reboot_delay
+                );
+                Timer::after(self.config.reboot_delay).await;
+                if let Some(reset) = self.reset_driver {
+                    reset.erase_credentials(scope);
+                    reset.reboot();
+                }
+            }
 
             if reboot_requested.get() {
                 info!("OTA update committed; rebooting in {:?}...", self.config.reboot_delay);
@@ -350,6 +374,21 @@ fn build_router<
                     AppState<'a, H, E, O, T>,
                 >| async move {
                     state.access_handle.send(AccessCommand::Unlock);
+                    picoserve::response::Response::ok("{\"status\":\"ok\"}")
+                        .with_content_type("application/json")
+                },
+            ),
+        )
+        .route(
+            "/api/action/reset/matter",
+            picoserve::routing::post(
+                |picoserve::extract::State(state): picoserve::extract::State<
+                    AppState<'a, H, E, O, T>,
+                >| async move {
+                    if let Some(sender) = state.state_sender {
+                        sender.ecosystem_reset();
+                    }
+                    state.reset_requested.set(Some(ResetScope::Ecosystem));
                     picoserve::response::Response::ok("{\"status\":\"ok\"}")
                         .with_content_type("application/json")
                 },

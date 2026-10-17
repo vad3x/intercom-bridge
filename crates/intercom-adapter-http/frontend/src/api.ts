@@ -29,3 +29,10 @@ export async function triggerRing(): Promise<void> {
     throw new Error(`Ring failed: HTTP ${res.status}`);
   }
 }
+
+export async function resetMatterKvs(): Promise<void> {
+  const res = await fetch('/api/action/reset/matter', { method: 'POST' });
+  if (!res.ok) {
+    throw new Error(`Matter KVS reset failed: HTTP ${res.status}`);
+  }
+}

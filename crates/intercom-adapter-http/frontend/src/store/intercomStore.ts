@@ -1,11 +1,12 @@
 import { createSignal } from 'solid-js';
-import { fetchStatus, triggerRing, triggerUnlock } from '../api';
+import { fetchStatus, resetMatterKvs, triggerRing, triggerUnlock } from '../api';
 import type { SystemDiagnostics } from '../types';
 
 export function createIntercomStore() {
   const [status, setStatus] = createSignal<SystemDiagnostics | null>(null);
   const [isUnlocking, setIsUnlocking] = createSignal(false);
   const [isRinging, setIsRinging] = createSignal(false);
+  const [isResettingMatter, setIsResettingMatter] = createSignal(false);
 
   const poll = async () => {
     if (typeof document !== 'undefined' && document.hidden) return;
@@ -43,12 +44,24 @@ export function createIntercomStore() {
     }
   };
 
+  const resetMatter = async () => {
+    setIsResettingMatter(true);
+    try {
+      await resetMatterKvs();
+    } catch (e) {
+      setIsResettingMatter(false);
+      throw e;
+    }
+  };
+
   return {
     status,
     isUnlocking,
     isRinging,
+    isResettingMatter,
     poll,
     unlockDoor,
     testRing,
+    resetMatter,
   };
 }

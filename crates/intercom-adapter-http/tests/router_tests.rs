@@ -62,6 +62,18 @@ fn test_parse_route_actions() {
 }
 
 #[test]
+fn test_parse_route_action_reset_matter() {
+    // Arrange
+    let req = "POST /api/action/reset/matter HTTP/1.1\r\nHost: 192.168.1.142\r\n\r\n";
+
+    // Act
+    let route = parse_route(req);
+
+    // Assert
+    assert_eq!(route, Route::ActionResetMatter);
+}
+
+#[test]
 fn test_parse_route_ota_flash() {
     // Arrange
     let req = "POST /api/v1/ota/flash HTTP/1.1\r\nContent-Length: 1024\r\n";

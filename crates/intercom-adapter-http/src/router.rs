@@ -33,6 +33,7 @@ pub enum Route {
     Logs,
     ActionRing,
     ActionUnlock,
+    ActionResetMatter,
     OtaFlash,
     NotFound,
 }
@@ -58,6 +59,7 @@ pub fn parse_route(request_line: &str) -> Route {
         ("GET", "/api/logs") => Route::Logs,
         ("POST", "/api/action/ring") => Route::ActionRing,
         ("POST", "/api/action/unlock") => Route::ActionUnlock,
+        ("POST", "/api/action/reset/matter") => Route::ActionResetMatter,
         ("POST", "/api/v1/ota/flash") => Route::OtaFlash,
         _ => Route::NotFound,
     }
