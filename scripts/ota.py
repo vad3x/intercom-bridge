@@ -19,6 +19,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -37,7 +38,8 @@ try:
 except ImportError:
     HAVE_ZEROCONF = False
 
-MDNS_SERVICE_TYPE = "_matter._tcp.local."
+MDNS_SERVICE_TYPES = ["_matter._tcp.local.", "_matterc._udp.local."]
+MDNS_SERVICE_TYPE = MDNS_SERVICE_TYPES[0]
 OTA_HEADER_MAGIC = b"ICOT"
 OTA_HEADER_LEN = 72  # 4 (magic) + 4 (len) + 64 (sig)
 MAX_APP_SLOT_SIZE = 0x350000  # 3.4 MB (3,473,408 bytes)
@@ -62,23 +64,32 @@ class DiscoveredDevice:
 
 
 class OtaMdnsListener:
-    """Zeroconf listener collecting _matter._tcp.local services."""
+    """Zeroconf listener collecting Matter services concurrently."""
 
-    def __init__(self):
+    def __init__(self, zc: "zeroconf.Zeroconf", executor: ThreadPoolExecutor):
+        self.zc = zc
+        self.executor = executor
         self.devices: Dict[str, "zeroconf.ServiceInfo"] = {}
+        self.lock = threading.Lock()
 
     def add_service(self, zc: "zeroconf.Zeroconf", type_: str, name: str) -> None:
-        info = zc.get_service_info(type_, name)
-        if info:
-            self.devices[name] = info
+        self.executor.submit(self._resolve, type_, name)
 
     def update_service(self, zc: "zeroconf.Zeroconf", type_: str, name: str) -> None:
-        info = zc.get_service_info(type_, name)
-        if info:
-            self.devices[name] = info
+        self.executor.submit(self._resolve, type_, name)
 
     def remove_service(self, zc: "zeroconf.Zeroconf", type_: str, name: str) -> None:
-        self.devices.pop(name, None)
+        with self.lock:
+            self.devices.pop(name, None)
+
+    def _resolve(self, type_: str, name: str) -> None:
+        try:
+            info = self.zc.get_service_info(type_, name, timeout=1500)
+            if info:
+                with self.lock:
+                    self.devices[name] = info
+        except Exception:
+            pass
 
 
 def check_dependencies(require_zeroconf: bool = True) -> None:
@@ -98,7 +109,7 @@ def check_dependencies(require_zeroconf: bool = True) -> None:
         sys.exit(1)
 
 
-def probe_intercom_status(ip: str, port: int = 8080, timeout: float = 0.6) -> Optional[Dict]:
+def probe_intercom_status(ip: str, port: int = 8080, timeout: float = 1.5) -> Optional[Dict]:
     """Probe an IP on port 8080 to check if it is an Intercom Bridge running the HTTP server."""
     try:
         conn = http.client.HTTPConnection(ip, port, timeout=timeout)
@@ -114,24 +125,31 @@ def probe_intercom_status(ip: str, port: int = 8080, timeout: float = 0.6) -> Op
     return None
 
 
-def discover_devices(timeout: float = 3.0, port: int = 8080) -> List[DiscoveredDevice]:
+def discover_devices(timeout: float = 3.5, port: int = 8080) -> List[DiscoveredDevice]:
     """Scan the local network for intercom OTA services via mDNS."""
     check_dependencies(require_zeroconf=True)
 
-    print(f"Scanning local network for Intercom units ({MDNS_SERVICE_TYPE})...", flush=True)
+    print("Scanning local network for Intercom units (Matter mDNS)...", flush=True)
     zc = zeroconf.Zeroconf()
-    listener = OtaMdnsListener()
-    browser = zeroconf.ServiceBrowser(zc, MDNS_SERVICE_TYPE, listener)
+    with ThreadPoolExecutor(max_workers=20) as resolver_pool:
+        listener = OtaMdnsListener(zc, resolver_pool)
+        browser = zeroconf.ServiceBrowser(zc, MDNS_SERVICE_TYPES, listener)
 
-    try:
-        time.sleep(timeout)
-    finally:
-        browser.cancel()
+        try:
+            time.sleep(timeout)
+        finally:
+            browser.cancel()
+
+        # Shutdown resolver pool waiting for in-flight resolutions to finish
+        resolver_pool.shutdown(wait=True)
         zc.close()
+
+    with listener.lock:
+        device_infos = list(listener.devices.values())
 
     # Collect unique candidate IPv4 addresses and associated hostnames
     candidates: Dict[str, str] = {}
-    for info in listener.devices.values():
+    for info in device_infos:
         ipv4_addrs = [a for a in info.parsed_addresses() if re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", a)]
         hostname = (info.server or "").rstrip(".")
         for ip in ipv4_addrs:
@@ -143,7 +161,7 @@ def discover_devices(timeout: float = 3.0, port: int = 8080) -> List[DiscoveredD
     def verify_candidate(item: Tuple[str, str]) -> Optional[DiscoveredDevice]:
         ip, hostname = item
         # Probe HTTP /api/status on port 8080 to verify device identity and read live telemetry
-        status = probe_intercom_status(ip, port=port, timeout=0.6)
+        status = probe_intercom_status(ip, port=port, timeout=1.5)
         if status:
             mac = status.get("mac") or "unknown"
             sw_ver = status.get("version") or "unknown"
@@ -499,8 +517,8 @@ def main() -> None:
     parser.add_argument(
         "--timeout",
         type=float,
-        default=3.0,
-        help="mDNS discovery timeout in seconds (default: 3.0)",
+        default=3.5,
+        help="mDNS discovery timeout in seconds (default: 3.5)",
     )
     parser.add_argument(
         "--http-timeout",

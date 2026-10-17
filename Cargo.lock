@@ -2536,6 +2536,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "intercom-pairing-tool"
+version = "0.1.0"
+dependencies = [
+ "intercom-core",
+ "rs-matter",
+]
+
+[[package]]
 name = "is_ci"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
