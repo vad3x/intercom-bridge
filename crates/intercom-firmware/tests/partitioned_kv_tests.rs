@@ -152,68 +152,26 @@ fn test_partitioned_kv_store_empty_returns_none() {
 }
 
 #[test]
-fn test_partitioned_kv_store_auto_migrates_legacy_networks_key() {
+fn test_partitioned_kv_store_load_networks_key_ignores_matter_store() {
     // Arrange
     let mut matter_store = MockKvStore::new();
     let wifi_store = MockKvStore::new();
     let mut setup_buf = [0u8; 128];
     matter_store
-        .store(NETWORKS_KEY, b"migrated_wifi_creds", &mut setup_buf)
+        .store(NETWORKS_KEY, b"legacy_matter_creds", &mut setup_buf)
         .unwrap();
-
     let mut partitioned = PartitionedKvBlobStore::new(matter_store, wifi_store);
-    let mut read_buf = [0u8; 128];
+    let mut buf = [0u8; 128];
 
     // Act
-    let loaded = partitioned.load(NETWORKS_KEY, &mut read_buf).unwrap();
+    let loaded = partitioned.load(NETWORKS_KEY, &mut buf).unwrap();
 
     // Assert
-    assert_eq!(loaded, Some(b"migrated_wifi_creds".as_slice()));
-    let mut check_buf = [0u8; 128];
-    assert_eq!(
-        partitioned
-            .wifi_store
-            .load(NETWORKS_KEY, &mut check_buf)
-            .unwrap(),
-        Some(b"migrated_wifi_creds".as_slice())
-    );
-    assert_eq!(
-        partitioned
-            .matter_store
-            .load(NETWORKS_KEY, &mut check_buf)
-            .unwrap(),
-        None
-    );
+    assert_eq!(loaded, None);
 }
 
 #[test]
-fn test_partitioned_kv_store_migration_only_happens_once() {
-    // Arrange
-    let mut matter_store = MockKvStore::new();
-    let wifi_store = MockKvStore::new();
-    let mut setup_buf = [0u8; 128];
-    matter_store
-        .store(NETWORKS_KEY, b"first_creds", &mut setup_buf)
-        .unwrap();
-    let mut partitioned = PartitionedKvBlobStore::new(matter_store, wifi_store);
-    let mut buf1 = [0u8; 128];
-    let mut buf2 = [0u8; 128];
-    let mut store_buf = [0u8; 128];
-
-    // Act
-    let first = partitioned.load(NETWORKS_KEY, &mut buf1).unwrap();
-    partitioned
-        .store(NETWORKS_KEY, b"updated_creds", &mut store_buf)
-        .unwrap();
-    let second = partitioned.load(NETWORKS_KEY, &mut buf2).unwrap();
-
-    // Assert
-    assert_eq!(first, Some(b"first_creds".as_slice()));
-    assert_eq!(second, Some(b"updated_creds".as_slice()));
-}
-
-#[test]
-fn test_partitioned_kv_store_remove_networks_key_removes_from_both() {
+fn test_partitioned_kv_store_remove_networks_key_only_touches_wifi_store() {
     // Arrange
     let mut matter_store = MockKvStore::new();
     let mut wifi_store = MockKvStore::new();
@@ -240,7 +198,7 @@ fn test_partitioned_kv_store_remove_networks_key_removes_from_both() {
             .matter_store
             .load(NETWORKS_KEY, &mut buf)
             .unwrap(),
-        None
+        Some(b"matter_copy".as_slice())
     );
 }
 
@@ -292,22 +250,6 @@ fn test_partitioned_kv_store_update_existing_networks_key() {
     );
 }
 
-struct FailingStore;
-
-impl KvBlobStore for FailingStore {
-    fn load<'a>(&mut self, _key: u16, _buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
-        Ok(None)
-    }
-
-    fn store(&mut self, _key: u16, _data: &[u8], _buf: &mut [u8]) -> Result<(), Error> {
-        Err(rs_matter::error::ErrorCode::ResourceExhausted.into())
-    }
-
-    fn remove(&mut self, _key: u16, _buf: &mut [u8]) -> Result<(), Error> {
-        Ok(())
-    }
-}
-
 #[test]
 fn test_partitioned_kv_store_buffer_too_small_returns_error() {
     // Arrange
@@ -326,87 +268,4 @@ fn test_partitioned_kv_store_buffer_too_small_returns_error() {
     // Assert
     assert!(result.is_err());
     assert_eq!(result.unwrap_err().code(), rs_matter::error::ErrorCode::BufferTooSmall);
-}
-
-#[test]
-fn test_partitioned_kv_store_legacy_buffer_too_small_returns_error() {
-    // Arrange
-    let mut matter_store = MockKvStore::new();
-    let wifi_store = MockKvStore::new();
-    let mut setup_buf = [0u8; 128];
-    matter_store
-        .store(NETWORKS_KEY, b"long_legacy_credentials", &mut setup_buf)
-        .unwrap();
-    let mut partitioned = PartitionedKvBlobStore::new(matter_store, wifi_store);
-    let mut tiny_buf = [0u8; 4];
-
-    // Act
-    let result = partitioned.load(NETWORKS_KEY, &mut tiny_buf);
-
-    // Assert
-    assert!(result.is_err());
-    assert_eq!(result.unwrap_err().code(), rs_matter::error::ErrorCode::BufferTooSmall);
-}
-
-#[test]
-fn test_partitioned_kv_store_migration_populates_buf_even_if_wifi_store_fails() {
-    // Arrange
-    let mut matter_store = MockKvStore::new();
-    let wifi_store = FailingStore;
-    let mut setup_buf = [0u8; 128];
-    matter_store
-        .store(NETWORKS_KEY, b"legacy_wifi_creds", &mut setup_buf)
-        .unwrap();
-    let mut partitioned = PartitionedKvBlobStore::new(matter_store, wifi_store);
-    let mut read_buf = [0u8; 128];
-
-    // Act
-    let result = partitioned.load(NETWORKS_KEY, &mut read_buf);
-
-    // Assert
-    assert_eq!(result.unwrap(), Some(b"legacy_wifi_creds".as_slice()));
-    assert_eq!(&read_buf[..17], b"legacy_wifi_creds");
-}
-
-#[test]
-fn test_partitioned_kv_store_migration_succeeds_with_large_matter_items_present() {
-    // Arrange
-    let mut matter_store = MockKvStore::new();
-    let wifi_store = MockKvStore::new();
-    let mut setup_buf = [0u8; 1024];
-    let large_matter_data = [0xAAu8; 512];
-    matter_store
-        .store(1, &large_matter_data, &mut setup_buf)
-        .unwrap();
-    matter_store
-        .store(NETWORKS_KEY, b"migrated_wifi_creds", &mut setup_buf)
-        .unwrap();
-
-    let mut partitioned = PartitionedKvBlobStore::new(matter_store, wifi_store);
-    let mut read_buf = [0u8; 1024];
-
-    // Act
-    let loaded = partitioned.load(NETWORKS_KEY, &mut read_buf).unwrap();
-
-    // Assert
-    assert_eq!(loaded, Some(b"migrated_wifi_creds".as_slice()));
-    let mut check_buf = [0u8; 1024];
-    assert_eq!(
-        partitioned
-            .wifi_store
-            .load(NETWORKS_KEY, &mut check_buf)
-            .unwrap(),
-        Some(b"migrated_wifi_creds".as_slice())
-    );
-    assert_eq!(
-        partitioned
-            .matter_store
-            .load(NETWORKS_KEY, &mut check_buf)
-            .unwrap(),
-        None
-    );
-    assert_eq!(
-        partitioned.matter_store.load(1, &mut check_buf).unwrap(),
-        Some(large_matter_data.as_slice())
-    );
 }

@@ -3,8 +3,10 @@
 //! Handles SPI flash Matter KVS sector erasure and software system reboot.
 
 use intercom_core::ports::{ResetScope, SystemResetDriver};
-use log::{info, warn};
-use rs_matter::error::{Error, ErrorCode};
+use log::info;
+#[cfg(target_arch = "riscv32")]
+use log::warn;
+use rs_matter::error::Error;
 use rs_matter::persist::{KvBlobStore, NETWORKS_KEY};
 
 #[cfg(target_arch = "riscv32")]
@@ -17,13 +19,8 @@ use intercom_adapter_gpio::flash::EspFlash;
 #[cfg(not(feature = "dummy-persist"))]
 use rs_matter_embassy::persist::SeqMapKvBlobStore;
 
-/// Maximum expected length of serialized Wi-Fi credentials in bytes.
-pub const MAX_WIFI_CREDENTIALS_LEN: usize = 256;
-
 /// A composite `KvBlobStore` that routes Wi-Fi credentials (`NETWORKS_KEY`) to a dedicated
 /// storage partition and all other Matter fabrics/credentials to the Matter KVS partition.
-///
-/// Automatically migrates legacy credentials from `matter_store` to `wifi_store` on first load.
 pub struct PartitionedKvBlobStore<M, W> {
     pub matter_store: M,
     pub wifi_store: W,
@@ -49,55 +46,7 @@ where
 {
     fn load<'a>(&mut self, key: u16, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
         if key == NETWORKS_KEY {
-            let mut temp_creds = [0u8; MAX_WIFI_CREDENTIALS_LEN];
-            let buf_len = buf.len();
-
-            // 1. Direct steady-state load from wifi_store using caller's full buffer
-            let wifi_len = if let Some(data) = self.wifi_store.load(key, &mut *buf)? {
-                let len = data.len();
-                if len > buf_len || len > MAX_WIFI_CREDENTIALS_LEN {
-                    return Err(ErrorCode::BufferTooSmall.into());
-                }
-                temp_creds[..len].copy_from_slice(data);
-                Some(len)
-            } else {
-                None
-            };
-
-            if let Some(len) = wifi_len {
-                buf[..len].copy_from_slice(&temp_creds[..len]);
-                return Ok(Some(&buf[..len]));
-            }
-
-            // 2. wifi_store had no credentials. Query matter_store using caller's full buffer (typically 4096 bytes)
-            let mut temp_creds = [0u8; MAX_WIFI_CREDENTIALS_LEN];
-            let buf_len = buf.len();
-            let migrated_len = if let Some(legacy_data) = self.matter_store.load(key, &mut *buf)? {
-                let len = legacy_data.len();
-                if len > buf_len || len > MAX_WIFI_CREDENTIALS_LEN {
-                    return Err(ErrorCode::BufferTooSmall.into());
-                }
-                temp_creds[..len].copy_from_slice(legacy_data);
-                Some(len)
-            } else {
-                None
-            };
-
-            // 3. If found, migrate into wifi_store and clean up matter_store using full buffer
-            if let Some(len) = migrated_len {
-                info!("Migrating Wi-Fi credentials from matter_kvs to dedicated wifi_kvs partition");
-                let creds = &temp_creds[..len];
-                if let Err(e) = self.wifi_store.store(key, creds, &mut *buf) {
-                    warn!("Failed to store migrated Wi-Fi credentials: {:?}", e);
-                } else {
-                    let _ = self.matter_store.remove(key, &mut *buf);
-                }
-
-                buf[..len].copy_from_slice(creds);
-                return Ok(Some(&buf[..len]));
-            }
-
-            Ok(None)
+            self.wifi_store.load(key, buf)
         } else {
             self.matter_store.load(key, buf)
         }
@@ -113,9 +62,7 @@ where
 
     fn remove(&mut self, key: u16, buf: &mut [u8]) -> Result<(), Error> {
         if key == NETWORKS_KEY {
-            let res = self.wifi_store.remove(key, buf);
-            let _ = self.matter_store.remove(key, buf);
-            res
+            self.wifi_store.remove(key, buf)
         } else {
             self.matter_store.remove(key, buf)
         }
