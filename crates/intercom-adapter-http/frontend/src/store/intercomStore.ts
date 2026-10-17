@@ -8,6 +8,7 @@ export function createIntercomStore() {
   const [isRinging, setIsRinging] = createSignal(false);
 
   const poll = async () => {
+    if (typeof document !== 'undefined' && document.hidden) return;
     try {
       const data = await fetchStatus();
       setStatus(data);

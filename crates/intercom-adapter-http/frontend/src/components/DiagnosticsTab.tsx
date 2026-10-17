@@ -23,9 +23,11 @@ export const DiagnosticsTab: Component<DiagnosticsTabProps> = (props) => {
 
   const formatUptime = (sec: number | undefined) => {
     if (sec == null) return '--';
-    const hrs = Math.floor(sec / 3600);
+    const days = Math.floor(sec / 86400);
+    const hrs = Math.floor((sec % 86400) / 3600);
     const mins = Math.floor((sec % 3600) / 60);
     const secs = sec % 60;
+    if (days > 0) return `${days}d ${hrs}h ${mins}m ${secs}s`;
     if (hrs > 0) return `${hrs}h ${mins}m ${secs}s`;
     if (mins > 0) return `${mins}m ${secs}s`;
     return `${secs}s`;

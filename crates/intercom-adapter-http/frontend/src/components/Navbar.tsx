@@ -1,5 +1,5 @@
-import { Palette, Shield, Wifi } from 'lucide-solid';
-import { type Component, For, onMount } from 'solid-js';
+import { Moon, Shield, Sun, Wifi } from 'lucide-solid';
+import { type Component, createSignal, onMount } from 'solid-js';
 import type { SystemDiagnostics } from '../types';
 import { Badge } from './ui/Badge';
 
@@ -7,24 +7,25 @@ export interface NavbarProps {
   status: SystemDiagnostics | null | undefined;
 }
 
-const THEMES = ['dark', 'night', 'synthwave', 'dracula', 'black', 'light', 'corporate', 'winter'];
-
 export const Navbar: Component<NavbarProps> = (props) => {
-  const currentTheme = () => document.documentElement.getAttribute('data-theme') || 'dark';
-
-  const setTheme = (theme: string) => {
-    document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('theme', theme);
-  };
+  const [theme, setTheme] = createSignal<'night' | 'light'>('night');
 
   onMount(() => {
-    const saved = localStorage.getItem('theme');
-    if (saved) {
-      document.documentElement.setAttribute('data-theme', saved);
-    } else {
-      document.documentElement.setAttribute('data-theme', 'dark');
-    }
+    const saved = (localStorage.getItem('intercom_theme') as 'night' | 'light') || 'night';
+    setTheme(saved);
+    document.documentElement.setAttribute('data-theme', saved);
   });
+
+  const toggleTheme = () => {
+    const next = theme() === 'night' ? 'light' : 'night';
+    setTheme(next);
+    document.documentElement.setAttribute('data-theme', next);
+    try {
+      localStorage.setItem('intercom_theme', next);
+    } catch {
+      // Ignore if localStorage is restricted
+    }
+  };
 
   const stateBadgeVariant = () => {
     const state = props.status?.state;
@@ -68,26 +69,19 @@ export const Navbar: Component<NavbarProps> = (props) => {
           </span>
         )}
 
-        <div class="dropdown dropdown-end">
-          <button type="button" class="btn btn-ghost btn-sm btn-square" aria-label="Theme selector">
-            <Palette class="w-4 h-4" />
-          </button>
-          <ul class="dropdown-content menu bg-base-200 rounded-box z-50 w-36 p-2 shadow-lg border border-base-content/10">
-            <For each={THEMES}>
-              {(t) => (
-                <li>
-                  <button
-                    type="button"
-                    class={`capitalize text-xs font-semibold ${currentTheme() === t ? 'active' : ''}`}
-                    onClick={() => setTheme(t)}
-                  >
-                    {t}
-                  </button>
-                </li>
-              )}
-            </For>
-          </ul>
-        </div>
+        <button
+          type="button"
+          class="btn btn-ghost btn-sm btn-circle"
+          onClick={toggleTheme}
+          aria-label="Toggle theme"
+          title={`Switch to ${theme() === 'night' ? 'light' : 'night'} mode`}
+        >
+          {theme() === 'night' ? (
+            <Sun class="w-4 h-4 text-warning" />
+          ) : (
+            <Moon class="w-4 h-4 text-primary" />
+          )}
+        </button>
       </div>
     </header>
   );

@@ -13,7 +13,7 @@ export const LogsTab: Component = () => {
   let pollInterval: ReturnType<typeof setInterval> | null = null;
 
   const updateLogs = async () => {
-    if (isPaused()) return;
+    if (isPaused() || (typeof document !== 'undefined' && document.hidden)) return;
     try {
       const text = await fetchLogs();
       setLogs(text);
