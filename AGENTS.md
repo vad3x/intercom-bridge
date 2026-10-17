@@ -43,6 +43,21 @@ mise exec -- cargo run
 espflash flash target/riscv32imac-unknown-none-elf/debug/intercom-bridge --port /dev/cu.usbmodem14201 --partition-table partitions.csv --erase-parts otadata
 ```
 
+### Viewing Commissioning QR & Pairing Codes
+
+Display the Matter commissioning QR code and manual pairing codes from the connected ESP32-C6 device:
+
+```bash
+# Auto-detect connected USB device and show QR code + pairing codes:
+cargo qr
+
+# Or manually specify a MAC address without USB connection:
+cargo qr -- --mac 98:a3:16:a6:78:44
+
+# Or output raw JSON format:
+cargo qr -- --json
+```
+
 The `.cargo/config.toml` configures the RISC-V target (`riscv32imac-unknown-none-elf`), `build-std`, and the `espflash` runner with `--erase-parts otadata`. Erasing `otadata` ensures that whenever firmware is flashed via USB, the 2nd-stage bootloader automatically boots the newly flashed binary in `ota_0`, preserving `nvs` (Wi-Fi) and `matter_kvs` (Matter credentials). USB ports are typically `/dev/cu.usbmodem*` (native ESP32-C6 USB) or `/dev/cu.usbserial*` (UART bridge).
 
 ### Remote Firmware Updates (OTA over Wi-Fi)

@@ -3,6 +3,9 @@
 //! Generates official Matter manual pairing codes and setup QR code
 //! for a given device MAC address using `rs-matter` directly.
 
+use std::fs;
+use std::process::Command;
+
 use rs_matter::pairing::qr::{no_optional_data, CommFlowType, Qr, QrPayload, QrTextType};
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::BasicCommData;
@@ -12,14 +15,72 @@ const PID: u16 = 0x8001;
 
 fn print_usage() {
     eprintln!(
-        r#"Usage: intercom-pairing-tool [OPTIONS]
+        r#"Usage: cargo qr [OPTIONS]
 
 Options:
   --mac <MAC>     6-byte hardware MAC address (e.g. 98:a3:16:a6:78:44 or 98A316A67844)
+  --port <PORT>   Serial port of the connected ESP32-C6 (auto-detected if omitted)
   --json          Output results as JSON
   -h, --help      Print this help message
 "#
     );
+}
+
+fn find_serial_port() -> Option<String> {
+    let mut ports = Vec::new();
+    if let Ok(entries) = fs::read_dir("/dev") {
+        for entry in entries.flatten() {
+            if let Ok(name) = entry.file_name().into_string() {
+                if name.starts_with("cu.usbmodem") || name.starts_with("cu.usbserial") {
+                    ports.push(format!("/dev/{}", name));
+                }
+            }
+        }
+    }
+    ports.sort();
+    ports.into_iter().next()
+}
+
+fn query_mac_from_espflash(port: &str) -> Result<String, String> {
+    eprintln!("Querying device MAC address on {}...", port);
+
+    // Try "espflash" first, then "mise exec -- espflash"
+    let output = Command::new("espflash")
+        .args(["board-info", "--port", port])
+        .output()
+        .or_else(|_| {
+            Command::new("mise")
+                .args(["exec", "--", "espflash", "board-info", "--port", port])
+                .output()
+        })
+        .map_err(|e| format!("Failed to execute espflash: {}", e))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{}\n{}", stdout, stderr);
+
+    if !output.status.success() {
+        if combined.contains("Resource busy") || combined.contains("Device or resource busy") {
+            return Err(format!(
+                "Serial port {} is busy. Ensure other monitors (e.g. monitor.py) are stopped.",
+                port
+            ));
+        }
+        return Err(format!("espflash board-info failed:\n{}", combined));
+    }
+
+    for line in combined.lines() {
+        if line.contains("MAC address:") {
+            if let Some(mac_part) = line.split("MAC address:").nth(1) {
+                let trimmed = mac_part.trim();
+                if !trimmed.is_empty() {
+                    return Ok(trimmed.to_string());
+                }
+            }
+        }
+    }
+
+    Err(format!("Could not find MAC address in espflash output:\n{}", combined))
 }
 
 fn parse_mac(s: &str) -> Result<[u8; 6], &'static str> {
@@ -44,12 +105,16 @@ fn parse_mac(s: &str) -> Result<[u8; 6], &'static str> {
 fn main() {
     let mut args = std::env::args().skip(1);
     let mut mac_str: Option<String> = None;
+    let mut port_str: Option<String> = None;
     let mut json_mode = false;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--mac" => {
+            "--mac" | "-m" => {
                 mac_str = args.next();
+            }
+            "--port" | "-p" => {
+                port_str = args.next();
             }
             "--json" => {
                 json_mode = true;
@@ -72,9 +137,26 @@ fn main() {
     let mac_input = match mac_str {
         Some(m) => m,
         None => {
-            eprintln!("Error: Missing required argument --mac <MAC>");
-            print_usage();
-            std::process::exit(1);
+            let port = match port_str {
+                Some(p) => p,
+                None => match find_serial_port() {
+                    Some(p) => p,
+                    None => {
+                        eprintln!("Error: No ESP32-C6 USB device detected.");
+                        eprintln!("Connect your device via USB or specify a MAC address manually:");
+                        eprintln!("    cargo qr --mac 98:a3:16:a6:78:44");
+                        std::process::exit(1);
+                    }
+                },
+            };
+
+            match query_mac_from_espflash(&port) {
+                Ok(m) => m,
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            }
         }
     };
 

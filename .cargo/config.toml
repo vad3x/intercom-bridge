@@ -7,3 +7,7 @@ rustflags = ["-C", "link-arg=-Tlinkall.x", "-C", "force-frame-pointers"]
 
 [unstable]
 build-std = ["core", "alloc", "panic_abort"]
+
+[alias]
+qr = ["run", "-p", "intercom-pairing-tool", "--target", "x86_64-apple-darwin", "--"]
+
