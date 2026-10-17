@@ -114,7 +114,7 @@ python3 scripts/ota.py --target "Intercom Bridge" target/riscv32imac-unknown-non
 | `--target`, `-t` | Interactive prompt | Direct IP address, hostname, device name, or MAC address |
 | `--port`, `-p` | `8080` | Target HTTP OTA port on device |
 | `--key`, `-k` | `~/.intercom/ota_key.pem` | Path to Ed25519 private key PEM file |
-| `--timeout` | `3.0` | mDNS discovery timeout in seconds |
+| `--timeout` | `3.5` | mDNS discovery timeout in seconds |
 | `--http-timeout` | `60.0` | HTTP upload socket timeout in seconds |
 
 #### 4. Dual-Bank A/B Partition Layout & Fail-Safe Rollback
