@@ -2502,6 +2502,7 @@ dependencies = [
  "embassy-sync 0.8.0",
  "embassy-time",
  "futures",
+ "heapless 0.8.0",
  "log",
  "portable-atomic",
 ]

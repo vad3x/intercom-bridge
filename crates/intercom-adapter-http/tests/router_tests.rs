@@ -170,9 +170,76 @@ fn test_format_status_json_success() {
     assert_eq!(val["active_ecosystem"]["paired"], true);
     assert_eq!(val["active_ecosystem"]["properties"]["door_lock_subscribed"], true);
     assert_eq!(val["active_ecosystem"]["properties"]["ring_sensor_subscribed"], false);
+    assert_eq!(val["active_ecosystem"]["fabrics"], serde_json::json!([]));
     assert_eq!(val["version"], "0.1.0");
     assert_eq!(val["git_commit"], "a3f89b");
     assert_eq!(val["build_date"], "2026-10-15");
+}
+
+#[test]
+fn test_format_status_json_with_multiple_fabrics() {
+    // Arrange
+    const AVAILABLE: &[intercom_core::domain::EcosystemId] = &[intercom_core::domain::EcosystemId::new("Matter")];
+    let active = intercom_core::domain::EcosystemStatus::new(
+        intercom_core::domain::EcosystemId::new("Matter"),
+        true,
+    )
+    .with_property("door_lock_subscribed", intercom_core::domain::EcosystemValue::Bool(true))
+    .with_fabric(intercom_core::domain::FabricInfo {
+        fab_idx: 1,
+        vendor_id: 4996,
+        fabric_id: 0x1B8246E1309A4D12,
+        node_id: 0x0000000000000002,
+        label: intercom_core::domain::FabricLabel::from_str("Living Room HomePod"),
+    })
+    .with_fabric(intercom_core::domain::FabricInfo {
+        fab_idx: 2,
+        vendor_id: 4877,
+        fabric_id: 0x4F92A0019C21EE08,
+        node_id: 0x0000000000000005,
+        label: intercom_core::domain::FabricLabel::from_str("Home Assistant Core"),
+    });
+
+    let diag = SystemDiagnostics {
+        state: SystemState::Operational,
+        door_locked: true,
+        uptime_sec: 100,
+        wifi_ssid: None,
+        wifi_rssi_dbm: None,
+        ip: None,
+        mac: [0x00, 0x11, 0x22, 0x33, 0x44, 0x55],
+        active_slot: "ota_0",
+        slot_valid: true,
+        free_heap_bytes: 100000,
+        total_heap_bytes: 200000,
+        available_ecosystems: AVAILABLE,
+        active_ecosystem: Some(active),
+        version: "1.0.0",
+        git_commit: "abcdef",
+        build_date: "2026-10-17",
+    };
+    let mut buf = [0u8; 1024];
+
+    // Act
+    let written = format_status_json(&diag, &mut buf).expect("serialization should succeed");
+    let json_str = core::str::from_utf8(&buf[..written]).expect("valid utf-8");
+    let val: Value = serde_json::from_str(json_str).expect("valid json format");
+
+    // Assert
+    let fabrics = &val["active_ecosystem"]["fabrics"];
+    assert_eq!(fabrics.as_array().unwrap().len(), 2);
+
+    assert_eq!(fabrics[0]["fab_idx"], 1);
+    assert_eq!(fabrics[0]["vendor_id"], 4996);
+    assert_eq!(fabrics[0]["fabric_id"], "0x1B8246E1309A4D12");
+    assert_eq!(fabrics[0]["node_id"], "0x0000000000000002");
+    assert_eq!(fabrics[0]["label"], "Living Room HomePod");
+
+    assert_eq!(fabrics[1]["fab_idx"], 2);
+    assert_eq!(fabrics[1]["vendor_id"], 4877);
+    assert_eq!(fabrics[1]["fabric_id"], "0x4F92A0019C21EE08");
+    assert_eq!(fabrics[1]["node_id"], "0x0000000000000005");
+    assert_eq!(fabrics[1]["label"], "Home Assistant Core");
 }
 
 #[test]

@@ -42,7 +42,7 @@ pub use readiness::ClusterReadinessBarrier;
 /// handler, which consumes more bump memory during init. After init the
 /// allocator also needs headroom for CASE sessions, subscription reports,
 /// multi-fabric commissioning, and mDNS service records.
-const BUMP_SIZE: usize = 48000;
+const BUMP_SIZE: usize = 56000;
 
 // ============================================================================
 // MatterCluster trait

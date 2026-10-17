@@ -16,7 +16,8 @@ pub use commissioning::{
 };
 pub use diagnostics::{SystemDiagnostics, WifiSsid};
 pub use ecosystem::{
-    EcosystemId, EcosystemStatus, EcosystemType, EcosystemValue, MAX_ECOSYSTEM_PROPERTIES,
+    EcosystemId, EcosystemStatus, EcosystemType, EcosystemValue, FabricInfo, FabricLabel,
+    MAX_ECOSYSTEM_FABRICS, MAX_ECOSYSTEM_PROPERTIES,
 };
 pub use reset::{classify_reset_hold, ResetScope};
 

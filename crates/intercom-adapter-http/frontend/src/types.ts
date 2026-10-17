@@ -1,3 +1,11 @@
+export interface FabricInfo {
+  fab_idx: number;
+  vendor_id: number;
+  fabric_id: string;
+  node_id: string;
+  label: string;
+}
+
 export interface ActiveEcosystem {
   type: string;
   paired: boolean;
@@ -6,6 +14,7 @@ export interface ActiveEcosystem {
     ring_sensor_subscribed?: boolean;
     [key: string]: boolean | number | string | undefined;
   };
+  fabrics?: FabricInfo[];
 }
 
 export interface SystemDiagnostics {

@@ -143,7 +143,7 @@ impl AsyncHandler for IntercomDoorLock {
                     }
                     // LockType (id=1): DlLockType
                     x if x == door_lock::AttributeId::LockType as u16 => {
-                        Reply::set(writer, DlLockType::Other)
+                        Reply::set(writer, DlLockType::DeadBolt)
                     }
                     // ActuatorEnabled (id=2): bool
                     x if x == door_lock::AttributeId::ActuatorEnabled as u16 => {

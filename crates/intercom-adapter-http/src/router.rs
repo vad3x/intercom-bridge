@@ -145,7 +145,26 @@ pub fn format_status_json<T: EcosystemType>(
                     }
                 }
             }
-            write!(writer, "}}}}").map_err(|_| ())?;
+            write!(writer, "}},\"fabrics\":[").map_err(|_| ())?;
+
+            for (idx, fab) in active.iter_fabrics().enumerate() {
+                if idx > 0 {
+                    write!(writer, ",").map_err(|_| ())?;
+                }
+                write!(
+                    writer,
+                    "{{\"fab_idx\":{},\"vendor_id\":{},\"fabric_id\":\"0x{:016X}\",\"node_id\":\"0x{:016X}\",\"label\":",
+                    fab.fab_idx,
+                    fab.vendor_id,
+                    fab.fabric_id,
+                    fab.node_id
+                )
+                .map_err(|_| ())?;
+                write_escaped_str(&mut writer, fab.label.as_str()).map_err(|_| ())?;
+                write!(writer, "}}").map_err(|_| ())?;
+            }
+
+            write!(writer, "]}}").map_err(|_| ())?;
         }
         None => write!(writer, "null").map_err(|_| ())?,
     }
@@ -163,6 +182,22 @@ pub fn format_status_json<T: EcosystemType>(
 // ============================================================================
 // Private Helpers & Writers
 // ============================================================================
+
+fn write_escaped_str(writer: &mut BufferWriter<'_>, s: &str) -> core::fmt::Result {
+    writer.write_str("\"")?;
+    for c in s.chars() {
+        match c {
+            '"' => writer.write_str("\\\"")?,
+            '\\' => writer.write_str("\\\\")?,
+            '\n' => writer.write_str("\\n")?,
+            '\r' => writer.write_str("\\r")?,
+            '\t' => writer.write_str("\\t")?,
+            _ => write!(writer, "{}", c)?,
+        }
+    }
+    writer.write_str("\"")?;
+    Ok(())
+}
 
 fn state_to_str(state: SystemState) -> &'static str {
     match state {

@@ -27,6 +27,7 @@ use log::{info, warn};
 
 use rs_matter::dm::clusters::basic_info::BasicInfoConfig;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::identify;
 use rs_matter::dm::{
     Async, AsyncHandler, ChainedHandler, Cluster, Dataver, DeviceType, EmptyHandler, Endpoint,
     Node,
@@ -191,14 +192,19 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
 
         // Build the handler chain
         let dataver_seed = DESC_DATAVER_COUNTER.fetch_add(1, portable_atomic::Ordering::Relaxed);
+        let id_dataver_seed = DESC_DATAVER_COUNTER.fetch_add(1, portable_atomic::Ordering::Relaxed);
 
         let new_handler = ChainedHandler::new_with_matcher(
             move |e, c| e == endpoint_id && c == desc::DescHandler::CLUSTER.id,
             Async(desc::DescHandler::new(Dataver::new(dataver_seed)).adapt()),
             ChainedHandler::new_with_matcher(
-                move |e, c| e == endpoint_id && c == C::CLUSTER_DEF.id,
-                cluster,
-                self.handler,
+                move |e, c| e == endpoint_id && c == identify::CLUSTER.id,
+                Async(identify::IdentifyHandler::new(Dataver::new(id_dataver_seed)).adapt()),
+                ChainedHandler::new_with_matcher(
+                    move |e, c| e == endpoint_id && c == C::CLUSTER_DEF.id,
+                    cluster,
+                    self.handler,
+                ),
             ),
         );
 
@@ -226,7 +232,13 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
         let cluster_arrays: Vec<Vec<Cluster>> = self
             .endpoint_metas
             .iter()
-            .map(|meta| vec![desc::DescHandler::CLUSTER, meta.cluster.clone()])
+            .map(|meta| {
+                vec![
+                    desc::DescHandler::CLUSTER,
+                    identify::CLUSTER,
+                    meta.cluster.clone(),
+                ]
+            })
             .collect();
         let dtype_arrays: Vec<[DeviceType; 1]> = self
             .endpoint_metas
@@ -338,6 +350,8 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
 
         // Wrap KV store as shared reference for concurrent access by Matter stack
         let kv = stack.matter().kv(kv);
+
+        self.readiness.attach_matter(stack.matter());
 
         info!("Matter stack initialized, starting concurrent commissioning (BLE + WiFi coex)");
 

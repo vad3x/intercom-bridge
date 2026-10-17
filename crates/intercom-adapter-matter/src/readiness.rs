@@ -4,10 +4,11 @@
 //! `EcosystemInfoDriver` to report Matter pairing and cluster subscription status.
 
 use core::sync::atomic::{AtomicBool, Ordering};
-use intercom_core::domain::{EcosystemStatus, EcosystemValue};
+use intercom_core::domain::{EcosystemStatus, EcosystemValue, FabricInfo, FabricLabel};
 use intercom_core::events::SystemStateSender;
 use intercom_core::ports::ecosystem::EcosystemInfoDriver;
 use log::info;
+use portable_atomic::AtomicPtr;
 
 use crate::config::MATTER_ECOSYSTEM;
 
@@ -17,6 +18,7 @@ pub struct ClusterReadinessBarrier {
     door_lock_ready: AtomicBool,
     ring_ready: AtomicBool,
     state_sender: SystemStateSender<'static>,
+    matter: AtomicPtr<rs_matter::Matter<'static>>,
 }
 
 impl ClusterReadinessBarrier {
@@ -27,7 +29,13 @@ impl ClusterReadinessBarrier {
             door_lock_ready: AtomicBool::new(false),
             ring_ready: AtomicBool::new(false),
             state_sender,
+            matter: AtomicPtr::new(core::ptr::null_mut()),
         }
+    }
+
+    /// Attach the running Matter protocol stack instance.
+    pub fn attach_matter(&self, matter: &'static rs_matter::Matter<'static>) {
+        self.matter.store(matter as *const _ as *mut _, Ordering::Release);
     }
 
     /// Update whether the Matter node is commissioned with an active controller fabric.
@@ -84,17 +92,33 @@ impl ClusterReadinessBarrier {
 
 impl EcosystemInfoDriver for ClusterReadinessBarrier {
     fn status(&self) -> Option<EcosystemStatus> {
-        Some(
-            EcosystemStatus::new(MATTER_ECOSYSTEM, self.is_paired())
-                .with_property(
-                    "door_lock_subscribed",
-                    EcosystemValue::Bool(self.is_door_lock_ready()),
-                )
-                .with_property(
-                    "ring_sensor_subscribed",
-                    EcosystemValue::Bool(self.is_ring_ready()),
-                ),
-        )
+        let mut status = EcosystemStatus::new(MATTER_ECOSYSTEM, self.is_paired())
+            .with_property(
+                "door_lock_subscribed",
+                EcosystemValue::Bool(self.is_door_lock_ready()),
+            )
+            .with_property(
+                "ring_sensor_subscribed",
+                EcosystemValue::Bool(self.is_ring_ready()),
+            );
+
+        let matter_ptr = self.matter.load(Ordering::Acquire);
+        if !matter_ptr.is_null() {
+            let matter = unsafe { &*matter_ptr };
+            matter.with_state(|state| {
+                for fab in state.fabrics.iter() {
+                    status = status.with_fabric(FabricInfo {
+                        fab_idx: fab.fab_idx().get(),
+                        vendor_id: fab.vendor_id(),
+                        fabric_id: fab.fabric_id(),
+                        node_id: fab.node_id(),
+                        label: FabricLabel::from_str(fab.label()),
+                    });
+                }
+            });
+        }
+
+        Some(status)
     }
 }
 

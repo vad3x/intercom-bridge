@@ -41,22 +41,91 @@ pub enum EcosystemValue {
     Text(&'static str),
 }
 
+/// Maximum number of active smart home fabrics/hubs tracked in telemetry.
+pub const MAX_ECOSYSTEM_FABRICS: usize = 5;
+
+/// Fixed-capacity 32-byte string buffer for fabric labels, implementing Copy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FabricLabel {
+    bytes: [u8; 32],
+    len: u8,
+}
+
+impl FabricLabel {
+    /// Create an empty fabric label.
+    pub const fn empty() -> Self {
+        Self {
+            bytes: [0; 32],
+            len: 0,
+        }
+    }
+
+    /// Create a fabric label from a string slice, truncating to 32 bytes if necessary.
+    pub fn from_str(s: &str) -> Self {
+        let mut bytes = [0u8; 32];
+        let copy_len = core::cmp::min(s.len(), 32);
+        bytes[..copy_len].copy_from_slice(&s.as_bytes()[..copy_len]);
+        Self {
+            bytes,
+            len: copy_len as u8,
+        }
+    }
+
+    /// Return the label as a string slice.
+    pub fn as_str(&self) -> &str {
+        core::str::from_utf8(&self.bytes[..self.len as usize]).unwrap_or("")
+    }
+}
+
+/// Telemetry snapshot for an individual connected smart home fabric / hub.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FabricInfo {
+    /// 1-based fabric index within the device's fabric table (1..=254)
+    pub fab_idx: u8,
+    /// Vendor ID of the commissioner or ecosystem (e.g. 0x1349, 0x1384, 0x130D)
+    pub vendor_id: u16,
+    /// 64-bit Fabric ID assigned by the operational CA
+    pub fabric_id: u64,
+    /// 64-bit Node ID assigned to this accessory on the fabric
+    pub node_id: u64,
+    /// Human-readable label configured by user or ecosystem (up to 32 bytes)
+    pub label: FabricLabel,
+}
+
 /// Status and telemetry snapshot of a single active smart home ecosystem.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EcosystemStatus {
     pub ecosystem_type: EcosystemId,
     pub paired: bool,
     pub properties: [Option<(&'static str, EcosystemValue)>; MAX_ECOSYSTEM_PROPERTIES],
+    pub fabrics: [Option<FabricInfo>; MAX_ECOSYSTEM_FABRICS],
 }
 
 impl EcosystemStatus {
-    /// Create a new `EcosystemStatus` with no extra properties.
+    /// Create a new `EcosystemStatus` with no extra properties or fabrics.
     pub const fn new(ecosystem_type: EcosystemId, paired: bool) -> Self {
         Self {
             ecosystem_type,
             paired,
             properties: [None; MAX_ECOSYSTEM_PROPERTIES],
+            fabrics: [None; MAX_ECOSYSTEM_FABRICS],
         }
+    }
+
+    /// Add a connected fabric / hub to the telemetry snapshot.
+    pub fn with_fabric(mut self, fabric: FabricInfo) -> Self {
+        for slot in self.fabrics.iter_mut() {
+            if slot.is_none() {
+                *slot = Some(fabric);
+                break;
+            }
+        }
+        self
+    }
+
+    /// Iterate over all active connected fabrics in insertion order.
+    pub fn iter_fabrics(&self) -> impl Iterator<Item = &FabricInfo> {
+        self.fabrics.iter().filter_map(|slot| slot.as_ref())
     }
 
     /// Builder method to set or update a key-value property.
