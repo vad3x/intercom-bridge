@@ -49,9 +49,23 @@ where
 {
     fn load<'a>(&mut self, key: u16, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
         if key == NETWORKS_KEY {
+            let mut temp_creds = [0u8; MAX_WIFI_CREDENTIALS_LEN];
+            let buf_len = buf.len();
+
             // 1. Direct steady-state load from wifi_store using caller's full buffer
-            let wifi_len = self.wifi_store.load(key, &mut *buf)?.map(|d| d.len());
+            let wifi_len = if let Some(data) = self.wifi_store.load(key, &mut *buf)? {
+                let len = data.len();
+                if len > buf_len || len > MAX_WIFI_CREDENTIALS_LEN {
+                    return Err(ErrorCode::BufferTooSmall.into());
+                }
+                temp_creds[..len].copy_from_slice(data);
+                Some(len)
+            } else {
+                None
+            };
+
             if let Some(len) = wifi_len {
+                buf[..len].copy_from_slice(&temp_creds[..len]);
                 return Ok(Some(&buf[..len]));
             }
 
