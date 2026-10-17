@@ -28,6 +28,8 @@ function resolveVendor(vid: number): VendorMeta {
       return { name: 'Amazon Alexa', role: 'Echo / Hub', iconType: 'alexa' };
     case 0x1160: // 4448
       return { name: 'SmartThings', role: 'SmartThings Hub', iconType: 'smartthings' };
+    case 0x115f: // 4447 - Lumi United Technology (Aqara)
+      return { name: 'Aqara', role: 'Aqara Hub', iconType: 'smartthings' };
     case 0xfff1:
     case 0xfff2:
     case 0xfff3:
