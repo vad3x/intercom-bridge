@@ -330,11 +330,32 @@ let matter = MatterController::new(
 matter.run().await;
 ```
 
+#### Critical: Always Include `system;` in `with_attrs`
+When defining a cluster with `with_attrs(with!(...))`, **always prefix the attribute list with `system;`**:
+
+```rust
+pub const CLUSTER: Cluster<'static> = occupancy_sensing::FULL_CLUSTER
+    .with_revision(5)
+    .with_features(occupancy_sensing::Feature::PASSIVE_INFRARED.bits())
+    .with_attrs(with!(system;
+        occupancy_sensing::AttributeId::Occupancy
+            | occupancy_sensing::AttributeId::OccupancySensorType
+            | occupancy_sensing::AttributeId::OccupancySensorTypeBitmap
+    ))
+    .with_cmds(with!());
+```
+
+**Why this matters:**
+- Without `system;`, `rs-matter`'s `with!` macro filters out all global system attributes (`0xFFF8` - `0xFFFD`).
+- This causes `AttributeList` (`0xFFFB`), `FeatureMap` (`0xFFFC`), `AcceptedCommandList` (`0xFFF9`), and `GeneratedCommandList` (`0xFFF8`) to return `AttributeNotFound`.
+- Strict ecosystem controllers like **Aqara Hub M3** query `FeatureMap` (e.g., PIR bit for `OccupancySensing`) and `AttributeList` during interview. If `FeatureMap` is missing or 0, Aqara rejects the cluster as invalid and will silently hide the device component from the UI.
+- Ensure device type revisions also match standard spec requirements (e.g. `OccupancySensor` is `dtype: 0x0107, drev: 4`, `DoorLock` is `dtype: 0x000A, drev: 3`).
+
 ### Matter Endpoints
 
 - **Endpoint 0:** Root node (system clusters, handled by rs-matter-embassy)
 - **Endpoint 1:** Door Lock Cluster (lock/unlock commands)
-- **Endpoint 2:** Occupancy Sensor (ring detection, appears as Motion Sensor in HomeKit)
+- **Endpoint 2:** Occupancy Sensor (ring detection, appears as Motion Sensor in HomeKit, Home Assistant, and Aqara Home)
 
 ### Over-The-Air (OTA) Firmware Updates & Fail-Safe Dual-Bank Flash
 

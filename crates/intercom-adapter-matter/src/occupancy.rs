@@ -78,8 +78,8 @@ impl IntercomOccupancy {
     /// We expose the three mandatory attributes and advertise PIR sensing capabilities; no commands.
     pub const CLUSTER: Cluster<'static> = occupancy_sensing::FULL_CLUSTER
         .with_revision(5)
-        .with_features(occupancy_sensing::Feature::OTHER.bits())
-        .with_attrs(with!(
+        .with_features(occupancy_sensing::Feature::PASSIVE_INFRARED.bits())
+        .with_attrs(with!(system;
             occupancy_sensing::AttributeId::Occupancy
                 | occupancy_sensing::AttributeId::OccupancySensorType
                 | occupancy_sensing::AttributeId::OccupancySensorTypeBitmap
@@ -96,10 +96,10 @@ pub struct IntercomOccupancyConfig {
 impl MatterCluster for IntercomOccupancy {
     const ENDPOINT_ID: u16 = crate::config::OCCUPANCY_SENSOR_ENDPOINT_ID;
     const CLUSTER_DEF: Cluster<'static> = Self::CLUSTER;
-    /// Occupancy Sensor device type (Matter spec 0x0107, rev 3)
+    /// Occupancy Sensor device type (Matter spec 0x0107, rev 4)
     const DEVICE_TYPE: DeviceType = DeviceType {
         dtype: 0x0107,
-        drev: 3,
+        drev: 4,
     };
 }
 

@@ -2,14 +2,14 @@
 
 Universal smart intercom controller built with **Hexagonal Architecture** (Ports & Adapters) for the ESP32-C6 in bare-metal Rust (`no_std` + Embassy async).
 
-Connects analog intercom systems (such as the IR204E) to modern smart home ecosystems like Apple Home (HomeKit) via the Matter standard.
+Connects analog intercom systems (such as the IR204E) to modern smart home ecosystems like **Apple Home (HomeKit)**, **Home Assistant**, and **Aqara Home** via the Matter standard.
 
 ---
 
 ## Features
 
-- 🔐 **Door Lock & Auto-Relock** — Unlock intercom door latch from Apple Home or any Matter controller.
-- 🔔 **Ring Detection** — Get notified in Apple Home when a visitor rings (exposed as an Occupancy/Motion sensor for instant push notifications and automations).
+- 🔐 **Door Lock & Auto-Relock** — Unlock intercom door latch from Apple Home, Home Assistant, Aqara Home, or any Matter controller.
+- 🔔 **Ring Detection** — Get notified when a visitor rings (exposed as an Occupancy/Motion sensor for instant push notifications and automations across Apple Home, Home Assistant, and Aqara Home).
 - 🧩 **Hexagonal Architecture** — Core business domain is completely isolated from hardware peripherals and smart home protocols. Easily swap or add new adapters (e.g. Home Assistant / MQTT, different intercom hardware).
 - ⚡ **Host-Testable Core** — Run unit tests for domain state machines and application services in ~0.7 seconds on your development machine (macOS/Linux) without flashing or hardware simulators.
 - 💡 **Status Indicator** — Non-blocking LED patterns indicating WiFi connecting, connected, ringing, and unlocking states.

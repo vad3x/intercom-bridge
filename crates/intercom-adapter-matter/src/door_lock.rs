@@ -93,8 +93,8 @@ impl IntercomDoorLock {
     /// OperatingMode, SupportedOperatingModes.
     /// Commands: LockDoor, UnlockDoor.
     pub const CLUSTER: Cluster<'static> = door_lock::FULL_CLUSTER
-        .with_revision(7)
-        .with_attrs(with!(
+        .with_revision(9)
+        .with_attrs(with!(system;
             door_lock::AttributeId::LockState
                 | door_lock::AttributeId::LockType
                 | door_lock::AttributeId::ActuatorEnabled

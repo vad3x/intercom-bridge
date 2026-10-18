@@ -163,5 +163,6 @@ chip-tool occupancysensing subscribe occupancy 1 30 <NODE_ID> 2
 |---|---|---|
 | **"Too many retransmissions. Giving up"** | MRP packets unacknowledged over UDP 5540 due to dropped IPv6 packets or routing failure. | Verify IPv6 link-local reachability and check router multicast/NDP settings. |
 | **Attribute change not updating in UI** | State changed in driver/actor but cluster attribute not updated or dirty bit not pulsed. | Ensure state is written to the cluster handler and subscription engine is notified. |
+| **Aqara Hub / strict controller drops endpoint** | Missing global system attributes (`FeatureMap`, `AttributeList`). In `rs-matter`, omitting `system;` in `with_attrs(with!(...))` filters out `0xFFF8`..`0xFFFD`. | Always use `with!(system; AttributeId::... | ...)`. Ensure `FeatureMap` has required feature bits (e.g. PIR bit for Occupancy). |
 | **Stack Overflow / Alloc Failure** | Matter crypto (SPAKE2+, ECDSA) and TLV encoding consume substantial stack/heap. | Ensure dedicated task stack size >= 8-12 KB; allocate sufficient heap for crypto exchange buffers. |
 | **Device not re-pairing after firmware flash** | Old fabric credentials retained in non-volatile storage (NVS / Matter KVS). | Erase flash partition: `espflash erase-parts --port <PORT> matter_kvs nvs`. |

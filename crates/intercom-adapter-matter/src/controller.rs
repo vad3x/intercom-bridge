@@ -518,6 +518,7 @@ fn dev_det(info: &DeviceInfo, serial_no: &'static str) -> BasicInfoConfig<'stati
         sw_ver: info.sw_ver,
         sw_ver_str: info.sw_ver_str,
         serial_no,
+        unique_id: serial_no,
         vendor_name: info.vendor_name,
         product_name: info.product_name,
         device_name: info.device_name,

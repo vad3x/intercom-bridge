@@ -19,7 +19,7 @@ pub const HW_VER: u16 = parse_version(HW_VER_STR) as u16;
 pub const VENDOR_NAME: &str = "Smart Intercom";
 
 /// Product name shown in smart home ecosystem controllers.
-pub const PRODUCT_NAME: &str = "Intercom Controller";
+pub const PRODUCT_NAME: &str = "Smart Intercom";
 
 /// Device name shown in smart home ecosystem controllers.
 pub const DEVICE_NAME: &str = "Smart Intercom";
