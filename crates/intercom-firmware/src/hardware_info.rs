@@ -10,6 +10,10 @@ use intercom_core::ports::diagnostics::HardwareInfoDriver;
 pub struct FirmwareHardwareInfo;
 
 impl HardwareInfoDriver for FirmwareHardwareInfo {
+    fn device_type(&self) -> &'static str {
+        crate::config::DEVICE_TYPE
+    }
+
     fn uptime_secs(&self) -> u64 {
         embassy_time::Instant::now().as_secs()
     }

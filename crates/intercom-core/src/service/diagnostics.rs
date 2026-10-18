@@ -56,6 +56,7 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, T: EcosystemType>
         let door_locked = true;
 
         SystemDiagnostics {
+            device_type: self.hardware.device_type(),
             state,
             door_locked,
             uptime_sec: self.hardware.uptime_secs(),

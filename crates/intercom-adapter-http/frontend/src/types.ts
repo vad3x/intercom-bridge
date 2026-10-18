@@ -26,6 +26,7 @@ export interface ActiveEcosystem {
 }
 
 export interface SystemDiagnostics {
+  device_type: string;
   state: string; // "Booting", "Starting", "Commissioning", "WifiConnecting", "Operational", "Updating", "Error"
   door_locked: boolean;
   uptime_sec: number;

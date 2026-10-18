@@ -76,7 +76,8 @@ pub fn format_status_json<T: EcosystemType>(
 
     write!(
         writer,
-        "{{\"state\":\"{}\",\"door_locked\":{},\"uptime_sec\":{},\"wifi_ssid\":",
+        "{{\"device_type\":\"{}\",\"state\":\"{}\",\"door_locked\":{},\"uptime_sec\":{},\"wifi_ssid\":",
+        diag.device_type,
         state_to_str(diag.state),
         diag.door_locked,
         diag.uptime_sec

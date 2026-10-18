@@ -153,6 +153,7 @@ fn test_format_status_json_success() {
         ready: false,
     });
     let diag = SystemDiagnostics {
+        device_type: "intercom_bridge",
         state: SystemState::Operational,
         door_locked: true,
         uptime_sec: 14250,
@@ -178,6 +179,7 @@ fn test_format_status_json_success() {
     let val: Value = serde_json::from_str(json_str).expect("valid json format");
 
     // Assert
+    assert_eq!(val["device_type"], "intercom_bridge");
     assert_eq!(val["state"], "Operational");
     assert_eq!(val["door_locked"], true);
     assert_eq!(val["uptime_sec"], 14250);
@@ -232,6 +234,7 @@ fn test_format_status_json_with_multiple_fabrics() {
     });
 
     let diag = SystemDiagnostics {
+        device_type: "intercom_bridge",
         state: SystemState::Operational,
         door_locked: true,
         uptime_sec: 100,
@@ -257,6 +260,7 @@ fn test_format_status_json_with_multiple_fabrics() {
     let val: Value = serde_json::from_str(json_str).expect("valid json format");
 
     // Assert
+    assert_eq!(val["device_type"], "intercom_bridge");
     let fabrics = &val["active_ecosystem"]["fabrics"];
     assert_eq!(fabrics.as_array().unwrap().len(), 2);
 
@@ -277,6 +281,7 @@ fn test_format_status_json_with_multiple_fabrics() {
 fn test_format_status_json_with_none_options() {
     // Arrange
     let diag: SystemDiagnostics = SystemDiagnostics {
+        device_type: "intercom_bridge",
         state: SystemState::WifiConnecting,
         door_locked: false,
         uptime_sec: 42,
@@ -302,6 +307,7 @@ fn test_format_status_json_with_none_options() {
     let val: Value = serde_json::from_str(json_str).expect("valid json format");
 
     // Assert
+    assert_eq!(val["device_type"], "intercom_bridge");
     assert_eq!(val["state"], "WifiConnecting");
     assert_eq!(val["door_locked"], false);
     assert_eq!(val["uptime_sec"], 42);
@@ -324,6 +330,7 @@ fn test_format_status_json_with_none_options() {
 fn test_format_status_json_buffer_overflow_protection() {
     // Arrange
     let diag: SystemDiagnostics = SystemDiagnostics {
+        device_type: "intercom_bridge",
         state: SystemState::Operational,
         door_locked: true,
         uptime_sec: 14250,

@@ -6,6 +6,7 @@ use crate::events::SystemState;
 /// Real-time health, network, flash, ecosystem, and firmware telemetry snapshot.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemDiagnostics<T: EcosystemType = EcosystemId> {
+    pub device_type: &'static str,
     pub state: SystemState,
     pub door_locked: bool,
     pub uptime_sec: u64,

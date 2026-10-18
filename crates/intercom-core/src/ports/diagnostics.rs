@@ -5,6 +5,9 @@
 /// Implementors query the underlying platform runtime, network stack,
 /// bootloader, and build metadata for diagnostics snapshot aggregation.
 pub trait HardwareInfoDriver {
+    /// Return the explicit device type identifier (e.g. "intercom_bridge").
+    fn device_type(&self) -> &'static str;
+
     /// Return system uptime in seconds.
     fn uptime_secs(&self) -> u64;
 

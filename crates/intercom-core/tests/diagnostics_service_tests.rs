@@ -29,6 +29,7 @@ impl EcosystemType for TestEcosystem {
 const TEST_AVAILABLE_ECOSYSTEMS: &[TestEcosystem] = &[TestEcosystem::ProtoA, TestEcosystem::ProtoB];
 
 pub struct MockHardwareInfoDriver {
+    pub device_type: &'static str,
     pub uptime_secs: u64,
     pub free_heap_bytes: usize,
     pub total_heap_bytes: usize,
@@ -46,6 +47,7 @@ pub struct MockHardwareInfoDriver {
 impl MockHardwareInfoDriver {
     pub fn new() -> Self {
         Self {
+            device_type: "intercom_bridge",
             uptime_secs: 12345,
             free_heap_bytes: 45000,
             total_heap_bytes: 80000,
@@ -63,6 +65,10 @@ impl MockHardwareInfoDriver {
 }
 
 impl HardwareInfoDriver for MockHardwareInfoDriver {
+    fn device_type(&self) -> &'static str {
+        self.device_type
+    }
+
     fn uptime_secs(&self) -> u64 {
         self.uptime_secs
     }
@@ -144,6 +150,7 @@ fn diagnostics_service_snapshot_with_default_ecosystem() {
     assert_eq!(
         snapshot,
         SystemDiagnostics {
+            device_type: "intercom_bridge",
             state: SystemState::Operational,
             door_locked: true,
             uptime_sec: 12345,
@@ -189,6 +196,7 @@ fn diagnostics_service_snapshot_with_explicit_ecosystem_and_properties() {
     assert_eq!(
         snapshot,
         SystemDiagnostics {
+            device_type: "intercom_bridge",
             state: SystemState::EcosystemConnecting,
             door_locked: true,
             uptime_sec: 12345,

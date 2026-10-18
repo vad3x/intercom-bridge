@@ -117,8 +117,12 @@ def probe_intercom_status(ip: str, port: int = 8080, timeout: float = 1.5) -> Op
         res = conn.getresponse()
         if res.status == 200:
             data = json.loads(res.read().decode())
-            if isinstance(data, dict) and "active_slot" in data and "mac" in data:
-                return data
+            if isinstance(data, dict):
+                dev_type = data.get("device_type")
+                if dev_type == "intercom_bridge":
+                    return data
+                if dev_type is None and "door_locked" in data and "active_slot" in data and "mac" in data:
+                    return data
         conn.close()
     except Exception:
         pass

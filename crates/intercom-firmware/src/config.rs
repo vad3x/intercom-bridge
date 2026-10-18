@@ -24,6 +24,9 @@ pub const PRODUCT_NAME: &str = "Smart Intercom";
 /// Device name shown in smart home ecosystem controllers.
 pub const DEVICE_NAME: &str = "Smart Intercom";
 
+/// Canonical device type identifier used for telemetry and OTA target validation.
+pub const DEVICE_TYPE: &str = "intercom_bridge";
+
 // ============================================================================
 // Flash persistence & Partition Layout (from partitions.csv)
 // ============================================================================

@@ -72,6 +72,10 @@ impl OtaStream for MockStream {
 struct MockHardwareInfo;
 
 impl HardwareInfoDriver for MockHardwareInfo {
+    fn device_type(&self) -> &'static str {
+        "intercom_bridge"
+    }
+
     fn uptime_secs(&self) -> u64 {
         1234
     }
@@ -255,6 +259,7 @@ fn test_get_status_returns_valid_telemetry_json() {
 
     let body_str = core::str::from_utf8(&response[header_end + 4..]).unwrap();
     let v: Value = serde_json::from_str(body_str).expect("invalid JSON");
+    assert_eq!(v["device_type"], "intercom_bridge");
     assert_eq!(v["state"], "Operational");
     assert_eq!(v["door_locked"], true);
     assert_eq!(v["uptime_sec"], 1234);
