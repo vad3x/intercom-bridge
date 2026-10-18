@@ -92,6 +92,22 @@ pub struct FabricInfo {
     pub label: FabricLabel,
 }
 
+/// Maximum number of exposed smart home endpoints.
+pub const MAX_ECOSYSTEM_ENDPOINTS: usize = 4;
+
+/// Snapshot descriptor for an exposed smart home endpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EndpointInfo {
+    /// Numerical endpoint ID (e.g. 1, 2)
+    pub id: u16,
+    /// Human-readable name (e.g. "Door Lock", "Chime / Ring")
+    pub name: &'static str,
+    /// Standard cluster or type description (e.g. "DoorLock", "OccupancySensing")
+    pub cluster: &'static str,
+    /// Whether the endpoint is currently primed / ready / subscribed
+    pub ready: bool,
+}
+
 /// Status and telemetry snapshot of a single active smart home ecosystem.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EcosystemStatus {
@@ -99,16 +115,18 @@ pub struct EcosystemStatus {
     pub paired: bool,
     pub properties: [Option<(&'static str, EcosystemValue)>; MAX_ECOSYSTEM_PROPERTIES],
     pub fabrics: [Option<FabricInfo>; MAX_ECOSYSTEM_FABRICS],
+    pub endpoints: [Option<EndpointInfo>; MAX_ECOSYSTEM_ENDPOINTS],
 }
 
 impl EcosystemStatus {
-    /// Create a new `EcosystemStatus` with no extra properties or fabrics.
+    /// Create a new `EcosystemStatus` with no extra properties, fabrics, or endpoints.
     pub const fn new(ecosystem_type: EcosystemId, paired: bool) -> Self {
         Self {
             ecosystem_type,
             paired,
             properties: [None; MAX_ECOSYSTEM_PROPERTIES],
             fabrics: [None; MAX_ECOSYSTEM_FABRICS],
+            endpoints: [None; MAX_ECOSYSTEM_ENDPOINTS],
         }
     }
 
@@ -123,9 +141,25 @@ impl EcosystemStatus {
         self
     }
 
+    /// Add an exposed endpoint descriptor to the telemetry snapshot.
+    pub fn with_endpoint(mut self, endpoint: EndpointInfo) -> Self {
+        for slot in self.endpoints.iter_mut() {
+            if slot.is_none() {
+                *slot = Some(endpoint);
+                break;
+            }
+        }
+        self
+    }
+
     /// Iterate over all active connected fabrics in insertion order.
     pub fn iter_fabrics(&self) -> impl Iterator<Item = &FabricInfo> {
         self.fabrics.iter().filter_map(|slot| slot.as_ref())
+    }
+
+    /// Iterate over all exposed endpoints in insertion order.
+    pub fn iter_endpoints(&self) -> impl Iterator<Item = &EndpointInfo> {
+        self.endpoints.iter().filter_map(|slot| slot.as_ref())
     }
 
     /// Builder method to set or update a key-value property.

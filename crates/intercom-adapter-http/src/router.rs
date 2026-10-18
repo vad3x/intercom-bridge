@@ -166,6 +166,20 @@ pub fn format_status_json<T: EcosystemType>(
                 write!(writer, "}}").map_err(|_| ())?;
             }
 
+            write!(writer, "],\"endpoints\":[").map_err(|_| ())?;
+
+            for (idx, ep) in active.iter_endpoints().enumerate() {
+                if idx > 0 {
+                    write!(writer, ",").map_err(|_| ())?;
+                }
+                write!(
+                    writer,
+                    "{{\"id\":{},\"name\":\"{}\",\"cluster\":\"{}\",\"ready\":{}}}",
+                    ep.id, ep.name, ep.cluster, ep.ready
+                )
+                .map_err(|_| ())?;
+            }
+
             write!(writer, "]}}").map_err(|_| ())?;
         }
         None => write!(writer, "null").map_err(|_| ())?,

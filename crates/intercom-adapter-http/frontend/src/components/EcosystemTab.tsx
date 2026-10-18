@@ -73,12 +73,15 @@ const renderVendorIcon = (iconType: VendorMeta['iconType']) => {
   }
 };
 
-const FabricRow: Component<{ fabric: FabricInfo }> = (props) => {
-  const [expanded, setExpanded] = createSignal(false);
+const FabricRow: Component<{
+  fabric: FabricInfo;
+  isExpanded: boolean;
+  onToggle: () => void;
+}> = (props) => {
   const meta = () => resolveVendor(props.fabric.vendor_id);
 
   return (
-    <div class="bg-base-200/50 rounded-lg border border-base-content/10 p-3 hover:border-primary/40 transition-colors">
+    <div class="bg-base-200/50 rounded-lg border border-base-content/10 p-3 hover:border-primary/40 transition-colors select-text">
       <div class="flex items-center justify-between gap-2">
         <div class="flex items-center gap-3 min-w-0">
           <div class="w-8 h-8 rounded-lg bg-base-300 flex items-center justify-center shrink-0">
@@ -102,16 +105,16 @@ const FabricRow: Component<{ fabric: FabricInfo }> = (props) => {
           </Badge>
           <button
             type="button"
-            onClick={() => setExpanded(!expanded())}
+            onClick={props.onToggle}
             class="btn btn-ghost btn-xs text-primary font-medium"
           >
-            {expanded() ? 'Less ▲' : 'Details ▼'}
+            {props.isExpanded ? 'Less ▲' : 'Details ▼'}
           </button>
         </div>
       </div>
 
-      <Show when={expanded()}>
-        <div class="mt-3 pt-2 border-t border-base-content/10 text-xs grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-base-content/70 font-mono">
+      <Show when={props.isExpanded}>
+        <div class="mt-3 pt-2 border-t border-base-content/10 text-xs grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-base-content/70 font-mono select-text">
           <div>
             <span class="text-base-content/50">VID:</span> 0x
             {props.fabric.vendor_id.toString(16).toUpperCase()}
@@ -138,9 +141,24 @@ const FabricRow: Component<{ fabric: FabricInfo }> = (props) => {
 
 export const EcosystemTab: Component<EcosystemTabProps> = (props) => {
   const [confirmReset, setConfirmReset] = createSignal(false);
+  const [expandedFabrics, setExpandedFabrics] = createSignal<Set<number>>(new Set());
+
+  const toggleFabric = (fabIdx: number) => {
+    setExpandedFabrics((prev) => {
+      const next = new Set(prev);
+      if (next.has(fabIdx)) {
+        next.delete(fabIdx);
+      } else {
+        next.add(fabIdx);
+      }
+      return next;
+    });
+  };
+
   const isPaired = () => props.ecosystem?.paired ?? false;
   const propsObj = () => props.ecosystem?.properties || {};
   const fabrics = () => props.ecosystem?.fabrics || [];
+  const endpoints = () => props.ecosystem?.endpoints || [];
 
   const renderSubBadge = (val: boolean | undefined) => {
     if (val === true) {
@@ -174,28 +192,52 @@ export const EcosystemTab: Component<EcosystemTabProps> = (props) => {
             </div>
           </div>
 
-          {/* Endpoints Subscriptions */}
+          {/* Device Endpoints */}
           <div class="overflow-x-auto my-1">
-            <table class="table table-sm">
-              <tbody>
-                <tr class="border-b border-base-content/10">
-                  <td class="text-base-content/70">Fabric Commissioning</td>
-                  <td class="text-right">
-                    <Badge variant={isPaired() ? 'success' : 'warning'}>
-                      {isPaired() ? 'Paired' : 'Unpaired'}
-                    </Badge>
-                  </td>
-                </tr>
-                <tr class="border-b border-base-content/10">
-                  <td class="text-base-content/70">🔒 Door Lock (EP1)</td>
-                  <td class="text-right">{renderSubBadge(propsObj().door_lock_subscribed)}</td>
-                </tr>
-                <tr class="border-b border-base-content/10">
-                  <td class="text-base-content/70">🔔 Chime / Ring (EP2)</td>
-                  <td class="text-right">{renderSubBadge(propsObj().ring_sensor_subscribed)}</td>
-                </tr>
-              </tbody>
-            </table>
+            <Show
+              when={endpoints().length > 0}
+              fallback={
+                <table class="table table-sm">
+                  <tbody>
+                    <tr class="border-b border-base-content/10">
+                      <td class="text-base-content/70">🔒 Door Lock (EP1)</td>
+                      <td class="text-right">{renderSubBadge(propsObj().door_lock_subscribed)}</td>
+                    </tr>
+                    <tr class="border-b border-base-content/10">
+                      <td class="text-base-content/70">🔔 Chime / Ring (EP2)</td>
+                      <td class="text-right">
+                        {renderSubBadge(propsObj().ring_sensor_subscribed)}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              }
+            >
+              <table class="table table-sm">
+                <thead>
+                  <tr class="text-[11px] text-base-content/50 border-b border-base-content/10">
+                    <th>Device Endpoint</th>
+                    <th>Cluster</th>
+                    <th class="text-right">Readiness</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <For each={endpoints()}>
+                    {(ep) => (
+                      <tr class="border-b border-base-content/10">
+                        <td class="font-medium text-base-content">
+                          {ep.id === 1 ? '🔒 ' : ep.id === 2 ? '🔔 ' : ''}
+                          {ep.name}{' '}
+                          <span class="text-xs text-base-content/50 font-mono">(EP{ep.id})</span>
+                        </td>
+                        <td class="text-xs text-base-content/60 font-mono">{ep.cluster}</td>
+                        <td class="text-right">{renderSubBadge(ep.ready)}</td>
+                      </tr>
+                    )}
+                  </For>
+                </tbody>
+              </table>
+            </Show>
           </div>
 
           {/* Connected Fabrics & Hubs Section */}
@@ -216,7 +258,15 @@ export const EcosystemTab: Component<EcosystemTabProps> = (props) => {
               }
             >
               <div class="space-y-2">
-                <For each={fabrics()}>{(fab) => <FabricRow fabric={fab} />}</For>
+                <For each={fabrics()}>
+                  {(fab) => (
+                    <FabricRow
+                      fabric={fab}
+                      isExpanded={expandedFabrics().has(fab.fab_idx)}
+                      onToggle={() => toggleFabric(fab.fab_idx)}
+                    />
+                  )}
+                </For>
               </div>
             </Show>
           </div>

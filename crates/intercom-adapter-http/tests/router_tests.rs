@@ -139,7 +139,19 @@ fn test_format_status_json_success() {
     .with_property(
         "ring_sensor_subscribed",
         intercom_core::domain::EcosystemValue::Bool(false),
-    );
+    )
+    .with_endpoint(intercom_core::domain::EndpointInfo {
+        id: 1,
+        name: "Door Lock",
+        cluster: "DoorLock",
+        ready: true,
+    })
+    .with_endpoint(intercom_core::domain::EndpointInfo {
+        id: 2,
+        name: "Chime / Ring",
+        cluster: "OccupancySensing",
+        ready: false,
+    });
     let diag = SystemDiagnostics {
         state: SystemState::Operational,
         door_locked: true,
@@ -158,7 +170,7 @@ fn test_format_status_json_success() {
         git_commit: "a3f89b",
         build_date: "2026-10-15",
     };
-    let mut buf = [0u8; 512];
+    let mut buf = [0u8; 1024];
 
     // Act
     let written = format_status_json(&diag, &mut buf).expect("serialization should succeed");
@@ -183,6 +195,13 @@ fn test_format_status_json_success() {
     assert_eq!(val["active_ecosystem"]["properties"]["door_lock_subscribed"], true);
     assert_eq!(val["active_ecosystem"]["properties"]["ring_sensor_subscribed"], false);
     assert_eq!(val["active_ecosystem"]["fabrics"], serde_json::json!([]));
+    assert_eq!(
+        val["active_ecosystem"]["endpoints"],
+        serde_json::json!([
+            {"id": 1, "name": "Door Lock", "cluster": "DoorLock", "ready": true},
+            {"id": 2, "name": "Chime / Ring", "cluster": "OccupancySensing", "ready": false}
+        ])
+    );
     assert_eq!(val["version"], "0.1.0");
     assert_eq!(val["git_commit"], "a3f89b");
     assert_eq!(val["build_date"], "2026-10-15");

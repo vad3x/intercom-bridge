@@ -6,6 +6,13 @@ export interface FabricInfo {
   label: string;
 }
 
+export interface EndpointInfo {
+  id: number;
+  name: string;
+  cluster: string;
+  ready: boolean;
+}
+
 export interface ActiveEcosystem {
   type: string;
   paired: boolean;
@@ -15,6 +22,7 @@ export interface ActiveEcosystem {
     [key: string]: boolean | number | string | undefined;
   };
   fabrics?: FabricInfo[];
+  endpoints?: EndpointInfo[];
 }
 
 export interface SystemDiagnostics {

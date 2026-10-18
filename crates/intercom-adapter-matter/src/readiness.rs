@@ -4,13 +4,15 @@
 //! `EcosystemInfoDriver` to report Matter pairing and cluster subscription status.
 
 use core::sync::atomic::{AtomicBool, Ordering};
-use intercom_core::domain::{EcosystemStatus, EcosystemValue, FabricInfo, FabricLabel};
+use intercom_core::domain::{
+    EcosystemStatus, EcosystemValue, EndpointInfo, FabricInfo, FabricLabel,
+};
 use intercom_core::events::SystemStateSender;
 use intercom_core::ports::ecosystem::EcosystemInfoDriver;
 use log::info;
 use portable_atomic::AtomicPtr;
 
-use crate::config::MATTER_ECOSYSTEM;
+use crate::config::{DOOR_LOCK_ENDPOINT_ID, MATTER_ECOSYSTEM, OCCUPANCY_SENSOR_ENDPOINT_ID};
 
 /// Internal synchronization barrier coordinating Matter pairing and cluster readiness.
 pub struct ClusterReadinessBarrier {
@@ -93,6 +95,18 @@ impl ClusterReadinessBarrier {
 impl EcosystemInfoDriver for ClusterReadinessBarrier {
     fn status(&self) -> Option<EcosystemStatus> {
         let mut status = EcosystemStatus::new(MATTER_ECOSYSTEM, self.is_paired())
+            .with_endpoint(EndpointInfo {
+                id: DOOR_LOCK_ENDPOINT_ID,
+                name: "Door Lock",
+                cluster: "DoorLock",
+                ready: self.is_door_lock_ready(),
+            })
+            .with_endpoint(EndpointInfo {
+                id: OCCUPANCY_SENSOR_ENDPOINT_ID,
+                name: "Chime / Ring",
+                cluster: "OccupancySensing",
+                ready: self.is_ring_ready(),
+            })
             .with_property(
                 "door_lock_subscribed",
                 EcosystemValue::Bool(self.is_door_lock_ready()),
