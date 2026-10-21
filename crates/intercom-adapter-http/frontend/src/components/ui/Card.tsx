@@ -10,13 +10,20 @@ export interface CardProps extends ComponentProps<'div'> {
 export const Card: Component<CardProps> = (props) => {
   const [local, rest] = splitProps(props, ['bordered', 'compact', 'bg', 'class', 'children']);
 
+  const backgroundClasses = {
+    'base-100': 'bg-base-100',
+    'base-200': 'bg-base-200',
+    'base-300': 'bg-base-300',
+    neutral: 'bg-neutral',
+  };
+
   const classes = () =>
     [
       'card',
-      local.bg ? `bg-${local.bg}` : 'bg-base-200',
-      local.bordered ? 'card-bordered border-base-content/10' : '',
-      local.compact ? 'card-compact' : 'card-normal',
-      'shadow-sm',
+      backgroundClasses[local.bg ?? 'base-200'],
+      local.bordered ? 'card-border border-base-content/10' : '',
+      local.compact ? 'card-sm' : '',
+      'shadow-xs',
       local.class || '',
     ]
       .filter(Boolean)

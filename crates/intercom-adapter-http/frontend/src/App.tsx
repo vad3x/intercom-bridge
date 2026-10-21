@@ -1,5 +1,5 @@
 import { Activity, Radio, Sliders, Terminal } from 'lucide-solid';
-import { type Component, For, Match, Switch, createSignal, onCleanup, onMount } from 'solid-js';
+import { type Component, createSignal, For, Match, onCleanup, onMount, Switch } from 'solid-js';
 import { DiagnosticsTab } from './components/DiagnosticsTab';
 import { EcosystemTab } from './components/EcosystemTab';
 import { IntercomControls } from './components/IntercomControls';

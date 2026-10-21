@@ -1,5 +1,5 @@
 import { Check, Cpu, Globe, Home, Layers, Radio, RotateCcw, TriangleAlert } from 'lucide-solid';
-import { type Component, For, Show, createSignal } from 'solid-js';
+import { type Component, createSignal, For, Show } from 'solid-js';
 import type { ActiveEcosystem, FabricInfo } from '../types';
 import { Badge } from './ui/Badge';
 import { Card, CardBody, CardTitle } from './ui/Card';

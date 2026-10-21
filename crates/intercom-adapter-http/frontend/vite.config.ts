@@ -1,4 +1,3 @@
-import path from 'node:path';
 import { defineConfig } from 'vite';
 import { viteSingleFile } from 'vite-plugin-singlefile';
 import solidPlugin from 'vite-plugin-solid';
@@ -7,7 +6,7 @@ export default defineConfig({
   plugins: [solidPlugin(), viteSingleFile()],
   resolve: {
     alias: {
-      '~': path.resolve(__dirname, './src'),
+      '~': new URL('./src', import.meta.url).pathname,
     },
   },
   build: {
@@ -15,11 +14,6 @@ export default defineConfig({
     emptyOutDir: false,
     cssCodeSplit: false,
     assetsInlineLimit: 100000000,
-    rollupOptions: {
-      output: {
-        inlineDynamicImports: true,
-      },
-    },
   },
   server: {
     port: 5173,
