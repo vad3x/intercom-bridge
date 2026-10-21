@@ -7,18 +7,18 @@ description = "Smart Home Matter protocol adapter for Intercom Bridge"
 
 [dependencies]
 intercom-core = { path = "../intercom-core" }
-log = "0.4"
-portable-atomic = "1"
-embassy-sync = "0.8"
-embassy-futures = "0.1"
-embassy-time = { version = "0.5", features = ["generic-queue-8"] }
-rs-matter = { version = "0.4", default-features = false }
+log = { workspace = true }
+portable-atomic = { workspace = true }
+embassy-sync = { workspace = true }
+embassy-futures = { workspace = true }
+embassy-time = { workspace = true, features = ["generic-queue-8"] }
+rs-matter = { workspace = true }
 rs-matter-embassy = { path = "../../../rs-matter-embassy/rs-matter-embassy", default-features = false, features = ["esp", "trouble", "embassy-net", "dhcpv4-hostname", "log", "rustcrypto", "kv-blob-store-8192", "mld-v1-compat", "nd-learn-from-frames"] }
-esp-radio = { version = "1.0.0-beta.1", features = ["ble", "coex", "log-04", "unstable", "esp32c6"] }
-esp-hal = { version = "~1.2", features = ["log-04", "unstable", "esp32c6"] }
-esp-rtos = { version = "0.4", features = ["esp-radio", "embassy", "esp32c6"] }
-esp-alloc = "0.11"
-embedded-storage = "0.3"
-embedded-storage-async = "0.4"
-static_cell = "2"
-tinyrlibc = { version = "0.5", default-features = false, features = ["utoa", "strtoul"] }
+esp-radio = { workspace = true, features = ["ble", "coex", "log-04", "unstable", "esp32c6"] }
+esp-hal = { workspace = true, features = ["log-04", "unstable", "esp32c6"] }
+esp-rtos = { workspace = true, features = ["esp-radio", "embassy", "esp32c6"] }
+esp-alloc = { workspace = true }
+embedded-storage = { workspace = true }
+embedded-storage-async = { workspace = true }
+static_cell = { workspace = true }
+tinyrlibc = { workspace = true, features = ["utoa", "strtoul"] }

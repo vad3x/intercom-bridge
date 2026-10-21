@@ -4,19 +4,19 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-embassy-net = { version = "0.9", features = ["tcp", "proto-ipv4", "medium-ethernet"] }
-embassy-time = { version = "0.5", default-features = false }
+embassy-net = { workspace = true, features = ["tcp", "proto-ipv4", "medium-ethernet"] }
+embassy-time = { workspace = true }
 intercom-core = { path = "../intercom-core" }
-log = "0.4"
-serde-json-core = "0.6"
-picoserve = { version = "0.20", default-features = false, features = ["embassy", "alloc", "log"] }
+log = { workspace = true }
+serde-json-core = { workspace = true }
+picoserve = { workspace = true, default-features = false, features = ["embassy", "alloc", "log"] }
 
 [build-dependencies]
-flate2 = "1.0"
+flate2 = { workspace = true }
 
 [dev-dependencies]
-critical-section = { version = "1.2", features = ["std"] }
-embassy-time = { version = "0.5", features = ["std", "generic-queue-8"] }
-flate2 = "1.0"
-futures = "0.3"
-serde_json = "1.0"
+critical-section = { workspace = true, features = ["std"] }
+embassy-time = { workspace = true, features = ["std", "generic-queue-8"] }
+flate2 = { workspace = true }
+futures = { workspace = true }
+serde_json = { workspace = true }

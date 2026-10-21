@@ -7,16 +7,16 @@ description = "Over-The-Air (OTA) update adapter for Intercom Bridge"
 
 [dependencies]
 intercom-core = { path = "../intercom-core" }
-log = "0.4"
-embassy-net = { version = "0.9", features = ["tcp", "proto-ipv4", "medium-ethernet"] }
-embassy-time = "0.5"
-embassy-sync = "0.8"
-ed25519-dalek = { version = "2", default-features = false, features = ["hazmat"] }
+log = { workspace = true }
+embassy-net = { workspace = true, features = ["tcp", "proto-ipv4", "medium-ethernet"] }
+embassy-time = { workspace = true }
+embassy-sync = { workspace = true }
+ed25519-dalek = { workspace = true }
 
 [target.'cfg(target_arch = "riscv32")'.dependencies]
-esp-hal = { version = "~1.2", features = ["unstable", "esp32c6"] }
+esp-hal = { workspace = true, features = ["unstable", "esp32c6"] }
 
 [dev-dependencies]
-critical-section = { version = "1.2", features = ["std"] }
-embassy-time = { version = "0.5", features = ["std", "generic-queue-8"] }
-futures = "0.3"
+critical-section = { workspace = true, features = ["std"] }
+embassy-time = { workspace = true, features = ["std", "generic-queue-8"] }
+futures = { workspace = true }

@@ -7,4 +7,4 @@ description = "Host CLI tool for generating Matter commissioning QR and manual p
 
 [dependencies]
 intercom-core = { path = "../intercom-core" }
-rs-matter = { version = "0.4", default-features = false }
+rs-matter = { workspace = true }

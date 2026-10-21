@@ -6,14 +6,14 @@ license.workspace = true
 description = "Universal domain logic, services, events, and port definitions for Intercom Bridge"
 
 [dependencies]
-log = "0.4"
-embassy-sync = "0.8"
-embassy-time = { version = "0.5", features = ["generic-queue-8"] }
-embassy-futures = "0.1"
-heapless = "0.8"
+log = { workspace = true }
+embassy-sync = { workspace = true }
+embassy-time = { workspace = true, features = ["generic-queue-8"] }
+embassy-futures = { workspace = true }
+heapless = { workspace = true }
 
 [dev-dependencies]
-critical-section = { version = "1.2", features = ["std"] }
-embassy-time = { version = "0.5", features = ["std", "generic-queue-8"] }
-portable-atomic = "1"
-futures = "0.3"
+critical-section = { workspace = true, features = ["std"] }
+embassy-time = { workspace = true, features = ["std", "generic-queue-8"] }
+portable-atomic = { workspace = true }
+futures = { workspace = true }
