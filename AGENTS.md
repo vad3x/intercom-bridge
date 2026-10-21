@@ -4,7 +4,7 @@ Guidelines for AI agents working on the Smart Intercom codebase.
 
 ## Rust Usage
 
-For accessing rust/cargo CLI, use `mise`. The project uses a nightly Rust toolchain targeting `riscv32imac-unknown-none-elf` (ESP32-C6 is RISC-V — no `espup` needed).
+For Rust and Cargo commands, use `mise`. The repositories pin Rust 1.99.1 and Bun 1.3.14 in `mise.toml`; the firmware target is `riscv32imac-unknown-none-elf` for ESP32-C6.
 
 ## Project Overview
 
@@ -26,8 +26,10 @@ For accessing rust/cargo CLI, use `mise`. The project uses a nightly Rust toolch
 ## Build, Test & Flash
 
 ```bash
-# Run host unit tests (runs in ~1s on macOS/Linux without hardware)
-cargo test -p intercom-core -p intercom-adapter-http -p intercom-adapter-ota --target x86_64-apple-darwin
+# Run host-capable tests on macOS without hardware
+mise exec -- cargo test -p intercom-core -p intercom-adapter-http -p intercom-adapter-ota -p intercom-pairing-tool --target x86_64-apple-darwin
+mise exec -- cargo test -p intercom-firmware --lib --target x86_64-apple-darwin
+mise exec -- cargo test -p intercom-firmware --test partitioned_kv_tests --target x86_64-apple-darwin
 
 # Build debug firmware binary (intercom-bridge)
 mise exec -- cargo build -p intercom-firmware
@@ -53,10 +55,10 @@ Display the Matter commissioning QR code and manual pairing codes from the conne
 cargo qr
 
 # Or manually specify a MAC address without USB connection:
-cargo qr -- --mac 98:a3:16:a6:78:44
+cargo qr --mac 98:a3:16:a6:78:44
 
 # Or output raw JSON format:
-cargo qr -- --json
+cargo qr --json
 ```
 
 The `.cargo/config.toml` configures the RISC-V target (`riscv32imac-unknown-none-elf`), `build-std`, and the `espflash` runner with `--erase-parts otadata`. Erasing `otadata` ensures that whenever firmware is flashed via USB, the 2nd-stage bootloader automatically boots the newly flashed binary in `ota_0`, preserving `nvs` (Wi-Fi) and `matter_kvs` (Matter credentials). USB ports are typically `/dev/cu.usbmodem*` (native ESP32-C6 USB) or `/dev/cu.usbserial*` (UART bridge).
@@ -69,8 +71,11 @@ The embedded HTTP server serves a single-file dashboard (`assets/dashboard.html`
 # Start local hot-reloading dev server (proxies /api to test board):
 cargo fe-dev      # or `cargo fe dev`
 
-# Run Biome linter and formatter in ~10ms:
+# Run nonmutating TypeScript type checking and Biome linting:
 cargo fe-check    # or `cargo fe check`
+
+# Apply frontend formatting explicitly from the frontend directory:
+bun run format
 
 # Build single-file production asset for firmware (assets/dashboard.html):
 cargo fe-build    # or `cargo fe build`
@@ -222,7 +227,7 @@ intercom-bridge/
 │   └── monitor.py                  # Non-intrusive serial monitor without chip reset
 ├── GLOSSARY.md                     # Ubiquitous domain vocabulary
 ├── Cargo.toml                      # Virtual workspace root manifest
-├── rust-toolchain.toml             # Nightly toolchain + riscv32imac target
+├── rust-toolchain.toml             # Rust 1.99.1 + riscv32imac target
 ├── .cargo/config.toml              # Build target, runner, build-std
 └── partitions.csv                  # Flash partition layout
 ```

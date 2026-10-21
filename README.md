@@ -74,7 +74,7 @@ See [GLOSSARY.md](GLOSSARY.md) for domain terminology and architecture definitio
 
 ### Prerequisites
 
-- [mise](https://mise.jdx.dev/) (manages nightly Rust toolchain for RISC-V `riscv32imac-unknown-none-elf`)
+- [mise](https://mise.jdx.dev/) (selects the pinned Rust 1.99.1 and Bun 1.3.14 toolchains; firmware targets RISC-V `riscv32imac-unknown-none-elf`)
 - [espflash](https://github.com/esp-rs/espflash) (`cargo install espflash`)
 
 ### 1. Run Host Unit Tests
@@ -86,6 +86,10 @@ mise exec -- cargo test -p intercom-core --target x86_64-apple-darwin
 # Or on Linux:
 # mise exec -- cargo test -p intercom-core --target x86_64-unknown-linux-gnu
 ```
+
+For the dashboard, `cargo fe-check` runs nonmutating type checking and linting. Run `bun run format` from `crates/intercom-adapter-http/frontend` when you want to apply formatting.
+
+For Matter pairing codes without a connected board, run `cargo qr --mac 98:a3:16:a6:78:44` or `cargo qr --json`.
 
 ### 2. Build Firmware
 
