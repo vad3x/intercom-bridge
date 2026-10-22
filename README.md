@@ -89,7 +89,7 @@ mise exec -- cargo test -p intercom-core --target x86_64-apple-darwin
 
 For the dashboard, `cargo fe-check` runs nonmutating type checking and linting. Run `bun run format` from `crates/intercom-adapter-http/frontend` when you want to apply formatting.
 
-For Matter pairing codes without a connected board, run `cargo qr --mac 98:a3:16:a6:78:44` or `cargo qr --json`.
+For Matter pairing codes without a connected board, run `cargo qr --mac 98:a3:16:a6:78:44` or `cargo qr --mac 98:a3:16:a6:78:44 --json`.
 
 ### 2. Build Firmware
 
