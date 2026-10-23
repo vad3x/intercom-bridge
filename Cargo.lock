@@ -1054,6 +1054,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "edf-gpio"
+version = "0.1.0"
+dependencies = [
+ "edf-core",
+ "embassy-futures",
+ "embassy-sync 0.8.0",
+ "embassy-time",
+ "embedded-storage",
+ "embedded-storage-async",
+ "esp-hal",
+ "log",
+]
+
+[[package]]
 name = "edf-matter"
 version = "0.1.0"
 dependencies = [
@@ -2448,11 +2462,10 @@ dependencies = [
 name = "intercom-adapter-gpio"
 version = "0.1.0"
 dependencies = [
+ "edf-gpio",
  "embassy-futures",
  "embassy-sync 0.8.0",
  "embassy-time",
- "embedded-storage",
- "embedded-storage-async",
  "esp-hal",
  "intercom-core",
  "log",
