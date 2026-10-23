@@ -24,16 +24,25 @@ pub struct GpioBootButtonConfig {
 }
 
 impl GpioBootButtonConfig {
-    /// Create a config with the given pin and the foundation default hold times.
+    /// Create a config with the given pin and Intercom's dual-stage hold policy.
     pub fn new(pin: impl esp_hal::gpio::InputPin + 'static) -> Self {
         Self {
-            inner: edf_gpio::boot_button::GpioBootButtonConfig::new(pin),
+            inner: edf_gpio::boot_button::GpioBootButtonConfig::new(pin).with_hold_durations(
+                crate::config::ECOSYSTEM_RESET_HOLD_MS,
+                crate::config::FACTORY_RESET_HOLD_MS,
+            ),
         }
     }
 
     /// Attach the LED indicator used for live hold feedback.
     pub fn with_indicator(mut self, indicator: &'static GpioLedDriver) -> Self {
         self.inner = self.inner.with_indicator(indicator.inner());
+        self
+    }
+
+    /// Override the ecosystem and factory reset hold thresholds in milliseconds.
+    pub fn with_hold_durations(mut self, ecosystem_ms: u64, factory_ms: u64) -> Self {
+        self.inner = self.inner.with_hold_durations(ecosystem_ms, factory_ms);
         self
     }
 }

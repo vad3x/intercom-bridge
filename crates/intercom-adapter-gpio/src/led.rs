@@ -4,21 +4,21 @@ use esp_hal::gpio::OutputPin;
 use intercom_core::events::SystemStateReceiver;
 use intercom_core::ports::reporter::{IntercomReporter, LockState};
 
-use crate::config;
+use crate::config::{self, IntercomLedProfile};
 
 /// GPIO-based active-low LED indicator driver.
 ///
-/// Lifecycle patterns come from `edf-gpio`; Intercom ring and unlock feedback
-/// is layered on through the shared generic blink command.
+/// Lifecycle patterns come from [`IntercomLedProfile`]; Intercom ring and
+/// unlock feedback is layered on through the shared generic blink command.
 pub struct GpioLedDriver {
-    inner: edf_gpio::led::GpioLedDriver,
+    inner: edf_gpio::led::GpioLedDriver<IntercomLedProfile>,
 }
 
 impl GpioLedDriver {
     /// Create a new LED driver with the given output pin.
     pub fn new(pin: impl OutputPin + 'static) -> Self {
         Self {
-            inner: edf_gpio::led::GpioLedDriver::new(pin),
+            inner: edf_gpio::led::GpioLedDriver::<IntercomLedProfile>::with_profile(pin),
         }
     }
 
@@ -47,7 +47,7 @@ impl GpioLedDriver {
         self.inner.restore_state();
     }
 
-    pub(crate) fn inner(&self) -> &edf_gpio::led::GpioLedDriver {
+    pub(crate) fn inner(&self) -> &edf_gpio::led::GpioLedDriver<IntercomLedProfile> {
         &self.inner
     }
 }

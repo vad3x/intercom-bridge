@@ -1,20 +1,55 @@
 //! Smart Intercom - GPIO Adapter Configuration
 //!
-//! Shared lifecycle timing and LED blink patterns are re-exported from
-//! `edf-gpio`; only Intercom-specific ring and door timings remain local.
+//! Intercom owns its reset hold policy and compile-time LED timing profile,
+//! while the foundation supplies the generic button and LED drivers. Only
+//! Intercom-specific ring, door, and activity feedback timings remain below.
+
+// `led_profile!` expands `..LedTimings::DEFAULT` even though the Intercom
+// profile spells out every field, which trips `needless_update`.
+#![allow(clippy::needless_update)]
 
 // ============================================================================
-// Shared Reset, Debounce & Lifecycle Indicator Patterns
+// Intercom Reset Hold Policy
 // ============================================================================
 
-pub use edf_gpio::config::{
-    ACTIVITY_PULSE_MS, BOOTING_OFF_MS, BOOTING_ON_MS, BUTTON_DEBOUNCE_MS, BUTTON_POLL_INTERVAL_MS,
-    COMMISSIONING_OFF_MS, COMMISSIONING_ON_MS, ECOSYSTEM_CONNECTING_OFF_MS,
-    ECOSYSTEM_CONNECTING_ON_MS, ECOSYSTEM_RESET_HOLD_MS, ECOSYSTEM_RESET_OFF_MS,
-    ECOSYSTEM_RESET_ON_MS, ERROR_BURST_COUNT, ERROR_OFF_MS, ERROR_ON_MS, ERROR_PAUSE_MS,
-    FACTORY_RESET_HOLD_MS, FACTORY_RESET_OFF_MS, FACTORY_RESET_ON_MS, STARTING_OFF_MS,
-    STARTING_ON_MS, UPDATING_STROBE_MS, WIFI_CONNECTING_OFF_MS, WIFI_CONNECTING_ON_MS,
-};
+/// How long the BOOT button must be held to trigger ecosystem reset in
+/// milliseconds (unpairs the active smart home ecosystem, preserves Wi-Fi).
+pub const ECOSYSTEM_RESET_HOLD_MS: u64 = 5000;
+
+/// How long the BOOT button must be held to trigger full factory reset in
+/// milliseconds (erases both Wi-Fi credentials and ecosystem fabrics).
+pub const FACTORY_RESET_HOLD_MS: u64 = 10000;
+
+// ============================================================================
+// Intercom LED Timing Profile
+// ============================================================================
+
+// Every field is spelled out so Intercom owns its profile explicitly.
+edf_gpio::led_profile! {
+    /// Compile-time LED pattern timings for the Intercom Bridge indicator.
+    pub struct IntercomLedProfile;
+
+    booting_on_ms: 200,
+    booting_off_ms: 1000,
+    starting_on_ms: 300,
+    starting_off_ms: 700,
+    commissioning_on_ms: 250,
+    commissioning_off_ms: 250,
+    wifi_connecting_on_ms: 500,
+    wifi_connecting_off_ms: 500,
+    ecosystem_connecting_on_ms: 900,
+    ecosystem_connecting_off_ms: 100,
+    error_on_ms: 100,
+    error_off_ms: 100,
+    error_burst_count: 2,
+    error_pause_ms: 700,
+    ecosystem_reset_on_ms: 250,
+    ecosystem_reset_off_ms: 250,
+    factory_reset_on_ms: 50,
+    factory_reset_off_ms: 50,
+    updating_strobe_ms: 50,
+    activity_pulse_ms: 150,
+}
 
 // ============================================================================
 // Intercom-Specific Electrical Actuation & Sensing Timings
