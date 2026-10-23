@@ -110,7 +110,10 @@ each requiring an audit and plan against the actual foundation interfaces:
 
 1. GPIO product wrapper.
 2. OTA driver, OTA port, and HTTP error mapping together.
-3. Matter identity, readiness, storage, and connection wrappers.
+3. Matter identity, readiness, storage, and connection wrappers, including
+   converging the device-side commissioning identity in `intercom-core` with the
+   foundation/CLI pairing identity and cross-checking them across multiple MAC
+   formats.
 4. Diagnostics and HTTP payload integration.
 5. Dashboard composition.
 6. Host script wrappers.
