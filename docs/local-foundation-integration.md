@@ -1,7 +1,8 @@
 # Local foundation integration
 
 The host pairing tool and `intercom-core` consume crates from a sibling checkout
-of `embedded-device-foundation`. The validated foundation revision is `1011623`.
+of `embedded-device-foundation`. The validated foundation revision is
+`fb4a201fd0d91fef165e6c18839d00be44979d36`.
 The source checkout used here is
 `/Users/vadim/personal/projects/embedded-device-foundation`.
 
@@ -21,7 +22,8 @@ layout is required on every build machine.
 
 This is an unpinned local path dependency. Cargo.lock records the local
 package versions and dependency graph, but it does not fix the foundation Git
-revision. Check out `1011623` when reproducing these results and review future
+revision. Check out `fb4a201fd0d91fef165e6c18839d00be44979d36` when reproducing
+these results and review future
 foundation changes before updating this integration.
 
 ## Pairing generation
@@ -78,7 +80,7 @@ Host test, Clippy, and formatting commands used the explicit
 `x86_64-apple-darwin` target, Cargo through mise, and `--locked --offline`.
 The MCU build row uses the `riscv32imac-unknown-none-elf` target selected by
 `.cargo/config.toml`; the image row uses the host `espflash` converter.
-Foundation revision `1011623` was clean.
+Foundation revision `fb4a201fd0d91fef165e6c18839d00be44979d36` was clean.
 
 | Gate | Command | Result |
 |------|---------|--------|
@@ -149,17 +151,72 @@ shared identity path, including the Intercom hostname, is host-covered through
 `intercom-pairing-tool`. No physical device, flash, OTA upload, or private key
 was used.
 
+## GPIO product wrapper slice
+
+The GPIO slice consumes `edf-gpio` through the workspace path dependency and
+removes the remaining duplicated hardware implementations from
+`intercom-adapter-gpio`:
+
+- **Flash:** `intercom_adapter_gpio::flash` is now a compatibility re-export of
+  `edf_gpio::flash::{EspFlash, EspFlashError}`. The local SPI flash
+  implementation and its direct `embedded-storage` dependencies were removed;
+  firmware import paths are unchanged.
+- **Generic LED blink:** `edf_gpio::led::GpioLedDriver::blink(on_ms, off_ms,
+  count)` is now public. It accepts an arbitrary finite (`Some(n)`) or
+  continuous (`None`) pattern and only signals the existing indicator command
+  loop, so it carries no Intercom concepts and is safe to reuse for any product.
+- **Lifecycle LED:** `intercom_adapter_gpio::led::GpioLedDriver` wraps the
+  foundation driver and continues to run the shared lifecycle state machine.
+  Intercom ring and unlock feedback is layered on through `IntercomReporter`
+  by issuing finite blinks with the existing product constants
+  (`RING_BLINK_MS`/`RING_BLINK_COUNT` and
+  `UNLOCK_BLINK_MS`/`UNLOCK_BLINK_COUNT`).
+- **BOOT button:** `intercom_adapter_gpio::boot_button::GpioBootButtonDriver`
+  wraps the foundation reset driver. The 5000 ms ecosystem and 10000 ms factory
+  hold thresholds, 30 ms debounce, 100 ms polling, and hold feedback stages are
+  preserved.
+- **Configuration:** `intercom_adapter_gpio::config` re-exports the shared
+  reset, debounce, activity, lifecycle, and LED-pattern constants from
+  `edf_gpio::config`. Only the Intercom ring and door constants remain locally
+  defined, and no duplicate definitions of re-exported names remain.
+- **Ring and door:** both drivers remain product-owned and their behavior is
+  unchanged.
+
+One source-level API delta is intentional: `GpioBootButtonConfig` is now an
+opaque wrapper around the foundation config. `new` and `with_indicator` remain,
+and every in-repository call site is unchanged, but the previous public `pin`,
+`indicator`, `ecosystem_hold_ms`, and `factory_hold_ms` fields are no longer
+exposed.
+
+Verification for this slice:
+
+| Check | Command | Result |
+|---|---|---|
+| Foundation `edf-gpio` tests | `cargo test -p edf-gpio` (x86_64-apple-darwin) | 11 unit + 4 integration = 15 passed |
+| GPIO adapter build | `cargo check -p intercom-adapter-gpio` (riscv32imac) | passed |
+| Firmware build | `cargo check -p intercom-firmware` (riscv32imac) | passed |
+| Intercom host tests | `cargo test` for core, HTTP, OTA, pairing tool, firmware lib, and partitioned KV tests | 131 passed |
+| Strict core Clippy | `cargo clippy -p intercom-core --all-targets -- -D warnings` | passed |
+| MCU release build | `cargo build -p intercom-firmware --release` (riscv32imac) | passed |
+| OTA image size | host `espflash save-image --chip esp32c6 --flash-size 8mb` | 2,212,464 / 3,473,408 bytes (63.70%), fits |
+| Changed-file formatting | `rustfmt --check` on modified Rust files | passed |
+
+The GPIO adapter remains MCU-only, so wrapper behavior is covered by the
+foundation integration test plus the RISC-V compile gate rather than a macOS
+host test. This is a host and cross-compilation verification only: no physical
+device, firmware flash, OTA upload, private key, or hardware behavior was
+exercised.
+
 ## Remaining migration scope
 
-Stage A and the Matter identity/runtime slice do not complete the foundation
-integration. Follow-on slices remain, each requiring an audit and plan against
-the actual foundation interfaces:
+Stage A, the Matter identity/runtime slice, and the GPIO product wrapper slice
+do not complete the foundation integration. Follow-on slices remain, each
+requiring an audit and plan against the actual foundation interfaces:
 
-1. GPIO product wrapper.
-2. OTA driver, OTA port, and HTTP error mapping together.
-3. Diagnostics and HTTP payload integration.
-4. Dashboard composition.
-5. Host script wrappers.
+1. OTA driver, OTA port, and HTTP error mapping together.
+2. Diagnostics and HTTP payload integration.
+3. Dashboard composition.
+4. Host script wrappers.
 
 Finish Intercom before applying the validated approach to HVAC. Publishing,
 remote creation, submodules, and `.gitmodules` changes remain out of scope.
