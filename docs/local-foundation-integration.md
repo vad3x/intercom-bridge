@@ -58,6 +58,13 @@ no orphan implementations are required. Public consumer module paths and
 lifecycle variants are unchanged; the watch receiver capacity remains 3,
 `RING_HOLD_MS` remains 15000 ms, and `AUTO_RELOCK_SEC` remains 4 seconds.
 
+One source-level API delta is intentional: the foundation `ResetService` carries
+a private `reboot_delay` field and a `with_reboot_delay` builder. Construct it
+with `ResetService::new(driver, reset)` (optionally followed by
+`with_reboot_delay(...)`); struct-literal construction through the old local
+`ResetService { driver, reset }` form is no longer supported. No in-repository
+consumer used literal construction in this stage.
+
 The following remain product-owned in this stage:
 
 - Access, ring, command-handle, and commissioning policy.
@@ -67,9 +74,11 @@ The following remain product-owned in this stage:
 
 ## Verification
 
-All commands below used the explicit `x86_64-apple-darwin` host target, Cargo
-through mise, and `--locked --offline` unless noted. Foundation revision
-`1011623` was clean.
+Host test, Clippy, and formatting commands used the explicit
+`x86_64-apple-darwin` target, Cargo through mise, and `--locked --offline`.
+The MCU build row uses the `riscv32imac-unknown-none-elf` target selected by
+`.cargo/config.toml`; the image row uses the host `espflash` converter.
+Foundation revision `1011623` was clean.
 
 | Gate | Command | Result |
 |------|---------|--------|
@@ -78,8 +87,8 @@ through mise, and `--locked --offline` unless noted. Foundation revision
 | Partitioned KV tests | `cargo test -p intercom-firmware --test partitioned_kv_tests` | 8 passed, 0 failed |
 | Strict core Clippy | `cargo clippy -p intercom-core --all-targets -- -D warnings` | passed |
 | Scoped formatting | `rustfmt --check` over changed Rust files | passed |
-| MCU release build | `cargo build -p intercom-firmware --release` | passed |
-| OTA image size | `espflash save-image --chip esp32c6 --flash-size 8mb` | 2,212,800 / 3,473,408 bytes (63.71%), fits |
+| MCU release build | `cargo build -p intercom-firmware --release` (riscv32imac) | passed |
+| OTA image size | host `espflash save-image --chip esp32c6 --flash-size 8mb` | 2,212,800 / 3,473,408 bytes (63.71%), fits |
 
 The repository-wide `cargo fmt --all -- --check` baseline still reports
 pre-existing differences in unrelated consumer and external Matter files. That
