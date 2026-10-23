@@ -8,7 +8,7 @@ use intercom_adapter_http::{HttpServer, HttpServerConfig, DASHBOARD_HTML_GZ};
 use intercom_core::events::{SystemState, SystemStateWatch};
 use intercom_core::ports::diagnostics::HardwareInfoDriver;
 use intercom_core::ports::inbound::{AccessCommand, AccessControllerHandle, CommandChannel};
-use intercom_core::ports::ota::{OtaDriverError, OtaFlashDriver, OtaStream};
+use edf_core::ports::ota::{OtaDriverError, OtaFlashDriver, OtaStream};
 use intercom_core::service::DiagnosticsService;
 use serde_json::Value;
 use std::io::Read;

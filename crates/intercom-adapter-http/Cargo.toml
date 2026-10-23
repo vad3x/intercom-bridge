@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+edf-core = { workspace = true }
+edf-http-diagnostics = { workspace = true }
+edf-http-ota = { workspace = true }
 embassy-net = { workspace = true, features = ["tcp", "proto-ipv4", "medium-ethernet"] }
 embassy-time = { workspace = true }
 intercom-core = { path = "../intercom-core" }

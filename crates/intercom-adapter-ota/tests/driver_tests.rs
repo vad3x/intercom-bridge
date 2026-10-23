@@ -1,9 +1,10 @@
 use ed25519_dalek::{Signer, SigningKey};
-use intercom_adapter_ota::{
-    FlashOtaDriver, MemOtaFlash, MemTargetFlash, OtaBootloader, OtaState, Slot,
-    ESP32_C6_CHIP_ID, ESP_IMAGE_MAGIC, MAX_OTA_PAYLOAD_SIZE, OTA_HEADER_LEN, OTA_HEADER_MAGIC,
+use edf_core::ports::ota::{OtaDriverError, OtaFlashDriver, OtaStream};
+use edf_ota::{
+    bootloader::{MemOtaFlash, OtaBootloader, OtaState, Slot},
+    driver::{FlashOtaDriver, MAX_OTA_PAYLOAD_SIZE},
+    writer::{MemTargetFlash, ESP32_C6_CHIP_ID, ESP_IMAGE_MAGIC, OTA_HEADER_LEN, OTA_HEADER_MAGIC},
 };
-use intercom_core::ports::ota::{OtaDriverError, OtaFlashDriver, OtaStream};
 
 // ============================================================================
 // Unit Tests

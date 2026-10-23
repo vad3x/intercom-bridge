@@ -1,29 +1,21 @@
 //! Smart Intercom - Over-The-Air (OTA) Update Adapter
 //!
-//! Provides bootloader state manipulation, streaming flash writing, and Ed25519
-//! signature verification for Over-The-Air (OTA) firmware updates.
+//! Compatibility re-exports from `edf-ota`.
 
-#![no_std]
+#![cfg_attr(not(test), no_std)]
 
 extern crate alloc;
 
-pub mod bootloader;
-pub mod driver;
-pub mod writer;
+pub use edf_ota::*;
 
-pub use driver::{COOPERATIVE_YIELD_DELAY, FlashOtaDriver, MAX_OTA_PAYLOAD_SIZE};
+pub mod bootloader {
+    pub use edf_ota::bootloader::*;
+}
 
-pub use bootloader::{
-    ActiveSlot, BootloaderError, EspOtaSelectEntry, MemOtaFlash, OtaBootloader, OtaFlashStorage,
-    OtaState, Slot, OTA_DATA_ENTRY_SIZE, OTA_DATA_SECTOR_SIZE,
-};
+pub mod driver {
+    pub use edf_ota::driver::*;
+}
 
-pub use writer::{
-    validate_esp_image_header, verify_image_signature, DefaultTargetFlash, MemTargetFlash,
-    OtaError, OtaTargetFlash, OtaWriter, SectorBuffer, ESP32_C6_CHIP_ID, ESP_IMAGE_MAGIC,
-    MAX_APP_SLOT_SIZE, OTA_0_OFFSET, OTA_1_OFFSET, OTA_HEADER_LEN, OTA_HEADER_MAGIC, OTA_SLOT_SIZE,
-    SECTOR_SIZE,
-};
-
-#[cfg(target_arch = "riscv32")]
-pub use writer::{EspFlashError, EspTargetFlash};
+pub mod writer {
+    pub use edf_ota::writer::*;
+}

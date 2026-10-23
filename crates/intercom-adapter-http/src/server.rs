@@ -12,7 +12,7 @@ use intercom_core::events::SystemStateSender;
 use intercom_core::ports::diagnostics::HardwareInfoDriver;
 use intercom_core::ports::ecosystem::EcosystemInfoDriver;
 use intercom_core::ports::inbound::{AccessCommand, AccessControllerHandle};
-use intercom_core::ports::ota::{OtaFlashDriver, OtaStream};
+use edf_core::ports::ota::{OtaFlashDriver, OtaStream};
 use intercom_core::ports::{ResetScope, SystemResetDriver};
 use intercom_core::service::DiagnosticsService;
 use log::{info, warn};

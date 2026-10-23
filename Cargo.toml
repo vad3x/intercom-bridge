@@ -21,6 +21,9 @@ edf-core = { path = "../embedded-device-foundation/crates/edf-core" }
 edf-gpio = { path = "../embedded-device-foundation/crates/edf-gpio" }
 edf-matter = { path = "../embedded-device-foundation/crates/edf-matter" }
 edf-pairing-tool = { path = "../embedded-device-foundation/crates/edf-pairing-tool" }
+edf-ota = { path = "../embedded-device-foundation/crates/edf-ota" }
+edf-http-diagnostics = { path = "../embedded-device-foundation/crates/edf-http-diagnostics" }
+edf-http-ota = { path = "../embedded-device-foundation/crates/edf-http-ota" }
 critical-section = "=1.2.0"
 log = "=0.4.34"
 embassy-executor = "=0.10.0"

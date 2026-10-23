@@ -1068,6 +1068,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "edf-http-diagnostics"
+version = "0.1.0"
+dependencies = [
+ "edf-core",
+ "embassy-time",
+]
+
+[[package]]
+name = "edf-http-ota"
+version = "0.1.0"
+dependencies = [
+ "edf-core",
+ "embassy-time",
+]
+
+[[package]]
 name = "edf-matter"
 version = "0.1.0"
 dependencies = [
@@ -1076,6 +1092,17 @@ dependencies = [
  "embassy-time",
  "portable-atomic",
  "rs-matter",
+]
+
+[[package]]
+name = "edf-ota"
+version = "0.1.0"
+dependencies = [
+ "ed25519-dalek",
+ "edf-core",
+ "embassy-time",
+ "esp-hal",
+ "log",
 ]
 
 [[package]]
@@ -2476,6 +2503,9 @@ name = "intercom-adapter-http"
 version = "0.1.0"
 dependencies = [
  "critical-section",
+ "edf-core",
+ "edf-http-diagnostics",
+ "edf-http-ota",
  "embassy-net",
  "embassy-time",
  "flate2",
@@ -2516,6 +2546,8 @@ version = "0.1.0"
 dependencies = [
  "critical-section",
  "ed25519-dalek",
+ "edf-core",
+ "edf-ota",
  "embassy-net",
  "embassy-sync 0.8.0",
  "embassy-time",
@@ -2546,6 +2578,7 @@ version = "0.1.0"
 dependencies = [
  "critical-section",
  "edf-matter",
+ "edf-ota",
  "embassy-executor",
  "embassy-futures",
  "embassy-sync 0.8.0",

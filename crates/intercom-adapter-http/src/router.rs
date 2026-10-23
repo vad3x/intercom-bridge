@@ -4,7 +4,9 @@
 //! directly into pre-allocated byte slices without heap allocation.
 
 use core::fmt::Write;
-use intercom_core::domain::diagnostics::SystemDiagnostics;
+use edf_core::domain::diagnostics as edf_diagnostics;
+use edf_http_diagnostics::{parse_diagnostic_route, DiagnosticRoute};
+use intercom_core::domain::diagnostics::{SystemDiagnostics, WifiSsid as CoreWifiSsid};
 use intercom_core::domain::ecosystem::{EcosystemType, EcosystemValue};
 use intercom_core::events::SystemState;
 
@@ -38,6 +40,23 @@ pub enum Route {
     NotFound,
 }
 
+impl From<DiagnosticRoute> for Route {
+    fn from(route: DiagnosticRoute) -> Self {
+        match route {
+            DiagnosticRoute::Dashboard => Route::Dashboard,
+            DiagnosticRoute::Status => Route::Status,
+            DiagnosticRoute::Logs => Route::Logs,
+            DiagnosticRoute::Reboot => Route::NotFound,
+            DiagnosticRoute::Reset(edf_core::domain::reset::ResetScope::Ecosystem) => {
+                Route::ActionResetMatter
+            }
+            DiagnosticRoute::Reset(edf_core::domain::reset::ResetScope::Factory) => {
+                Route::NotFound
+            }
+        }
+    }
+}
+
 /// Parses an HTTP request line (e.g., `GET /api/status HTTP/1.1`) into a `Route`.
 pub fn parse_route(request_line: &str) -> Route {
     let mut parts = request_line.split_whitespace();
@@ -53,13 +72,16 @@ pub fn parse_route(request_line: &str) -> Route {
         None => return Route::NotFound,
     };
 
+    if let Some(diagnostic) = parse_diagnostic_route(method, path) {
+        let route = Route::from(diagnostic);
+        if !matches!(route, Route::NotFound) {
+            return route;
+        }
+    }
+
     match (method, path) {
-        ("GET", "/") => Route::Dashboard,
-        ("GET", "/api/status") => Route::Status,
-        ("GET", "/api/logs") => Route::Logs,
         ("POST", "/api/action/ring") => Route::ActionRing,
         ("POST", "/api/action/unlock") => Route::ActionUnlock,
-        ("POST", "/api/action/reset/matter") => Route::ActionResetMatter,
         ("POST", "/api/v1/ota/flash") => Route::OtaFlash,
         _ => Route::NotFound,
     }
@@ -72,128 +94,48 @@ pub fn format_status_json<T: EcosystemType>(
     diag: &SystemDiagnostics<T>,
     out: &mut [u8],
 ) -> Result<usize, ()> {
-    let mut writer = BufferWriter::new(out);
+    use edf_http_diagnostics::{format_status_json as edf_format_status_json, DiagnosticPayload};
 
-    write!(
-        writer,
-        "{{\"device_type\":\"{}\",\"state\":\"{}\",\"door_locked\":{},\"uptime_sec\":{},\"wifi_ssid\":",
-        diag.device_type,
-        state_to_str(diag.state),
-        diag.door_locked,
-        diag.uptime_sec
-    )
-    .map_err(|_| ())?;
-
-    match &diag.wifi_ssid {
-        Some(ssid) => write!(writer, "\"{}\"", ssid.as_str()).map_err(|_| ())?,
-        None => write!(writer, "null").map_err(|_| ())?,
-    }
-
-    write!(writer, ",\"wifi_rssi_dbm\":").map_err(|_| ())?;
-    match diag.wifi_rssi_dbm {
-        Some(rssi) => write!(writer, "{}", rssi).map_err(|_| ())?,
-        None => write!(writer, "null").map_err(|_| ())?,
-    }
-
-    write!(writer, ",\"ip\":").map_err(|_| ())?;
-    match diag.ip {
-        Some([a, b, c, d]) => write!(writer, "\"{}.{}.{}.{}\"", a, b, c, d).map_err(|_| ())?,
-        None => write!(writer, "null").map_err(|_| ())?,
-    }
-
-    let [m0, m1, m2, m3, m4, m5] = diag.mac;
-    write!(
-        writer,
-        ",\"mac\":\"{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}\",\"active_slot\":\"{}\",\"slot_valid\":{},\"free_heap_bytes\":{},\"total_heap_bytes\":{},\"available_ecosystems\":[",
-        m0,
-        m1,
-        m2,
-        m3,
-        m4,
-        m5,
-        diag.active_slot,
-        diag.slot_valid,
-        diag.free_heap_bytes,
-        diag.total_heap_bytes,
-    )
-    .map_err(|_| ())?;
-
-    for (idx, eco) in diag.available_ecosystems.iter().enumerate() {
-        if idx > 0 {
-            write!(writer, ",").map_err(|_| ())?;
+    struct IntercomPayload(bool);
+    impl IntercomPayload {
+        fn new(locked: bool) -> Self {
+            Self(locked)
         }
-        write!(writer, "\"{}\"", eco.id().as_str()).map_err(|_| ())?;
     }
-
-    write!(writer, "],\"active_ecosystem\":").map_err(|_| ())?;
-    match &diag.active_ecosystem {
-        Some(active) => {
-            write!(
-                writer,
-                "{{\"type\":\"{}\",\"paired\":{},\"properties\":{{",
-                active.ecosystem_type.as_str(),
-                active.paired
-            )
-            .map_err(|_| ())?;
-
-            for (idx, (key, val)) in active.iter_properties().enumerate() {
-                if idx > 0 {
-                    write!(writer, ",").map_err(|_| ())?;
-                }
-                match val {
-                    EcosystemValue::Bool(b) => write!(writer, "\"{}\":{}", key, b).map_err(|_| ())?,
-                    EcosystemValue::Int(n) => write!(writer, "\"{}\":{}", key, n).map_err(|_| ())?,
-                    EcosystemValue::Text(s) => {
-                        write!(writer, "\"{}\":\"{}\"", key, s).map_err(|_| ())?
-                    }
-                }
-            }
-            write!(writer, "}},\"fabrics\":[").map_err(|_| ())?;
-
-            for (idx, fab) in active.iter_fabrics().enumerate() {
-                if idx > 0 {
-                    write!(writer, ",").map_err(|_| ())?;
-                }
-                write!(
-                    writer,
-                    "{{\"fab_idx\":{},\"vendor_id\":{},\"fabric_id\":\"0x{:016X}\",\"node_id\":\"0x{:016X}\",\"label\":",
-                    fab.fab_idx,
-                    fab.vendor_id,
-                    fab.fabric_id,
-                    fab.node_id
-                )
-                .map_err(|_| ())?;
-                write_escaped_str(&mut writer, fab.label.as_str()).map_err(|_| ())?;
-                write!(writer, "}}").map_err(|_| ())?;
-            }
-
-            write!(writer, "],\"endpoints\":[").map_err(|_| ())?;
-
-            for (idx, ep) in active.iter_endpoints().enumerate() {
-                if idx > 0 {
-                    write!(writer, ",").map_err(|_| ())?;
-                }
-                write!(
-                    writer,
-                    "{{\"id\":{},\"name\":\"{}\",\"cluster\":\"{}\",\"ready\":{}}}",
-                    ep.id, ep.name, ep.cluster, ep.ready
-                )
-                .map_err(|_| ())?;
-            }
-
-            write!(writer, "]}}").map_err(|_| ())?;
+    impl DiagnosticPayload for IntercomPayload {
+        fn write_fields<W: core::fmt::Write>(&self, out: &mut W) -> core::fmt::Result {
+            write!(out, ",\"door_locked\":{}", if self.0 { "true" } else { "false" })
         }
-        None => write!(writer, "null").map_err(|_| ())?,
     }
 
-    write!(
-        writer,
-        ",\"version\":\"{}\",\"git_commit\":\"{}\",\"build_date\":\"{}\"}}",
-        diag.version, diag.git_commit, diag.build_date
-    )
-    .map_err(|_| ())?;
+    let wifi_ssid = if let Some(ref ssid) = diag.wifi_ssid {
+        edf_core::domain::diagnostics::WifiSsid::new(ssid.as_str())
+    } else {
+        None
+    };
 
-    Ok(writer.written())
+    let edf_diag: edf_diagnostics::SystemDiagnostics<IntercomPayload, T> =
+        edf_diagnostics::SystemDiagnostics {
+            device_type: diag.device_type,
+            state: diag.state,
+            uptime_sec: diag.uptime_sec,
+            wifi_ssid,
+            wifi_rssi_dbm: diag.wifi_rssi_dbm,
+            ip: diag.ip,
+            mac: diag.mac,
+            active_slot: diag.active_slot,
+            slot_valid: diag.slot_valid,
+            free_heap_bytes: diag.free_heap_bytes,
+            total_heap_bytes: diag.total_heap_bytes,
+            available_ecosystems: diag.available_ecosystems,
+            active_ecosystem: diag.active_ecosystem.clone(),
+            domain: IntercomPayload::new(diag.door_locked),
+            version: diag.version,
+            git_commit: diag.git_commit,
+            build_date: diag.build_date,
+        };
+
+    edf_format_status_json(&edf_diag, out).map_err(|_| ())
 }
 
 // ============================================================================

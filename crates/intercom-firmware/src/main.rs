@@ -63,7 +63,7 @@ use intercom_core::service::DiagnosticsService;
 #[cfg(target_arch = "riscv32")]
 use intercom_adapter_http::{HttpServer, HttpServerConfig};
 #[cfg(target_arch = "riscv32")]
-use intercom_adapter_ota::FlashOtaDriver;
+use edf_ota::driver::FlashOtaDriver;
 
 #[cfg(target_arch = "riscv32")]
 use intercom_adapter_gpio::boot_button::{GpioBootButtonConfig, GpioBootButtonDriver};

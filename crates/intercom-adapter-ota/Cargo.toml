@@ -6,6 +6,8 @@ license.workspace = true
 description = "Over-The-Air (OTA) update adapter for Intercom Bridge"
 
 [dependencies]
+edf-core = { workspace = true }
+edf-ota = { workspace = true }
 intercom-core = { path = "../intercom-core" }
 log = { workspace = true }
 embassy-net = { workspace = true, features = ["tcp", "proto-ipv4", "medium-ethernet"] }
