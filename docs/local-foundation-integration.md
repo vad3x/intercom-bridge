@@ -82,7 +82,7 @@ Foundation revision `1011623` was clean.
 
 | Gate | Command | Result |
 |------|---------|--------|
-| Supported host packages | `cargo test -p intercom-core -p intercom-adapter-http -p intercom-adapter-ota -p intercom-pairing-tool` | 109 passed, 0 failed |
+| Supported host packages | `cargo test -p intercom-core -p intercom-adapter-http -p intercom-adapter-ota -p intercom-pairing-tool` | 114 passed, 0 failed |
 | Firmware host library | `cargo test -p intercom-firmware --lib` | 9 passed, 0 failed |
 | Partitioned KV tests | `cargo test -p intercom-firmware --test partitioned_kv_tests` | 8 passed, 0 failed |
 | Strict core Clippy | `cargo clippy -p intercom-core --all-targets -- -D warnings` | passed |
