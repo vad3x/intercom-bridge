@@ -6,6 +6,7 @@ license.workspace = true
 description = "Universal domain logic, services, events, and port definitions for Intercom Bridge"
 
 [dependencies]
+edf-core = { workspace = true }
 log = { workspace = true }
 embassy-sync = { workspace = true }
 embassy-time = { workspace = true, features = ["generic-queue-8"] }

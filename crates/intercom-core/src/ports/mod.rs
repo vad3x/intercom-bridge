@@ -17,7 +17,7 @@ pub use inbound::{
 };
 pub use ota::{OtaDriverError, OtaFlashDriver, OtaStream};
 pub use reporter::{IntercomReporter, LockState};
-pub use reset::{ResetScope, SystemResetDriver};
+pub use reset::{ResetScope, ResetTriggerDriver, SystemResetDriver};
 
 /// Door unlock port.
 ///
@@ -34,12 +34,4 @@ pub trait DoorDriver {
 pub trait RingDriver {
     /// Block until a valid, debounced ring event occurs.
     async fn wait_for_ring(&mut self);
-}
-
-/// Reset detection port.
-///
-/// Implementors detect reset trigger conditions and determine the requested scope.
-pub trait ResetTriggerDriver {
-    /// Block until a reset trigger condition is met, returning the requested scope.
-    async fn wait_for_reset(&mut self) -> ResetScope;
 }

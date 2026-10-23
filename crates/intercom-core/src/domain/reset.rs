@@ -1,36 +1,11 @@
 //! System reset domain logic and hold duration classification.
 
-use embassy_time::Duration;
-
-/// Scope of persistent credentials erasure.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ResetScope {
-    /// Erases only active ecosystem credentials (e.g. smart home fabrics and sessions).
-    /// Preserves Wi-Fi credentials so the device stays on the local network.
-    Ecosystem,
-    /// Full factory reset: erases both Wi-Fi credentials and ecosystem credentials.
-    Factory,
-}
-
-/// Pure evaluation function classifying button press hold duration into a `ResetScope`.
-pub fn classify_reset_hold(
-    elapsed: Duration,
-    released: bool,
-    ecosystem_hold: Duration,
-    factory_hold: Duration,
-) -> Option<ResetScope> {
-    if elapsed >= factory_hold {
-        Some(ResetScope::Factory)
-    } else if released && elapsed >= ecosystem_hold {
-        Some(ResetScope::Ecosystem)
-    } else {
-        None
-    }
-}
+pub use edf_core::domain::reset::{classify_reset_hold, ResetScope};
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use embassy_time::Duration;
 
     const ECOSYSTEM_HOLD: Duration = Duration::from_millis(5000);
     const FACTORY_HOLD: Duration = Duration::from_millis(10000);
@@ -111,5 +86,17 @@ mod tests {
 
         // Assert
         assert_eq!(result, Some(ResetScope::Factory));
+    }
+
+    #[test]
+    fn consumer_scope_is_the_foundation_scope() {
+        // Arrange
+        let scope = ResetScope::Factory;
+
+        // Act
+        let shared: edf_core::ResetScope = scope;
+
+        // Assert
+        assert_eq!(shared, edf_core::ResetScope::Factory);
     }
 }

@@ -2516,6 +2516,7 @@ name = "intercom-core"
 version = "0.1.0"
 dependencies = [
  "critical-section",
+ "edf-core",
  "embassy-futures",
  "embassy-sync 0.8.0",
  "embassy-time",
