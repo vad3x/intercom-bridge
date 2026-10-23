@@ -64,6 +64,12 @@ impl MockHardwareInfoDriver {
     }
 }
 
+impl Default for MockHardwareInfoDriver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HardwareInfoDriver for MockHardwareInfoDriver {
     fn device_type(&self) -> &'static str {
         self.device_type
@@ -315,6 +321,8 @@ fn ecosystem_status_fabric_capacity_limit() {
     }
 
     // Assert - only MAX_ECOSYSTEM_FABRICS (5) retained without crashing
-    assert_eq!(status.iter_fabrics().count(), intercom_core::domain::ecosystem::MAX_ECOSYSTEM_FABRICS);
+    assert_eq!(
+        status.iter_fabrics().count(),
+        intercom_core::domain::ecosystem::MAX_ECOSYSTEM_FABRICS
+    );
 }
-

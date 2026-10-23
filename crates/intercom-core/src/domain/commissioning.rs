@@ -9,9 +9,8 @@
 
 /// Forbidden passcodes per Matter specification (Section 5.1.7.1).
 pub const FORBIDDEN_PASSCODES: [u32; 10] = [
-    11111111, 22222222, 33333333, 44444444,
-    55555555, 66666666, 77777777, 88888888,
-    12345678, 87654321,
+    11111111, 22222222, 33333333, 44444444, 55555555, 66666666, 77777777, 88888888, 12345678,
+    87654321,
 ];
 
 /// Minimum 8-digit passcode for generated codes (avoids small/test numbers).
@@ -111,7 +110,7 @@ pub fn discriminator_from_mac(mac: &[u8; 6]) -> u16 {
 
 /// Checks whether a passcode is invalid or forbidden by the Matter specification.
 pub fn is_forbidden_passcode(passcode: u32) -> bool {
-    if passcode < 1 || passcode > MAX_PASSCODE {
+    if !(1..=MAX_PASSCODE).contains(&passcode) {
         return true;
     }
     FORBIDDEN_PASSCODES.contains(&passcode)

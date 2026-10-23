@@ -111,6 +111,12 @@ impl AccessStateMachine {
     }
 }
 
+impl Default for AccessStateMachine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // ============================================================================
 // Unit Tests (Arrange -> Act -> Assert)
 // ============================================================================
