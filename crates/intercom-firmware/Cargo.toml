@@ -21,6 +21,7 @@ dummy-persist = []
 intercom-core = { path = "../intercom-core" }
 intercom-adapter-ota = { path = "../intercom-adapter-ota" }
 intercom-adapter-http = { path = "../intercom-adapter-http" }
+edf-matter = { workspace = true }
 rs-matter = { workspace = true }
 critical-section = { workspace = true }
 log = { workspace = true }

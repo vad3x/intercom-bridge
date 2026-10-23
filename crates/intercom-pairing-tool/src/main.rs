@@ -264,6 +264,22 @@ mod tests {
     use rs_matter::pairing::qr::QrPayload;
 
     #[test]
+    fn parse_mac_accepts_colon_hyphen_and_compact_forms() {
+        // Arrange
+        let expected = [0x98, 0xa3, 0x16, 0xa6, 0x78, 0x44];
+
+        // Act
+        let parsed = [
+            parse_mac("98:a3:16:a6:78:44"),
+            parse_mac("98-A3-16-A6-78-44"),
+            parse_mac("98A316A67844"),
+        ];
+
+        // Assert
+        assert_eq!(parsed, [Ok(expected), Ok(expected), Ok(expected)]);
+    }
+
+    #[test]
     fn shared_generation_preserves_intercom_reference_values() {
         // Arrange
         let mac = [0x98, 0xa3, 0x16, 0xa6, 0x78, 0x44];

@@ -8,3 +8,6 @@ description = "Host CLI tool for generating Matter commissioning QR and manual p
 [dependencies]
 edf-pairing-tool = { workspace = true }
 rs-matter = { workspace = true }
+
+[dev-dependencies]
+edf-matter = { workspace = true }

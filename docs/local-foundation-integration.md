@@ -103,20 +103,63 @@ They were fixed in a separate maintenance commit so the required gate passes.
 These are host and cross-compilation results only. No physical serial device,
 firmware flash, OTA upload, private key, or hardware behavior was exercised.
 
+## Matter identity and runtime wrapper slice
+
+The follow-on Matter slice moves the remaining protocol-specific policy to
+`edf-matter` while keeping product composition in Intercom:
+
+- **Identity:** `intercom-adapter-matter` applies the `IC` serial prefix and
+  `intercom-bridge` hostname prefix through
+  `edf_matter::identity::derive_device_identity`. `MatterController` stores one
+  static `DeviceIdentity` and uses it for the commissioning passcode,
+  discriminator, serial number, and DHCP hostname. The duplicate
+  `intercom-core::domain::commissioning` module and the adapter's serial/hostname
+  formatters were removed. Both the device and `intercom-pairing-tool` now use
+  the same foundation derivation.
+- **Readiness:** `ClusterReadinessBarrier` wraps the foundation required-mask
+  barrier for Operational publication, while retaining the Intercom Matter
+  pointer and ecosystem endpoint reporting.
+- **Storage:** `intercom_firmware::reset::PartitionedKvBlobStore` is now a
+  compatibility alias for `edf_matter::store::PartitionedWifiStore`. The
+  existing eight partition-routing integration tests pass unchanged.
+- **Connection:** `ConnectionMonitor` uses foundation `FabricPolicy`,
+  `has_active_controller_fabric`, and `ConnectionState` for the Apple Home Hub
+  exclusion, network transitions, readiness reset, and decommission reset. The
+  Intercom `UserTask` wrapper and startup orphan-only-fabric check remain.
+- **MAC formats:** host tests cover colon, hyphen, and compact MAC input and
+  compare the CLI credentials with the shared foundation identity.
+
+Verification for this slice:
+
+| Check | Command | Result |
+|---|---|---|
+| Host tests | `cargo test` for core, HTTP, OTA, pairing tool, firmware lib, and partitioned KV tests | 131 passed |
+| Strict core Clippy | `cargo clippy -p intercom-core --all-targets -- -D warnings` | passed |
+| MCU release build | `cargo build -p intercom-firmware --release` (riscv32imac) | passed |
+| OTA image size | host `espflash save-image --chip esp32c6 --flash-size 8mb` | 2,211,472 / 3,473,408 bytes (63.67%), fits |
+| Changed-file formatting | `rustfmt --check` on modified Rust files | passed |
+
+A broader `-D warnings` Clippy run over the firmware remains blocked by a
+pre-existing `unwrap_or_default` lint in `crates/intercom-firmware/build.rs`.
+The strict core gate and the pairing-tool gate both pass.
+
+The two adapter identity reference tests are `#[cfg(test)]` unit tests in the
+MCU-only Matter crate, so they are not part of the host test total. The same
+shared identity path, including the Intercom hostname, is host-covered through
+`intercom-pairing-tool`. No physical device, flash, OTA upload, or private key
+was used.
+
 ## Remaining migration scope
 
-Stage A does not complete the foundation integration. Follow-on slices remain,
-each requiring an audit and plan against the actual foundation interfaces:
+Stage A and the Matter identity/runtime slice do not complete the foundation
+integration. Follow-on slices remain, each requiring an audit and plan against
+the actual foundation interfaces:
 
 1. GPIO product wrapper.
 2. OTA driver, OTA port, and HTTP error mapping together.
-3. Matter identity, readiness, storage, and connection wrappers, including
-   converging the device-side commissioning identity in `intercom-core` with the
-   foundation/CLI pairing identity and cross-checking them across multiple MAC
-   formats.
-4. Diagnostics and HTTP payload integration.
-5. Dashboard composition.
-6. Host script wrappers.
+3. Diagnostics and HTTP payload integration.
+4. Dashboard composition.
+5. Host script wrappers.
 
 Finish Intercom before applying the validated approach to HVAC. Publishing,
 remote creation, submodules, and `.gitmodules` changes remain out of scope.

@@ -118,3 +118,52 @@ fn short_mac_is_rejected() {
         .unwrap()
         .contains("MAC address must be 12 hex characters"));
 }
+
+#[test]
+fn mac_formats_produce_identical_json() {
+    // Arrange
+    let colon = run(&["--mac", "98:a3:16:a6:78:44", "--json"]);
+    let hyphen = run(&["--mac", "98-A3-16-A6-78-44", "--json"]);
+    let compact = run(&["98A316A67844", "--json"]);
+
+    // Act
+    let outputs = [
+        String::from_utf8(colon.stdout).unwrap(),
+        String::from_utf8(hyphen.stdout).unwrap(),
+        String::from_utf8(compact.stdout).unwrap(),
+    ];
+
+    // Assert
+    assert!(colon.status.success());
+    assert!(hyphen.status.success());
+    assert!(compact.status.success());
+    assert_eq!(outputs[0], outputs[1]);
+    assert_eq!(outputs[1], outputs[2]);
+    assert!(outputs[0].contains("\"mac\": \"98:a3:16:a6:78:44\""));
+}
+
+#[test]
+fn cli_identity_matches_shared_device_identity() {
+    // Arrange
+    let mac_text = "98-A3-16-A6-78-44";
+    let mac = [0x98, 0xa3, 0x16, 0xa6, 0x78, 0x44];
+    let identity =
+        edf_matter::identity::derive_device_identity(&edf_matter::identity::IdentityParams {
+            mac: &mac,
+            serial_prefix: "IC",
+            hostname_prefix: "intercom-bridge",
+        })
+        .unwrap();
+
+    // Act
+    let output = run(&["--mac", mac_text, "--json"]);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    // Assert
+    assert!(output.status.success());
+    assert_eq!(identity.serial_str(), "IC-98A316A67844");
+    assert_eq!(identity.hostname_str(), "intercom-bridge-7844");
+    assert!(stdout.contains(&format!("\"serial_number\": \"{}\"", identity.serial_str())));
+    assert!(stdout.contains(&format!("\"discriminator\": {}", identity.discriminator)));
+    assert!(stdout.contains(&format!("\"passcode\": {}", identity.passcode)));
+}

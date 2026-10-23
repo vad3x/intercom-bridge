@@ -21,6 +21,7 @@ use alloc::vec::Vec;
 
 use core::pin::pin;
 
+use edf_matter::connection::{has_active_controller_fabric, ConnectionState, FabricPolicy};
 use embassy_futures::select::select;
 use embassy_time::{Duration, Timer};
 use log::{info, warn};
@@ -29,8 +30,7 @@ use rs_matter::dm::clusters::basic_info::BasicInfoConfig;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::identify;
 use rs_matter::dm::{
-    Async, AsyncHandler, ChainedHandler, Cluster, Dataver, DeviceType, EmptyHandler, Endpoint,
-    Node,
+    Async, AsyncHandler, ChainedHandler, Cluster, Dataver, DeviceType, EmptyHandler, Endpoint, Node,
 };
 use rs_matter::persist::KvBlobStore;
 use rs_matter::BasicCommData;
@@ -125,16 +125,6 @@ struct EndpointMeta {
 /// A dataver counter used to give each descriptor handler a unique seed.
 /// Starts above the cluster handler datavers (which use 1, 2, …).
 static DESC_DATAVER_COUNTER: portable_atomic::AtomicU32 = portable_atomic::AtomicU32::new(100);
-
-
-
-/// Vendor ID for Apple Inc. HomeKit Accessory Protocol / Home Hub (HomePod, Apple TV).
-///
-/// In Apple Home, the commissioning iOS device installs a primary fabric (`0x1349` / 4937),
-/// then invites the resident Home Hub as an operational admin on a secondary fabric (`0x1384` / 4996).
-/// When an accessory is removed from Apple Home, iOS removes its primary fabric (`4937`),
-/// but leaves the Home Hub fabric (`4996`) orphaned on the accessory.
-pub const APPLE_HOME_HUB_VENDOR_ID: u16 = 4996;
 
 pub struct MatterController<S: KvBlobStore, R: SystemResetDriver, H = EmptyHandler> {
     handler: H,
@@ -251,11 +241,7 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
         let mut endpoints: Vec<Endpoint> = Vec::with_capacity(1 + self.endpoint_metas.len());
         endpoints.push(EmbassyWifiMatterStack::<0, ()>::root_endpoint());
         for (i, meta) in self.endpoint_metas.iter().enumerate() {
-            endpoints.push(Endpoint::new(
-                meta.id,
-                &dtype_arrays[i],
-                &cluster_arrays[i],
-            ));
+            endpoints.push(Endpoint::new(meta.id, &dtype_arrays[i], &cluster_arrays[i]));
         }
 
         let node = Node {
@@ -265,6 +251,13 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
         let mac = esp_hal::efuse::base_mac_address();
         let mac_bytes: [u8; 6] = mac.as_bytes().try_into().unwrap();
 
+        static IDENTITY_CELL: static_cell::StaticCell<commissioning::DeviceIdentity> =
+            static_cell::StaticCell::new();
+        let identity = &*IDENTITY_CELL.init(
+            commissioning::derive_intercom_identity(&mac_bytes)
+                .expect("valid Intercom identity prefixes"),
+        );
+
         let comm_data = if let Some(custom_comm) = config.comm_data {
             info!(
                 "Using custom commissioning parameters (discriminator: {})",
@@ -272,11 +265,10 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
             );
             custom_comm
         } else {
-            let data = commissioning::comm_data_from_mac(&mac_bytes);
-            let passcode = commissioning::passcode_from_mac(&mac_bytes);
+            let data = identity.comm_data();
             info!(
                 "Generated commissioning parameters from MAC {}: passcode {}, discriminator {}",
-                mac, passcode, data.discriminator
+                mac, identity.passcode, identity.discriminator
             );
             data
         };
@@ -285,24 +277,18 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
             info!("Using custom serial number: {}", custom_serial);
             custom_serial
         } else {
-            static SERIAL_CELL: static_cell::StaticCell<[u8; crate::config::MAC_SERIAL_NO_LEN]> =
-                static_cell::StaticCell::new();
-            let serial_buf = SERIAL_CELL.init(commissioning::serial_no_from_mac(&mac_bytes));
-            let s = core::str::from_utf8(serial_buf).unwrap();
-            info!("Generated serial number from MAC {}: {}", mac, s);
-            s
+            let serial_no = identity.serial_str();
+            info!("Generated serial number from MAC {}: {}", mac, serial_no);
+            serial_no
         };
 
         let hostname: &'static str = if let Some(custom_hostname) = config.device_info.hostname {
             info!("Using custom DHCP hostname: {}", custom_hostname);
             custom_hostname
         } else {
-            static HOSTNAME_CELL: static_cell::StaticCell<[u8; crate::config::MAC_HOSTNAME_LEN]> =
-                static_cell::StaticCell::new();
-            let hostname_buf = HOSTNAME_CELL.init(commissioning::hostname_from_mac(&mac_bytes));
-            let h = core::str::from_utf8(hostname_buf).unwrap();
-            info!("Generated DHCP hostname from MAC {}: {}", mac, h);
-            h
+            let hostname = identity.hostname_str();
+            info!("Generated DHCP hostname from MAC {}: {}", mac, hostname);
+            hostname
         };
 
         // Allocate device identity + stack in static cells (safe: run() is called exactly once)
@@ -342,7 +328,10 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
         // reset the KV store and retry so the device doesn't boot-loop.
         let mut kv = config.store;
         if let Err(e) = stack.startup(&crypto, &mut kv).await {
-            warn!("Failed to load persisted state ({:?}), resetting KV store", e);
+            warn!(
+                "Failed to load persisted state ({:?}), resetting KV store",
+                e
+            );
             stack
                 .reset(&crypto, (&node, &handler), &mut kv)
                 .await
@@ -357,7 +346,7 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
 
         info!("Matter stack initialized, starting concurrent commissioning (BLE + WiFi coex)");
 
-        let is_commissioned = has_active_controller_fabric(stack.matter());
+        let is_commissioned = has_active_controller_fabric(stack.matter(), FabricPolicy::default());
         self.readiness.set_paired(is_commissioned);
         if is_commissioned {
             self.state_sender.wifi_connecting();
@@ -399,21 +388,6 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
 // ConnectionMonitor — watches netif state and signals connect/disconnect
 // ============================================================================
 
-/// Check if the Matter node has at least one active, user-facing controller fabric.
-///
-/// Returns `false` if either:
-/// - There are no fabrics at all (`state.fabrics` is empty).
-/// - The only remaining fabric is an orphaned Apple Home Hub (`0x1384` / 4996) whose
-///   controlling iOS device has already removed the accessory.
-fn has_active_controller_fabric(matter: &rs_matter::Matter<'_>) -> bool {
-    matter.with_state(|state| {
-        state
-            .fabrics
-            .iter()
-            .any(|fabric| fabric.vendor_id() != APPLE_HOME_HUB_VENDOR_ID)
-    })
-}
-
 /// Watches the network interface and signals connectivity changes.
 /// Also monitors for decommissioning (primary controller fabric removed in Apple Home)
 /// and triggers credential erasure and reboot.
@@ -435,69 +409,45 @@ impl<R: SystemResetDriver> UserTask for ConnectionMonitor<'_, R> {
         S: rs_matter_embassy::stack::nal::NetStack,
         N: rs_matter::dm::clusters::gen_diag::NetifDiag + rs_matter::dm::networks::NetChangeNotif,
     {
+        let fabric_policy = FabricPolicy::default();
+
         // Startup check: if the device booted with ONLY an orphaned Apple Home Hub fabric,
         // trigger decommissioning immediately to clear storage and start BLE advertising.
-        let has_any_fabrics = self.matter.has_fabrics();
-        let has_primary_fabric = has_active_controller_fabric(self.matter);
-        if has_any_fabrics && !has_primary_fabric {
+        let initially_commissioned = has_active_controller_fabric(self.matter, fabric_policy);
+        if ConnectionState::orphan_only_boot(self.matter.has_fabrics(), initially_commissioned) {
             warn!("Device booted with only an orphaned hub fabric — triggering decommission reset");
             self.reset.erase_credentials(ResetScope::Ecosystem);
             self.reset.reboot();
         }
 
-        let mut was_operational = false;
-        let mut was_commissioned = has_primary_fabric;
+        let mut state = ConnectionState::new(initially_commissioned);
 
         loop {
             // Check if any network interface is operational
-            let mut is_operational = false;
+            let mut operational = false;
             netif.netifs(&mut |ni| {
-                if ni.operational {
-                    is_operational = true;
-                }
+                operational |= ni.operational;
                 Ok(())
             })?;
 
-            let is_commissioned = has_active_controller_fabric(self.matter);
-            self.readiness.set_paired(is_commissioned);
+            let commissioned = has_active_controller_fabric(self.matter, fabric_policy);
+            self.readiness.set_paired(commissioned);
 
-            // Signal state transitions
-            if is_operational && !was_operational {
-                info!("network interface operational");
-                if is_commissioned {
-                    if self.readiness.is_ready() {
-                        self.state_sender.operational();
-                    } else {
-                        self.state_sender.ecosystem_connecting();
-                    }
-                }
-            } else if !is_operational && was_operational {
-                info!("network down -> reconnecting");
+            let effects = state.step(operational, commissioned, self.readiness.is_ready());
+            if effects.reset_readiness {
                 self.readiness.reset();
-                if is_commissioned {
-                    self.state_sender.wifi_connecting();
-                } else {
-                    self.state_sender.commissioning();
-                }
-            } else if !was_commissioned && is_commissioned && is_operational {
-                info!("commissioned while network up -> checking readiness");
-                if self.readiness.is_ready() {
-                    self.state_sender.operational();
-                } else {
-                    self.state_sender.ecosystem_connecting();
-                }
             }
-
-            // Detect transition from commissioned -> uncommissioned
-            // (all controller fabrics removed via RemoveFabric in Apple Home / Google Home).
-            if was_commissioned && !is_commissioned {
-                warn!("Primary controller fabric removed — device decommissioned, triggering reset");
+            if let Some(lifecycle) = effects.lifecycle {
+                info!("network lifecycle -> {:?}", lifecycle);
+                self.state_sender.send(lifecycle);
+            }
+            if effects.erase_ecosystem_and_reboot {
+                warn!(
+                    "Primary controller fabric removed — device decommissioned, triggering reset"
+                );
                 self.reset.erase_credentials(ResetScope::Ecosystem);
                 self.reset.reboot();
             }
-
-            was_operational = is_operational;
-            was_commissioned = is_commissioned;
 
             // Wait for a network state change OR a periodic tick.
             let net_changed = pin!(netif.wait_changed());

@@ -2478,6 +2478,7 @@ dependencies = [
 name = "intercom-adapter-matter"
 version = "0.1.0"
 dependencies = [
+ "edf-matter",
  "embassy-futures",
  "embassy-sync 0.8.0",
  "embassy-time",
@@ -2531,6 +2532,7 @@ name = "intercom-firmware"
 version = "0.1.0"
 dependencies = [
  "critical-section",
+ "edf-matter",
  "embassy-executor",
  "embassy-futures",
  "embassy-sync 0.8.0",
@@ -2559,6 +2561,7 @@ dependencies = [
 name = "intercom-pairing-tool"
 version = "0.1.0"
 dependencies = [
+ "edf-matter",
  "edf-pairing-tool",
  "rs-matter",
 ]

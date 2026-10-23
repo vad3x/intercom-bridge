@@ -14,12 +14,15 @@ use portable_atomic::AtomicPtr;
 
 use crate::config::{DOOR_LOCK_ENDPOINT_ID, MATTER_ECOSYSTEM, OCCUPANCY_SENSOR_ENDPOINT_ID};
 
+const DOOR_LOCK_READY_BIT: u32 = 1 << 0;
+const RING_READY_BIT: u32 = 1 << 1;
+const REQUIRED_READY_BITS: u32 = DOOR_LOCK_READY_BIT | RING_READY_BIT;
+
 /// Internal synchronization barrier coordinating Matter pairing and cluster readiness.
 pub struct ClusterReadinessBarrier {
-    paired: AtomicBool,
+    inner: edf_matter::readiness::ClusterReadinessBarrier<'static>,
     door_lock_ready: AtomicBool,
     ring_ready: AtomicBool,
-    state_sender: SystemStateSender<'static>,
     matter: AtomicPtr<rs_matter::Matter<'static>>,
 }
 
@@ -27,36 +30,39 @@ impl ClusterReadinessBarrier {
     /// Create a new cluster readiness barrier.
     pub const fn new(state_sender: SystemStateSender<'static>) -> Self {
         Self {
-            paired: AtomicBool::new(false),
+            inner: edf_matter::readiness::ClusterReadinessBarrier::new(
+                REQUIRED_READY_BITS,
+                state_sender,
+            ),
             door_lock_ready: AtomicBool::new(false),
             ring_ready: AtomicBool::new(false),
-            state_sender,
             matter: AtomicPtr::new(core::ptr::null_mut()),
         }
     }
 
     /// Attach the running Matter protocol stack instance.
     pub fn attach_matter(&self, matter: &'static rs_matter::Matter<'static>) {
-        self.matter.store(matter as *const _ as *mut _, Ordering::Release);
+        self.matter
+            .store(matter as *const _ as *mut _, Ordering::Release);
     }
 
     /// Update whether the Matter node is commissioned with an active controller fabric.
     pub fn set_paired(&self, paired: bool) {
-        self.paired.store(paired, Ordering::Release);
+        self.inner.set_paired(paired);
     }
 
     /// Returns true if the Matter node is commissioned with an active controller fabric.
     pub fn is_paired(&self) -> bool {
-        self.paired.load(Ordering::Acquire)
+        self.inner.is_paired()
     }
 
     /// Mark the DoorLock cluster as subscription-primed.
     pub fn mark_door_lock_ready(&self) {
         let was_ready = self.is_ready();
         self.door_lock_ready.store(true, Ordering::Release);
+        self.inner.mark_ready(DOOR_LOCK_READY_BIT);
         if !was_ready && self.is_ready() {
             info!("all clusters ready -> publishing Operational state");
-            self.state_sender.operational();
         }
     }
 
@@ -64,9 +70,9 @@ impl ClusterReadinessBarrier {
     pub fn mark_ring_ready(&self) {
         let was_ready = self.is_ready();
         self.ring_ready.store(true, Ordering::Release);
+        self.inner.mark_ready(RING_READY_BIT);
         if !was_ready && self.is_ready() {
             info!("all clusters ready -> publishing Operational state");
-            self.state_sender.operational();
         }
     }
 
@@ -84,11 +90,12 @@ impl ClusterReadinessBarrier {
     pub fn reset(&self) {
         self.door_lock_ready.store(false, Ordering::Release);
         self.ring_ready.store(false, Ordering::Release);
+        self.inner.reset();
     }
 
     /// Returns true if all clusters have been subscription-primed by the controller.
     pub fn is_ready(&self) -> bool {
-        self.is_door_lock_ready() && self.is_ring_ready()
+        self.inner.is_ready()
     }
 }
 
@@ -259,12 +266,18 @@ mod tests {
         // Act - reset clears readiness
         barrier.reset();
         sender.ecosystem_connecting();
-        assert_eq!(sender.current_state(), Some(SystemState::EcosystemConnecting));
+        assert_eq!(
+            sender.current_state(),
+            Some(SystemState::EcosystemConnecting)
+        );
         assert!(!barrier.is_ready());
 
         // Marking door lock only does not transition yet
         barrier.mark_door_lock_ready();
-        assert_eq!(sender.current_state(), Some(SystemState::EcosystemConnecting));
+        assert_eq!(
+            sender.current_state(),
+            Some(SystemState::EcosystemConnecting)
+        );
 
         // Marking ring completes readiness and re-arms Operational
         barrier.mark_ring_ready();

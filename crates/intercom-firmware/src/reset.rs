@@ -6,8 +6,6 @@ use intercom_core::ports::{ResetScope, SystemResetDriver};
 use log::info;
 #[cfg(target_arch = "riscv32")]
 use log::warn;
-use rs_matter::error::Error;
-use rs_matter::persist::{KvBlobStore, NETWORKS_KEY};
 
 #[cfg(target_arch = "riscv32")]
 #[cfg(not(feature = "dummy-persist"))]
@@ -19,55 +17,8 @@ use intercom_adapter_gpio::flash::EspFlash;
 #[cfg(not(feature = "dummy-persist"))]
 use rs_matter_embassy::persist::SeqMapKvBlobStore;
 
-/// A composite `KvBlobStore` that routes Wi-Fi credentials (`NETWORKS_KEY`) to a dedicated
-/// storage partition and all other Matter fabrics/credentials to the Matter KVS partition.
-pub struct PartitionedKvBlobStore<M, W> {
-    pub matter_store: M,
-    pub wifi_store: W,
-}
-
-impl<M, W> PartitionedKvBlobStore<M, W>
-where
-    M: KvBlobStore,
-    W: KvBlobStore,
-{
-    pub const fn new(matter_store: M, wifi_store: W) -> Self {
-        Self {
-            matter_store,
-            wifi_store,
-        }
-    }
-}
-
-impl<M, W> KvBlobStore for PartitionedKvBlobStore<M, W>
-where
-    M: KvBlobStore,
-    W: KvBlobStore,
-{
-    fn load<'a>(&mut self, key: u16, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
-        if key == NETWORKS_KEY {
-            self.wifi_store.load(key, buf)
-        } else {
-            self.matter_store.load(key, buf)
-        }
-    }
-
-    fn store(&mut self, key: u16, data: &[u8], buf: &mut [u8]) -> Result<(), Error> {
-        if key == NETWORKS_KEY {
-            self.wifi_store.store(key, data, buf)
-        } else {
-            self.matter_store.store(key, data, buf)
-        }
-    }
-
-    fn remove(&mut self, key: u16, buf: &mut [u8]) -> Result<(), Error> {
-        if key == NETWORKS_KEY {
-            self.wifi_store.remove(key, buf)
-        } else {
-            self.matter_store.remove(key, buf)
-        }
-    }
-}
+/// Compatibility name for the foundation partitioned Wi-Fi/Matter store.
+pub use edf_matter::store::PartitionedWifiStore as PartitionedKvBlobStore;
 
 /// Outbound reset driver implementing persistent credential erasure and hardware reboot.
 pub struct FirmwareResetDriver;
@@ -79,7 +30,10 @@ impl SystemResetDriver for FirmwareResetDriver {
             #[cfg(not(feature = "dummy-persist"))]
             match scope {
                 ResetScope::Ecosystem => {
-                    erase_flash_range(&crate::config::MATTER_KVS_RANGE, "Matter KVS (ecosystem only)");
+                    erase_flash_range(
+                        &crate::config::MATTER_KVS_RANGE,
+                        "Matter KVS (ecosystem only)",
+                    );
                 }
                 ResetScope::Factory => {
                     erase_flash_range(&crate::config::MATTER_KVS_RANGE, "Matter KVS");
@@ -145,7 +99,10 @@ pub fn erase_flash_range(range: &core::ops::Range<u32>, label: &str) {
         let sector = addr / SECTOR_SIZE;
         let ret = unsafe { spiflash::esp_rom_spiflash_erase_sector(sector) };
         if ret != spiflash::ESP_ROM_SPIFLASH_RESULT_OK {
-            warn!("Flash erase sector {} for {} failed: {}", sector, label, ret);
+            warn!(
+                "Flash erase sector {} for {} failed: {}",
+                sector, label, ret
+            );
         }
         addr += SECTOR_SIZE;
     }
