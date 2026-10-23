@@ -2,11 +2,7 @@
 //!
 //! Intercom owns its reset hold policy and compile-time LED timing profile,
 //! while the foundation supplies the generic button and LED drivers. Only
-//! Intercom-specific ring, door, and activity feedback timings remain below.
-
-// `led_profile!` expands `..LedTimings::DEFAULT` even though the Intercom
-// profile spells out every field, which trips `needless_update`.
-#![allow(clippy::needless_update)]
+//! Intercom-specific ring and door timings remain below.
 
 // ============================================================================
 // Intercom Reset Hold Policy
