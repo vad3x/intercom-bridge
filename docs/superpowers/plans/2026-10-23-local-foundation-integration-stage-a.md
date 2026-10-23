@@ -23,6 +23,7 @@
 - Never access physical serial devices, flash firmware, upload OTA, read private keys, or claim hardware validation.
 - Use `CARGO_INCREMENTAL=0 mise exec -- cargo ... --target x86_64-apple-darwin --locked --offline` for host verification. Lock updates use `--offline` without `--locked` once, followed by locked checks.
 - One implementation writer at a time, scoped review after each task, final combined review before handoff.
+- Preflight finding during Task 1: workspace-wide `cargo fmt --all -- --check` reports existing differences in unrelated consumer and external Matter files. Record that failed gate; require scoped formatting of changed Rust files and do not reformat unrelated repositories.
 
 ## Scope and follow-on order
 
@@ -166,7 +167,44 @@ mod tests {
 }
 ```
 
-Add inline type-interoperability tests to domain/reset.rs and domain/ecosystem.rs: assign the consumer reset scope to an explicitly typed `edf_core::ResetScope`, and consumer EcosystemStatus to `edf_core::EcosystemStatus`, then check Factory and the ecosystem ID/paired values. Run core `--lib` locked offline; expect distinct local/foundation-type mismatches before replacing implementations.
+Add this inline test to the existing bottom test module of domain/reset.rs:
+
+```rust
+#[test]
+fn consumer_scope_is_the_foundation_scope() {
+    // Arrange
+    let scope = ResetScope::Factory;
+
+    // Act
+    let shared: edf_core::ResetScope = scope;
+
+    // Assert
+    assert_eq!(shared, edf_core::ResetScope::Factory);
+}
+```
+
+Append this inline module to domain/ecosystem.rs:
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn consumer_status_is_the_foundation_status() {
+        // Arrange
+        let status = EcosystemStatus::new(EcosystemId::new("sample"), true);
+
+        // Act
+        let shared: edf_core::EcosystemStatus = status;
+
+        // Assert
+        assert_eq!((shared.ecosystem_type.as_str(), shared.paired), ("sample", true));
+    }
+}
+```
+
+Run core `--lib` locked offline; expect distinct local/foundation-type mismatches before replacing implementations.
 
 - [ ] **Step 2: Replace duplicated implementation with explicit re-exports.** Each source file retains its module doc and inline consumer interoperability/characterization tests, replacing its implementation with exactly the corresponding export:
 
