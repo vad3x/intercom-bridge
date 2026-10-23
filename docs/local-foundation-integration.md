@@ -2,7 +2,7 @@
 
 The host pairing tool and `intercom-core` consume crates from a sibling checkout
 of `embedded-device-foundation`. The validated foundation revision is
-`fb4a201fd0d91fef165e6c18839d00be44979d36`.
+`8e9d2a9cd72c356a96c2ead37d9311ed4a56e774`.
 The source checkout used here is
 `/Users/vadim/personal/projects/embedded-device-foundation`.
 
@@ -22,7 +22,7 @@ layout is required on every build machine.
 
 This is an unpinned local path dependency. Cargo.lock records the local
 package versions and dependency graph, but it does not fix the foundation Git
-revision. Check out `fb4a201fd0d91fef165e6c18839d00be44979d36` when reproducing
+revision. Check out `8e9d2a9cd72c356a96c2ead37d9311ed4a56e774` when reproducing
 these results and review future
 foundation changes before updating this integration.
 
@@ -80,7 +80,7 @@ Host test, Clippy, and formatting commands used the explicit
 `x86_64-apple-darwin` target, Cargo through mise, and `--locked --offline`.
 The MCU build row uses the `riscv32imac-unknown-none-elf` target selected by
 `.cargo/config.toml`; the image row uses the host `espflash` converter.
-Foundation revision `fb4a201fd0d91fef165e6c18839d00be44979d36` was clean.
+Foundation revision `8e9d2a9cd72c356a96c2ead37d9311ed4a56e774` was clean.
 
 | Gate | Command | Result |
 |------|---------|--------|
@@ -175,10 +175,12 @@ removes the remaining duplicated hardware implementations from
   wraps the foundation reset driver. The 5000 ms ecosystem and 10000 ms factory
   hold thresholds, 30 ms debounce, 100 ms polling, and hold feedback stages are
   preserved.
-- **Configuration:** `intercom_adapter_gpio::config` re-exports the shared
-  reset, debounce, activity, lifecycle, and LED-pattern constants from
-  `edf_gpio::config`. Only the Intercom ring and door constants remain locally
-  defined, and no duplicate definitions of re-exported names remain.
+- **Configuration:** `intercom_adapter_gpio::config` now owns an explicit
+  `IntercomLedProfile` via `edf_gpio::led_profile!` and the shared lifecycle
+  LED patterns; only the Intercom ring and door constants remain locally
+  defined. The GPIO config no longer re-exports shared LED/reset/lifecycle
+  constants, and Intercom applies its own 5 s ecosystem / 10 s factory hold
+  durations at runtime.
 - **Ring and door:** both drivers remain product-owned and their behavior is
   unchanged.
 
