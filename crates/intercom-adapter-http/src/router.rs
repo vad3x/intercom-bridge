@@ -6,8 +6,8 @@
 use core::fmt::Write;
 use edf_core::domain::diagnostics as edf_diagnostics;
 use edf_http_diagnostics::{parse_diagnostic_route, DiagnosticRoute};
-use intercom_core::domain::diagnostics::{SystemDiagnostics, WifiSsid as CoreWifiSsid};
-use intercom_core::domain::ecosystem::{EcosystemType, EcosystemValue};
+use intercom_core::domain::diagnostics::SystemDiagnostics;
+use intercom_core::domain::ecosystem::EcosystemType;
 use intercom_core::events::SystemState;
 
 // ============================================================================
@@ -142,61 +142,4 @@ pub fn format_status_json<T: EcosystemType>(
 // Private Helpers & Writers
 // ============================================================================
 
-fn write_escaped_str(writer: &mut BufferWriter<'_>, s: &str) -> core::fmt::Result {
-    writer.write_str("\"")?;
-    for c in s.chars() {
-        match c {
-            '"' => writer.write_str("\\\"")?,
-            '\\' => writer.write_str("\\\\")?,
-            '\n' => writer.write_str("\\n")?,
-            '\r' => writer.write_str("\\r")?,
-            '\t' => writer.write_str("\\t")?,
-            _ => write!(writer, "{}", c)?,
-        }
-    }
-    writer.write_str("\"")?;
-    Ok(())
-}
 
-fn state_to_str(state: SystemState) -> &'static str {
-    match state {
-        SystemState::Booting => "Booting",
-        SystemState::Starting => "Starting",
-        SystemState::Commissioning => "Commissioning",
-        SystemState::WifiConnecting => "WifiConnecting",
-        SystemState::EcosystemConnecting => "EcosystemConnecting",
-        SystemState::Operational => "Operational",
-        SystemState::Updating => "Updating",
-        SystemState::EcosystemReset => "EcosystemReset",
-        SystemState::FactoryReset => "FactoryReset",
-        SystemState::Error => "Error",
-    }
-}
-
-struct BufferWriter<'a> {
-    buf: &'a mut [u8],
-    pos: usize,
-}
-
-impl<'a> BufferWriter<'a> {
-    fn new(buf: &'a mut [u8]) -> Self {
-        Self { buf, pos: 0 }
-    }
-
-    fn written(&self) -> usize {
-        self.pos
-    }
-}
-
-impl<'a> Write for BufferWriter<'a> {
-    fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        let bytes = s.as_bytes();
-        let remaining = self.buf.len().saturating_sub(self.pos);
-        if bytes.len() > remaining {
-            return Err(core::fmt::Error);
-        }
-        self.buf[self.pos..self.pos + bytes.len()].copy_from_slice(bytes);
-        self.pos += bytes.len();
-        Ok(())
-    }
-}

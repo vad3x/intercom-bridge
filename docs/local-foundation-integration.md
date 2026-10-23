@@ -215,10 +215,10 @@ Stage A, the Matter identity/runtime slice, and the GPIO product wrapper slice
 do not complete the foundation integration. Follow-on slices remain, each
 requiring an audit and plan against the actual foundation interfaces:
 
-1. OTA driver, OTA port, and HTTP error mapping together.
-2. Diagnostics and HTTP payload integration.
-3. Dashboard composition.
-4. Host script wrappers.
+1. OTA driver, OTA port, and HTTP error mapping together. *(done)*
+2. Diagnostics and HTTP payload integration. *(done)*
+3. Dashboard composition. *(reviewed; current embedded asset flow aligns with foundation build patterns)*
+4. Host script wrappers. *(reviewed; Intercom-specific scripts remain necessary for product behavior)*
 
 Finish Intercom before applying the validated approach to HVAC. Publishing,
 remote creation, submodules, and `.gitmodules` changes remain out of scope.
