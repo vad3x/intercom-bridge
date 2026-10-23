@@ -4,7 +4,7 @@ Guidelines for AI agents working on the Smart Intercom codebase.
 
 ## Rust Usage
 
-For Rust and Cargo commands, use `mise`. The repositories pin Rust 1.99.1 and Bun 1.3.14 in `mise.toml`; the firmware target is `riscv32imac-unknown-none-elf` for ESP32-C6.
+For Rust and Cargo commands, use `mise`. The repositories pin Rust 1.99.1 and Bun 1.3.14 in `mise.toml`; the firmware target is `riscv32imac-unknown-none-elf` for ESP32-C6. `rust-analyzer` is pinned there too so editor and MCP integrations never resolve an uninstalled mise shim.
 
 ## Project Overview
 
@@ -22,6 +22,19 @@ For Rust and Cargo commands, use `mise`. The repositories pin Rust 1.99.1 and Bu
 - **OTA Updates:** HTTP streaming over Wi-Fi (port 8080) with Ed25519 signature verification and dual-bank bootloader rollback
 - **Web Dashboard:** Embedded HTTP server (port 8080) serving pre-gzipped Solid.js + DaisyUI + Tailwind SPA and REST API
 
+## Git Worktrees
+
+This project is frequently worked on from isolated git worktrees (for example under `~/.codex/worktrees/`). A clean `git status` in the primary checkout does not mean changes are missing.
+
+Before assuming work is absent, check the active checkout:
+
+```bash
+git rev-parse --show-toplevel
+git worktree list
+git status -sb
+```
+
+Open the worktree directory itself in the editor. Merge or remove completed worktrees at task boundaries so the primary checkout and the active branch do not drift.
 
 ## Build, Test & Flash
 
