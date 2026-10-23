@@ -6,5 +6,5 @@ license.workspace = true
 description = "Host CLI tool for generating Matter commissioning QR and manual pairing codes"
 
 [dependencies]
-intercom-core = { path = "../intercom-core" }
+edf-pairing-tool = { workspace = true }
 rs-matter = { workspace = true }

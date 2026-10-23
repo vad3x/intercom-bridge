@@ -1045,6 +1045,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "edf-core"
+version = "0.1.0"
+dependencies = [
+ "embassy-sync 0.8.0",
+ "embassy-time",
+ "log",
+]
+
+[[package]]
+name = "edf-matter"
+version = "0.1.0"
+dependencies = [
+ "edf-core",
+ "embassy-futures",
+ "embassy-time",
+ "portable-atomic",
+ "rs-matter",
+]
+
+[[package]]
+name = "edf-pairing-tool"
+version = "0.1.0"
+dependencies = [
+ "edf-matter",
+ "rs-matter",
+]
+
+[[package]]
 name = "edge-mdns"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2530,7 +2558,7 @@ dependencies = [
 name = "intercom-pairing-tool"
 version = "0.1.0"
 dependencies = [
- "intercom-core",
+ "edf-pairing-tool",
  "rs-matter",
 ]
 

@@ -17,6 +17,7 @@ default-members = ["crates/intercom-firmware"]
 resolver = "2"
 
 [workspace.dependencies]
+edf-pairing-tool = { path = "../embedded-device-foundation/crates/edf-pairing-tool" }
 critical-section = "=1.2.0"
 log = "=0.4.34"
 embassy-executor = "=0.10.0"

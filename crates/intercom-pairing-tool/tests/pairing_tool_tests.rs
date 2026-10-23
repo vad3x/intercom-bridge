@@ -1,67 +1,120 @@
-use rs_matter::pairing::qr::{no_optional_data, CommFlowType, QrPayload};
-use rs_matter::pairing::DiscoveryCapabilities;
-use rs_matter::BasicCommData;
+use std::process::{Command, Output};
 
-#[test]
-fn test_qr_payload_round_trip() {
+const MAC: &str = "98:a3:16:a6:78:44";
+const QR: &str = "MT:-24J042C00X1VC4QK3P0OUYH0R92G1V.X12LJRQ19UZR1OADO1O0";
+
+fn run(args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_intercom-pairing-tool"))
+        .args(args)
+        .output()
+        .unwrap()
+}
+
+fn assert_human_output(output: Output) {
     // Arrange
-    let mac = [0x98, 0xa3, 0x16, 0xa6, 0x78, 0x44];
-    let passcode = intercom_core::domain::commissioning::passcode_from_mac(&mac);
-    let discriminator = intercom_core::domain::commissioning::discriminator_from_mac(&mac);
-
-    let comm_data = BasicCommData {
-        password: passcode.to_le_bytes().into(),
-        discriminator,
-    };
-
-    let dev_det = rs_matter::dm::clusters::basic_info::BasicInfoConfig {
-        vid: 0xfff1,
-        pid: 0x8001,
-        ..rs_matter::dm::clusters::basic_info::BasicInfoConfig::new()
-    };
-
-    let payload = QrPayload::new_from_basic_info(
-        DiscoveryCapabilities::BLE,
-        CommFlowType::Standard,
-        comm_data,
-        &dev_det,
-        no_optional_data,
-    );
-
-    let mut buf = [0u8; 128];
+    let stdout = String::from_utf8(output.stdout).unwrap();
 
     // Act
-    let (qr_text, _) = payload.as_str(&mut buf).unwrap();
+    let displayed = (
+        stdout.contains("Smart Intercom — Matter Commissioning Credentials"),
+        stdout.contains("IC-98A316A67844"),
+        stdout.contains("3012-791-3250"),
+        stdout.contains("7012-791-3256-55213-27699"),
+        stdout.contains(QR),
+    );
 
     // Assert
-    assert!(qr_text.starts_with("MT:"));
-    let mut parse_buf = [0u8; 128];
-    let parsed = QrPayload::parse(qr_text, &mut parse_buf).unwrap();
-    assert_eq!(parsed.passcode(), passcode);
-    assert_eq!(parsed.discriminator(), discriminator);
-    assert_eq!(parsed.vid(), 0xfff1);
-    assert_eq!(parsed.pid(), 0x8001);
+    assert!(output.status.success());
+    assert_eq!(displayed, (true, true, true, true, true));
 }
 
 #[test]
-fn test_manual_code_verhoeff_validity() {
+fn mac_flag_displays_intercom_credentials() {
     // Arrange
-    let mac = [0x98, 0xa3, 0x16, 0xa6, 0x78, 0x44];
-    let passcode = intercom_core::domain::commissioning::passcode_from_mac(&mac);
-    let discriminator = intercom_core::domain::commissioning::discriminator_from_mac(&mac);
-
-    let comm_data = BasicCommData {
-        password: passcode.to_le_bytes().into(),
-        discriminator,
-    };
+    let args = ["--mac", MAC];
 
     // Act
-    let short_code = comm_data.compute_pairing_code();
-    let long_code = comm_data.compute_pairing_code_long(0xfff1, 0x8001);
+    let output = run(&args);
 
     // Assert
-    assert_eq!(short_code.len(), 11);
-    assert_eq!(long_code.len(), 21);
-    assert!(QrPayload::parse_pairing_code(&short_code).is_ok());
-    assert!(QrPayload::parse_pairing_code(&long_code).is_ok());
+    assert_human_output(output);
+}
+
+#[test]
+fn short_mac_flag_displays_intercom_credentials() {
+    // Arrange
+    let args = ["-m", MAC];
+
+    // Act
+    let output = run(&args);
+
+    // Assert
+    assert_human_output(output);
+}
+
+#[test]
+fn positional_mac_displays_intercom_credentials() {
+    // Arrange
+    let args = [MAC];
+
+    // Act
+    let output = run(&args);
+
+    // Assert
+    assert_human_output(output);
+}
+
+#[test]
+fn json_flag_preserves_exact_output() {
+    // Arrange
+    let expected = concat!(
+        "{\n",
+        "  \"mac\": \"98:a3:16:a6:78:44\",\n",
+        "  \"serial_number\": \"IC-98A316A67844\",\n",
+        "  \"vendor_id\": 65521,\n",
+        "  \"product_id\": 32769,\n",
+        "  \"discriminator\": 3096,\n",
+        "  \"passcode\": 21710079,\n",
+        "  \"manual_code\": \"3012-791-3250\",\n",
+        "  \"manual_code_long\": \"7012-791-3256-55213-27699\",\n",
+        "  \"qr_code\": \"MT:-24J042C00X1VC4QK3P0OUYH0R92G1V.X12LJRQ19UZR1OADO1O0\"\n",
+        "}\n"
+    );
+
+    // Act
+    let output = run(&["--mac", MAC, "--json"]);
+
+    // Assert
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), expected);
+}
+
+#[test]
+fn help_exits_successfully() {
+    // Arrange
+    let args = ["--help"];
+
+    // Act
+    let output = run(&args);
+
+    // Assert
+    assert!(output.status.success());
+    assert!(String::from_utf8(output.stderr)
+        .unwrap()
+        .contains("Usage: cargo qr"));
+}
+
+#[test]
+fn short_mac_is_rejected() {
+    // Arrange
+    let args = ["--mac", "aa:bb"];
+
+    // Act
+    let output = run(&args);
+
+    // Assert
+    assert!(!output.status.success());
+    assert!(String::from_utf8(output.stderr)
+        .unwrap()
+        .contains("MAC address must be 12 hex characters"));
 }

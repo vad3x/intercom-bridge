@@ -1,17 +1,27 @@
 //! Intercom Bridge - Matter Commissioning QR & Pairing Code Tool
 //!
 //! Generates official Matter manual pairing codes and setup QR code
-//! for a given device MAC address using `rs-matter` directly.
+//! for a given device MAC address using shared foundation generation.
 
 use std::fs;
 use std::process::Command;
 
-use rs_matter::pairing::qr::{no_optional_data, CommFlowType, Qr, QrPayload, QrTextType};
-use rs_matter::pairing::DiscoveryCapabilities;
-use rs_matter::BasicCommData;
+use rs_matter::pairing::qr::{Qr, QrTextType};
 
 const VID: u16 = 0xfff1;
 const PID: u16 = 0x8001;
+
+fn generate_pairing_data(
+    mac: [u8; 6],
+) -> Result<edf_pairing_tool::PairingData, edf_pairing_tool::PairingError> {
+    edf_pairing_tool::generate(edf_pairing_tool::PairingOptions {
+        mac,
+        prefix: "IC",
+        name: "intercom-bridge",
+        vid: VID,
+        pid: PID,
+    })
+}
 
 fn print_usage() {
     eprintln!(
@@ -80,14 +90,14 @@ fn query_mac_from_espflash(port: &str) -> Result<String, String> {
         }
     }
 
-    Err(format!("Could not find MAC address in espflash output:\n{}", combined))
+    Err(format!(
+        "Could not find MAC address in espflash output:\n{}",
+        combined
+    ))
 }
 
 fn parse_mac(s: &str) -> Result<[u8; 6], &'static str> {
-    let clean: String = s
-        .chars()
-        .filter(|c| c.is_ascii_hexdigit())
-        .collect();
+    let clean: String = s.chars().filter(|c| c.is_ascii_hexdigit()).collect();
 
     if clean.len() != 12 {
         return Err("MAC address must be 12 hex characters (e.g. AA:BB:CC:DD:EE:FF)");
@@ -168,60 +178,23 @@ fn main() {
         }
     };
 
-    let formatted_mac = format!(
-        "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-        mac_bytes[0], mac_bytes[1], mac_bytes[2], mac_bytes[3], mac_bytes[4], mac_bytes[5]
-    );
-
-    let passcode = intercom_core::domain::commissioning::passcode_from_mac(&mac_bytes);
-    let discriminator = intercom_core::domain::commissioning::discriminator_from_mac(&mac_bytes);
-    let serial_buf = intercom_core::domain::commissioning::serial_no_from_mac(&mac_bytes);
-    let serial_no = core::str::from_utf8(&serial_buf).unwrap_or("IC-UNKNOWN");
-
-    let comm_data = BasicCommData {
-        password: passcode.to_le_bytes().into(),
-        discriminator,
-    };
-
-    let short_code = comm_data.compute_pretty_pairing_code();
-    let long_code = comm_data.compute_pretty_pairing_code_long(VID, PID);
-
-    let dev_det = rs_matter::dm::clusters::basic_info::BasicInfoConfig {
-        vid: VID,
-        pid: PID,
-        serial_no,
-        ..rs_matter::dm::clusters::basic_info::BasicInfoConfig::new()
-    };
-
-    let payload = QrPayload::new_from_basic_info(
-        DiscoveryCapabilities::BLE,
-        CommFlowType::Standard,
-        comm_data,
-        &dev_det,
-        no_optional_data,
-    );
-
-    let mut qr_str_buf = [0u8; 128];
-    let qr_text = match payload.as_str(&mut qr_str_buf) {
-        Ok((text, _)) => text.to_string(),
-        Err(e) => {
-            eprintln!("Error generating QR text: {:?}", e);
+    let data = match generate_pairing_data(mac_bytes) {
+        Ok(data) => data,
+        Err(error) => {
+            eprintln!("Error generating commissioning data: {error:?}");
             std::process::exit(1);
         }
     };
+    let formatted_mac = data.mac.as_str();
+    let serial_no = data.serial_number.as_str();
+    let passcode = data.passcode;
+    let discriminator = data.discriminator;
+    let short_code = data.manual_code.as_str();
+    let long_code = data.manual_code_long.as_str();
+    let qr_text = data.qr_code.as_str();
 
     if json_mode {
-        println!("{{");
-        println!("  \"mac\": \"{}\",", formatted_mac);
-        println!("  \"serial_number\": \"{}\",", serial_no);
-        println!("  \"vendor_id\": {},", VID);
-        println!("  \"product_id\": {},", PID);
-        println!("  \"discriminator\": {},", discriminator);
-        println!("  \"passcode\": {},", passcode);
-        println!("  \"manual_code\": \"{}\",", short_code);
-        println!("  \"manual_code_long\": \"{}\",", long_code);
-        println!("  \"qr_code\": \"{}\"", qr_text);
-        println!("}}");
+        println!("{}", data.json());
         return;
     }
 
@@ -231,8 +204,14 @@ fn main() {
     println!();
     println!("  Device MAC:          {}", formatted_mac);
     println!("  Serial Number:       {}", serial_no);
-    println!("  Vendor ID / PID:     0x{:04X} ({}) / 0x{:04X} ({})", VID, VID, PID, PID);
-    println!("  Discriminator:       {} (0x{:03X})", discriminator, discriminator);
+    println!(
+        "  Vendor ID / PID:     0x{:04X} ({}) / 0x{:04X} ({})",
+        VID, VID, PID, PID
+    );
+    println!(
+        "  Discriminator:       {} (0x{:03X})",
+        discriminator, discriminator
+    );
     println!("  Passcode (PIN):      {}", passcode);
     println!();
     println!("  Manual Pairing Code (Standard 11-digit):");
@@ -254,7 +233,7 @@ fn main() {
     // Compute and display QR matrix
     let mut tmp_buf = [0u8; 1024];
     let mut out_buf = [0u8; 1024];
-    match Qr::compute(&qr_text, &mut tmp_buf, &mut out_buf) {
+    match Qr::compute(qr_text, &mut tmp_buf, &mut out_buf) {
         Ok(qr) => {
             const BORDER_SIZE: u8 = 2;
             for y in qr.lines_range(QrTextType::Unicode, BORDER_SIZE) {
@@ -277,4 +256,80 @@ fn main() {
     }
 
     println!();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rs_matter::pairing::qr::QrPayload;
+
+    #[test]
+    fn shared_generation_preserves_intercom_reference_values() {
+        // Arrange
+        let mac = [0x98, 0xa3, 0x16, 0xa6, 0x78, 0x44];
+
+        // Act
+        let data = generate_pairing_data(mac).unwrap();
+
+        // Assert
+        assert_eq!(
+            (
+                data.serial_number.as_str(),
+                data.passcode,
+                data.discriminator,
+                data.manual_code.as_str(),
+                data.manual_code_long.as_str(),
+                data.qr_code.as_str()
+            ),
+            (
+                "IC-98A316A67844",
+                21710079,
+                3096,
+                "3012-791-3250",
+                "7012-791-3256-55213-27699",
+                "MT:-24J042C00X1VC4QK3P0OUYH0R92G1V.X12LJRQ19UZR1OADO1O0"
+            )
+        );
+    }
+
+    #[test]
+    fn generated_qr_payload_round_trips_commissioning_values() {
+        // Arrange
+        let mac = [0x98, 0xa3, 0x16, 0xa6, 0x78, 0x44];
+        let data = generate_pairing_data(mac).unwrap();
+        let mut parse_buf = [0u8; 128];
+
+        // Act
+        let parsed = QrPayload::parse(&data.qr_code, &mut parse_buf).unwrap();
+
+        // Assert
+        assert_eq!(
+            (
+                parsed.passcode(),
+                parsed.discriminator(),
+                parsed.vid(),
+                parsed.pid()
+            ),
+            (data.passcode, data.discriminator, VID, PID)
+        );
+    }
+
+    #[test]
+    fn generated_manual_codes_have_valid_check_digits() {
+        // Arrange
+        let mac = [0x98, 0xa3, 0x16, 0xa6, 0x78, 0x44];
+        let data = generate_pairing_data(mac).unwrap();
+        let short_code = data.manual_code.replace('-', "");
+        let long_code = data.manual_code_long.replace('-', "");
+
+        // Act
+        let parsed = (
+            QrPayload::parse_pairing_code(&short_code),
+            QrPayload::parse_pairing_code(&long_code),
+        );
+
+        // Assert
+        assert!(parsed.0.is_ok());
+        assert!(parsed.1.is_ok());
+    }
 }
