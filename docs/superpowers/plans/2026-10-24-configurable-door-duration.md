@@ -168,28 +168,14 @@ git commit -m "feat(core): support configurable door unlock duration in access s
 - Consumes: `DoorDriver::set_unlock_duration_ms` from `intercom-core`
 - Produces: `GpioDoorDriver` dynamically updating `self.config.unlock_pulse_ms`
 
-- [ ] **Step 1: Update `GpioDoorDriver` with `set_unlock_duration_ms`**
+- [ ] **Step 1: Add `set_unlock_duration_ms` to `GpioDoorDriver`**
 
 In `crates/intercom-adapter-gpio/src/door.rs`:
-Implement `set_unlock_duration_ms` in `DoorDriver for GpioDoorDriver`:
+Note: `trigger_unlock(&mut self)` is **completely untouched** because it already reads from `self.config.unlock_pulse_ms`. We only add the setter to `impl DoorDriver for GpioDoorDriver`:
+
 ```rust
 impl DoorDriver for GpioDoorDriver {
-    async fn trigger_unlock(&mut self) {
-        if self.unlocking {
-            warn!("Unlock already in progress, ignoring");
-            return;
-        }
-
-        info!("Unlock pulse start ({}ms)", self.config.unlock_pulse_ms);
-        self.unlocking = true;
-
-        self.config.pin.set_high();
-        Timer::after(Duration::from_millis(self.config.unlock_pulse_ms)).await;
-        self.config.pin.set_low();
-
-        self.unlocking = false;
-        info!("Unlock pulse end");
-    }
+    // trigger_unlock(&mut self) remains completely unchanged...
 
     fn set_unlock_duration_ms(&mut self, duration_ms: u32) {
         info!("Updating unlock pulse duration: {}ms", duration_ms);
