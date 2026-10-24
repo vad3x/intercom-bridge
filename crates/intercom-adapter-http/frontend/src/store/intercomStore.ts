@@ -1,9 +1,18 @@
 import { createSignal } from 'solid-js';
-import { fetchStatus, resetMatterKvs, triggerRing, triggerUnlock } from '../api';
-import type { SystemDiagnostics } from '../types';
+import {
+  fetchStatus,
+  resetMatterKvs,
+  setDoorUnlockDuration,
+  triggerRing,
+  triggerUnlock,
+} from '../api';
+import { DEFAULT_DOOR_UNLOCK_DURATION_SEC, type SystemDiagnostics } from '../types';
 
 export function createIntercomStore() {
   const [status, setStatus] = createSignal<SystemDiagnostics | null>(null);
+  const [doorUnlockDurationSec, setDoorUnlockDurationSec] = createSignal<number>(
+    DEFAULT_DOOR_UNLOCK_DURATION_SEC,
+  );
   const [isUnlocking, setIsUnlocking] = createSignal(false);
   const [isRinging, setIsRinging] = createSignal(false);
   const [isResettingMatter, setIsResettingMatter] = createSignal(false);
@@ -13,6 +22,9 @@ export function createIntercomStore() {
     try {
       const data = await fetchStatus();
       setStatus(data);
+      if (data.door_unlock_duration_sec !== undefined) {
+        setDoorUnlockDurationSec(data.door_unlock_duration_sec);
+      }
       // If hardware reports locked and unlocking intent expired, clear unlocking
       if (data.door_locked && isUnlocking()) {
         setIsUnlocking(false);
@@ -54,8 +66,21 @@ export function createIntercomStore() {
     }
   };
 
+  const updateDoorUnlockDuration = async (seconds: number) => {
+    const previous = doorUnlockDurationSec();
+    setDoorUnlockDurationSec(seconds);
+    try {
+      await setDoorUnlockDuration(seconds);
+      await poll();
+    } catch (e) {
+      setDoorUnlockDurationSec(previous);
+      throw e;
+    }
+  };
+
   return {
     status,
+    doorUnlockDurationSec,
     isUnlocking,
     isRinging,
     isResettingMatter,
@@ -63,5 +88,6 @@ export function createIntercomStore() {
     unlockDoor,
     testRing,
     resetMatter,
+    updateDoorUnlockDuration,
   };
 }

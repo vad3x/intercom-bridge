@@ -61,6 +61,16 @@ export function App() {
     }
   };
 
+  const handleDurationChange = async (seconds: number) => {
+    try {
+      await store.updateDoorUnlockDuration(seconds);
+      showToast(`Unlock duration set to ${seconds}s`, 'success');
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Failed to update duration';
+      showToast(msg, 'error');
+    }
+  };
+
   const handleResetMatter = async () => {
     try {
       await store.resetMatter();
@@ -120,10 +130,12 @@ export function App() {
       controlTab={
         <IntercomControls
           doorLocked={store.status()?.door_locked}
+          doorUnlockDurationSec={store.doorUnlockDurationSec()}
           isUnlocking={store.isUnlocking()}
           isRinging={store.isRinging()}
           onUnlock={handleUnlock}
           onRing={handleRing}
+          onDurationChange={handleDurationChange}
         />
       }
       status={store.status()}

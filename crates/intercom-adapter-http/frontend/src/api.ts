@@ -38,6 +38,13 @@ export async function triggerRing(): Promise<void> {
   }
 }
 
+export async function setDoorUnlockDuration(seconds: number): Promise<void> {
+  const res = await fetch(`/api/action/door-duration?seconds=${seconds}`, { method: 'POST' });
+  if (!res.ok) {
+    throw new Error(`Failed to update duration: HTTP ${res.status}`);
+  }
+}
+
 export async function resetMatterKvs(): Promise<void> {
   return preserveHttpError(
     dashboardApi.resetMatterKvs,

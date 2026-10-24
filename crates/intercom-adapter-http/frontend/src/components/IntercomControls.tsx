@@ -1,13 +1,20 @@
 import { Badge, Card, CardBody, CardTitle } from '@embedded-device-foundation/dashboard-core';
 import { Bell, Loader2, Lock, Sparkles, Unlock } from 'lucide-solid';
 import type { Component } from 'solid-js';
+import {
+  DEFAULT_DOOR_UNLOCK_DURATION_SEC,
+  MAX_DOOR_UNLOCK_DURATION_SEC,
+  MIN_DOOR_UNLOCK_DURATION_SEC,
+} from '../types';
 
 export interface IntercomControlsProps {
   doorLocked: boolean | undefined;
+  doorUnlockDurationSec?: number;
   isUnlocking: boolean;
   isRinging: boolean;
   onUnlock: () => void;
   onRing: () => void;
+  onDurationChange?: (seconds: number) => void;
 }
 
 export const IntercomControls: Component<IntercomControlsProps> = (props) => {
@@ -99,7 +106,48 @@ export const IntercomControls: Component<IntercomControlsProps> = (props) => {
                 {strikeHeadline().text}
               </div>
               <div class="text-xs text-base-content/60 mt-1">
-                PhotoMOS Relay • Auto-relocks after strike pulse
+                PhotoMOS Relay • Auto-relocks after{' '}
+                {props.doorUnlockDurationSec ?? DEFAULT_DOOR_UNLOCK_DURATION_SEC}s strike pulse
+              </div>
+              <div class="flex items-center justify-center gap-2 mt-3">
+                <span class="text-xs text-base-content/70">Duration:</span>
+                <div class="join border border-base-content/20 rounded-lg">
+                  <button
+                    type="button"
+                    class="join-item btn btn-xs btn-ghost px-2 font-bold"
+                    disabled={
+                      props.isUnlocking ||
+                      (props.doorUnlockDurationSec ?? DEFAULT_DOOR_UNLOCK_DURATION_SEC) <=
+                        MIN_DOOR_UNLOCK_DURATION_SEC
+                    }
+                    onClick={() =>
+                      props.onDurationChange?.(
+                        (props.doorUnlockDurationSec ?? DEFAULT_DOOR_UNLOCK_DURATION_SEC) - 1,
+                      )
+                    }
+                  >
+                    -
+                  </button>
+                  <span class="join-item px-2.5 py-0.5 text-xs font-mono font-bold flex items-center bg-base-200">
+                    {props.doorUnlockDurationSec ?? DEFAULT_DOOR_UNLOCK_DURATION_SEC}s
+                  </span>
+                  <button
+                    type="button"
+                    class="join-item btn btn-xs btn-ghost px-2 font-bold"
+                    disabled={
+                      props.isUnlocking ||
+                      (props.doorUnlockDurationSec ?? DEFAULT_DOOR_UNLOCK_DURATION_SEC) >=
+                        MAX_DOOR_UNLOCK_DURATION_SEC
+                    }
+                    onClick={() =>
+                      props.onDurationChange?.(
+                        (props.doorUnlockDurationSec ?? DEFAULT_DOOR_UNLOCK_DURATION_SEC) + 1,
+                      )
+                    }
+                  >
+                    +
+                  </button>
+                </div>
               </div>
               <div class="w-full mt-5">
                 <button
