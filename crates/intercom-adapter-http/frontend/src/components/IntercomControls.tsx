@@ -11,7 +11,61 @@ export interface IntercomControlsProps {
 }
 
 export const IntercomControls: Component<IntercomControlsProps> = (props) => {
-  const isLocked = () => !props.isUnlocking && (props.doorLocked ?? true);
+  const isInitialLoading = () => props.doorLocked === undefined;
+  const isLocked = () => !props.isUnlocking && props.doorLocked === true;
+
+  const strikeIconClass = () => {
+    if (isInitialLoading()) return 'bg-base-300 text-base-content/40';
+    return isLocked() ? 'bg-success/20 text-success' : 'bg-warning/20 text-warning';
+  };
+
+  const strikeSubtitle = () => {
+    if (isInitialLoading()) return 'Checking status...';
+    if (props.isUnlocking) return 'Actuating Strike';
+    return isLocked() ? 'Secured (LOCKED)' : 'Unlatched (UNLOCKED)';
+  };
+
+  const strikeBadge = () => {
+    if (isInitialLoading()) {
+      return {
+        variant: 'neutral' as const,
+        dotClass: 'bg-base-content/30 animate-pulse',
+        text: 'connecting',
+      };
+    }
+    if (props.isUnlocking) {
+      return {
+        variant: 'warning' as const,
+        dotClass: 'bg-warning animate-pulse',
+        text: 'unlocking',
+      };
+    }
+    if (isLocked()) {
+      return {
+        variant: 'success' as const,
+        dotClass: 'bg-success',
+        text: 'locked',
+      };
+    }
+    return {
+      variant: 'warning' as const,
+      dotClass: 'bg-warning animate-pulse',
+      text: 'unlocked',
+    };
+  };
+
+  const strikeHeadline = () => {
+    if (isInitialLoading()) {
+      return { text: 'Connecting...', class: 'text-base-content/40' };
+    }
+    if (props.isUnlocking) {
+      return { text: 'Unlocking...', class: 'text-warning' };
+    }
+    if (isLocked()) {
+      return { text: 'Locked', class: 'text-success' };
+    }
+    return { text: 'Unlocked', class: 'text-warning' };
+  };
 
   return (
     <div class="space-y-4">
@@ -21,42 +75,28 @@ export const IntercomControls: Component<IntercomControlsProps> = (props) => {
           <CardBody>
             <div class="flex items-center justify-between pb-3 border-b border-base-content/10">
               <div class="flex items-center gap-2.5">
-                <div
-                  class={`p-2 rounded-lg transition-colors ${
-                    isLocked() ? 'bg-success/20 text-success' : 'bg-warning/20 text-warning'
-                  }`}
-                >
-                  {isLocked() ? <Lock class="w-4 h-4" /> : <Unlock class="w-4 h-4" />}
+                <div class={`p-2 rounded-lg transition-colors ${strikeIconClass()}`}>
+                  {isLocked() || isInitialLoading() ? (
+                    <Lock class="w-4 h-4" />
+                  ) : (
+                    <Unlock class="w-4 h-4" />
+                  )}
                 </div>
                 <div>
                   <div class="font-semibold text-sm text-base-content">Door Strike</div>
-                  <div class="text-xs text-base-content/60">
-                    {props.isUnlocking
-                      ? 'Actuating Strike'
-                      : isLocked()
-                        ? 'Secured (LOCKED)'
-                        : 'Unlatched (UNLOCKED)'}
-                  </div>
+                  <div class="text-xs text-base-content/60">{strikeSubtitle()}</div>
                 </div>
               </div>
-              <Badge variant={isLocked() ? 'success' : 'warning'}>
-                <span
-                  class={`w-2 h-2 rounded-full ${
-                    isLocked() ? 'bg-success' : 'bg-warning animate-pulse'
-                  }`}
-                />
-                <span>{props.isUnlocking ? 'unlocking' : isLocked() ? 'locked' : 'unlocked'}</span>
+              <Badge variant={strikeBadge().variant}>
+                <span class={`w-2 h-2 rounded-full ${strikeBadge().dotClass}`} />
+                <span>{strikeBadge().text}</span>
               </Badge>
             </div>
 
             <div class="flex flex-col items-center justify-center py-4 text-center">
               <CardTitle class="mb-2">Entrance Door</CardTitle>
-              <div
-                class={`text-3xl sm:text-4xl font-black my-1 ${
-                  isLocked() ? 'text-success' : 'text-warning'
-                }`}
-              >
-                {props.isUnlocking ? 'Unlocking...' : isLocked() ? 'Locked' : 'Unlocked'}
+              <div class={`text-3xl sm:text-4xl font-black my-1 ${strikeHeadline().class}`}>
+                {strikeHeadline().text}
               </div>
               <div class="text-xs text-base-content/60 mt-1">
                 PhotoMOS Relay • Auto-relocks after strike pulse

@@ -1,12 +1,9 @@
 import { createSignal } from 'solid-js';
-import { createStore, reconcile } from 'solid-js/store';
 import { fetchStatus, resetMatterKvs, triggerRing, triggerUnlock } from '../api';
 import type { SystemDiagnostics } from '../types';
 
 export function createIntercomStore() {
-  const [store, setStore] = createStore<{ status: SystemDiagnostics | null }>({
-    status: null,
-  });
+  const [status, setStatus] = createSignal<SystemDiagnostics | null>(null);
   const [isUnlocking, setIsUnlocking] = createSignal(false);
   const [isRinging, setIsRinging] = createSignal(false);
   const [isResettingMatter, setIsResettingMatter] = createSignal(false);
@@ -15,11 +12,7 @@ export function createIntercomStore() {
     if (typeof document !== 'undefined' && document.hidden) return;
     try {
       const data = await fetchStatus();
-      if (!store.status) {
-        setStore('status', data);
-      } else {
-        setStore('status', reconcile(data));
-      }
+      setStatus(data);
       // If hardware reports locked and unlocking intent expired, clear unlocking
       if (data.door_locked && isUnlocking()) {
         setIsUnlocking(false);
@@ -62,7 +55,7 @@ export function createIntercomStore() {
   };
 
   return {
-    status: () => store.status,
+    status,
     isUnlocking,
     isRinging,
     isResettingMatter,

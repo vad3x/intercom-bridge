@@ -119,8 +119,16 @@ impl EcosystemInfoDriver for ClusterReadinessBarrier {
                 EcosystemValue::Bool(self.is_door_lock_ready()),
             )
             .with_property(
+                "door_lock_endpoint",
+                EcosystemValue::Int(DOOR_LOCK_ENDPOINT_ID as i64),
+            )
+            .with_property(
                 "ring_sensor_subscribed",
                 EcosystemValue::Bool(self.is_ring_ready()),
+            )
+            .with_property(
+                "ring_sensor_endpoint",
+                EcosystemValue::Int(OCCUPANCY_SENSOR_ENDPOINT_ID as i64),
             );
 
         let matter_ptr = self.matter.load(Ordering::Acquire);

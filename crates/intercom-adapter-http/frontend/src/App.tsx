@@ -30,15 +30,15 @@ export function App() {
   const doorStatus = () => {
     if (!store.status()) {
       return {
-        variant: 'warning' as const,
-        dotClass: 'bg-warning animate-pulse',
+        variant: 'neutral' as const,
+        dotClass: 'bg-base-content/30 animate-pulse',
         text: 'connecting',
       };
     }
     if (store.status()?.door_locked) {
-      return { variant: 'success' as const, dotClass: 'bg-success animate-pulse', text: 'locked' };
+      return { variant: 'success' as const, dotClass: 'bg-success', text: 'locked' };
     }
-    return { variant: 'warning' as const, dotClass: 'bg-warning animate-pulse', text: 'unlocked' };
+    return { variant: 'warning' as const, dotClass: 'bg-warning', text: 'unlocked' };
   };
 
   const handleUnlock = async () => {
@@ -80,10 +80,19 @@ export function App() {
         <MatterEcosystemPanel
           ecosystem={props.ecosystem}
           subscriptionRows={[
-            { label: '🔒 Door Lock (EP1)', propertyKey: 'door_lock_subscribed' },
-            { label: '🔔 Chime / Ring (EP2)', propertyKey: 'ring_sensor_subscribed' },
+            { label: 'Door Lock', propertyKey: 'door_lock_subscribed' },
+            { label: 'Chime / Ring', propertyKey: 'ring_sensor_subscribed' },
           ]}
-          endpointIcon={(endpoint) => (endpoint.id === 1 ? '🔒 ' : endpoint.id === 2 ? '🔔 ' : '')}
+          endpointIcon={(endpoint) => {
+            switch (endpoint.cluster) {
+              case 'DoorLock':
+                return '🔒 ';
+              case 'OccupancySensing':
+                return '🔔 ';
+              default:
+                return '';
+            }
+          }}
           onResetMatter={handleResetMatter}
           isResettingMatter={store.isResettingMatter()}
         />

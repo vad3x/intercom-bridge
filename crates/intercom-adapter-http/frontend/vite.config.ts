@@ -5,6 +5,7 @@ import solidPlugin from 'vite-plugin-solid';
 export default defineConfig({
   plugins: [solidPlugin(), viteSingleFile()],
   resolve: {
+    dedupe: ['solid-js', 'solid-js/web', 'solid-js/store'],
     alias: {
       '~': new URL('./src', import.meta.url).pathname,
     },

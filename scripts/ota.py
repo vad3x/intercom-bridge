@@ -450,6 +450,12 @@ def push_ota_to_device(
             try:
                 resp = conn.getresponse()
                 resp_data = resp.read().decode("utf-8", errors="replace").strip()
+                if resp.status == 200:
+                    elapsed = time.time() - start_time
+                    print(f"✅ SUCCESS ({elapsed:.1f}s): Device verified signature and initiated reboot.")
+                    if resp_data:
+                        print(f"   Device message: {resp_data}")
+                    return True
                 print(f"❌ Device rejected update: HTTP {resp.status} {resp.reason}")
                 if resp_data:
                     print(f"   Device message: {resp_data}")
@@ -466,6 +472,12 @@ def push_ota_to_device(
             try:
                 resp = conn.getresponse()
                 resp_data = resp.read().decode("utf-8", errors="replace").strip()
+                if resp.status == 200:
+                    elapsed = time.time() - start_time
+                    print(f"✅ SUCCESS ({elapsed:.1f}s): Device verified signature and initiated reboot.")
+                    if resp_data:
+                        print(f"   Device message: {resp_data}")
+                    return True
                 print(f"❌ Device rejected update: HTTP {resp.status} {resp.reason}")
                 if resp_data:
                     print(f"   Device message: {resp_data}")

@@ -6,7 +6,7 @@ use intercom_adapter_http::router::{
     format_status_json, parse_route, Route, HTTP_200_JSON_OK, HTTP_400_BAD_REQUEST,
     HTTP_404_NOT_FOUND,
 };
-use intercom_core::domain::diagnostics::SystemDiagnostics;
+use intercom_core::domain::diagnostics::{IntercomState, SystemDiagnostics};
 use intercom_core::events::SystemState;
 use serde_json::Value;
 
@@ -137,8 +137,16 @@ fn test_format_status_json_success() {
         intercom_core::domain::EcosystemValue::Bool(true),
     )
     .with_property(
+        "door_lock_endpoint",
+        intercom_core::domain::EcosystemValue::Int(1),
+    )
+    .with_property(
         "ring_sensor_subscribed",
         intercom_core::domain::EcosystemValue::Bool(false),
+    )
+    .with_property(
+        "ring_sensor_endpoint",
+        intercom_core::domain::EcosystemValue::Int(2),
     )
     .with_endpoint(intercom_core::domain::EndpointInfo {
         id: 1,
@@ -152,10 +160,10 @@ fn test_format_status_json_success() {
         cluster: "OccupancySensing",
         ready: false,
     });
-    let diag = SystemDiagnostics {
+    let diag = SystemDiagnostics::<IntercomState, intercom_core::domain::EcosystemId> {
         device_type: "intercom_bridge",
         state: SystemState::Operational,
-        door_locked: true,
+        domain: IntercomState { door_locked: true },
         uptime_sec: 14250,
         wifi_ssid: intercom_core::domain::diagnostics::WifiSsid::new("MyHomeNetwork"),
         wifi_rssi_dbm: Some(-58),
@@ -195,7 +203,9 @@ fn test_format_status_json_success() {
     assert_eq!(val["active_ecosystem"]["type"], "Matter");
     assert_eq!(val["active_ecosystem"]["paired"], true);
     assert_eq!(val["active_ecosystem"]["properties"]["door_lock_subscribed"], true);
+    assert_eq!(val["active_ecosystem"]["properties"]["door_lock_endpoint"], 1);
     assert_eq!(val["active_ecosystem"]["properties"]["ring_sensor_subscribed"], false);
+    assert_eq!(val["active_ecosystem"]["properties"]["ring_sensor_endpoint"], 2);
     assert_eq!(val["active_ecosystem"]["fabrics"], serde_json::json!([]));
     assert_eq!(
         val["active_ecosystem"]["endpoints"],
@@ -233,10 +243,10 @@ fn test_format_status_json_with_multiple_fabrics() {
         label: intercom_core::domain::FabricLabel::from_str("Home Assistant Core"),
     });
 
-    let diag = SystemDiagnostics {
+    let diag = SystemDiagnostics::<IntercomState, intercom_core::domain::EcosystemId> {
         device_type: "intercom_bridge",
         state: SystemState::Operational,
-        door_locked: true,
+        domain: IntercomState { door_locked: true },
         uptime_sec: 100,
         wifi_ssid: None,
         wifi_rssi_dbm: None,
@@ -280,10 +290,10 @@ fn test_format_status_json_with_multiple_fabrics() {
 #[test]
 fn test_format_status_json_with_none_options() {
     // Arrange
-    let diag: SystemDiagnostics = SystemDiagnostics {
+    let diag = SystemDiagnostics::<IntercomState, intercom_core::domain::EcosystemId> {
         device_type: "intercom_bridge",
         state: SystemState::WifiConnecting,
-        door_locked: false,
+        domain: IntercomState { door_locked: false },
         uptime_sec: 42,
         wifi_ssid: None,
         wifi_rssi_dbm: None,
@@ -329,10 +339,10 @@ fn test_format_status_json_with_none_options() {
 #[test]
 fn test_format_status_json_buffer_overflow_protection() {
     // Arrange
-    let diag: SystemDiagnostics = SystemDiagnostics {
+    let diag = SystemDiagnostics::<IntercomState, intercom_core::domain::EcosystemId> {
         device_type: "intercom_bridge",
         state: SystemState::Operational,
-        door_locked: true,
+        domain: IntercomState { door_locked: true },
         uptime_sec: 14250,
         wifi_ssid: intercom_core::domain::diagnostics::WifiSsid::new("MyHomeNetwork"),
         wifi_rssi_dbm: Some(-58),
