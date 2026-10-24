@@ -4,11 +4,10 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "build:foundation": "cd ../../../../embedded-device-foundation/packages/dashboard-core && bun run build",
-    "dev": "bun run build:foundation && bun --bun vite",
-    "build": "bun run build:foundation && bun --bun vite build && mv ../assets/index.html ../assets/dashboard.html",
+    "dev": "bun --bun vite",
+    "build": "bun --bun vite build && mv ../assets/index.html ../assets/dashboard.html",
     "preview": "bun --bun vite preview",
-    "typecheck": "bun run build:foundation && bun --bun tsc --noEmit",
+    "typecheck": "bun --bun tsc --noEmit",
     "lint": "biome check .",
     "format": "biome format --write .",
     "check": "bun run typecheck && bun run lint"
