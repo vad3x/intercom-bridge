@@ -65,4 +65,9 @@ impl DoorDriver for GpioDoorDriver {
         self.unlocking = false;
         info!("Unlock pulse end");
     }
+
+    fn set_unlock_duration_ms(&mut self, duration_ms: u32) {
+        info!("Updating unlock pulse duration: {}ms", duration_ms);
+        self.config.unlock_pulse_ms = duration_ms as u64;
+    }
 }

@@ -72,4 +72,8 @@ impl IntercomReporter for GpioLedDriver {
             );
         }
     }
+
+    fn report_unlock_duration(&self, _duration_sec: u32) {
+        // LED indicator does not change based on duration setting
+    }
 }
