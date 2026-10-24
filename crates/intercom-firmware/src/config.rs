@@ -48,14 +48,19 @@ pub const OTA_1_OFFSET: u32 = 0x370000;
 #[allow(dead_code)]
 pub const OTA_SLOT_SIZE: u32 = 0x350000;
 
-/// Start offset of the `wifi_kvs` partition in flash (from partitions.csv).
-pub const WIFI_KVS_OFFSET: u32 = 0x6c0000;
+/// Start offset of the `system_kvs` partition in flash (from partitions.csv).
+pub const SYSTEM_KVS_OFFSET: u32 = 0x6c0000;
 
-/// Size of the `wifi_kvs` partition (8 KiB = 2 sectors × 4 KiB).
-pub const WIFI_KVS_SIZE: u32 = 0x2000;
+/// Size of the `system_kvs` partition (8 KiB = 2 sectors × 4 KiB).
+pub const SYSTEM_KVS_SIZE: u32 = 0x2000;
 
-/// Flash range for the dedicated Wi-Fi credentials store.
-pub const WIFI_KVS_RANGE: Range<u32> = WIFI_KVS_OFFSET..WIFI_KVS_OFFSET + WIFI_KVS_SIZE;
+/// Flash range for the system settings and Wi-Fi credentials store.
+pub const SYSTEM_KVS_RANGE: Range<u32> = SYSTEM_KVS_OFFSET..SYSTEM_KVS_OFFSET + SYSTEM_KVS_SIZE;
+
+// Backward compatibility aliases:
+pub const WIFI_KVS_OFFSET: u32 = SYSTEM_KVS_OFFSET;
+pub const WIFI_KVS_SIZE: u32 = SYSTEM_KVS_SIZE;
+pub const WIFI_KVS_RANGE: Range<u32> = SYSTEM_KVS_RANGE;
 
 /// Start offset of the `matter_kvs` partition in flash (from partitions.csv).
 pub const MATTER_KVS_OFFSET: u32 = 0x6c2000;
@@ -65,6 +70,12 @@ pub const MATTER_KVS_SIZE: u32 = 0x6000;
 
 /// Flash range for the Matter KV blob store.
 pub const MATTER_KVS_RANGE: Range<u32> = MATTER_KVS_OFFSET..MATTER_KVS_OFFSET + MATTER_KVS_SIZE;
+
+/// Persistent KV storage key for door unlock duration in seconds (stored in `system_kvs`).
+pub const DOOR_DURATION_KEY: u16 = 0x1001;
+
+/// Default door unlock duration in seconds.
+pub const DEFAULT_DOOR_DURATION_SEC: u32 = intercom_core::config::DEFAULT_DOOR_UNLOCK_DURATION_SEC;
 
 // ============================================================================
 // Memory & Logging Configuration
@@ -214,17 +225,17 @@ mod tests {
         const FLASH_TOTAL_SIZE: u32 = 0x800000; // 8 MB
 
         // Act
-        let wifi_offset_aligned = WIFI_KVS_OFFSET % SECTOR_SIZE == 0;
-        let wifi_size_aligned = WIFI_KVS_SIZE % SECTOR_SIZE == 0;
+        let system_offset_aligned = SYSTEM_KVS_OFFSET % SECTOR_SIZE == 0;
+        let system_size_aligned = SYSTEM_KVS_SIZE % SECTOR_SIZE == 0;
         let matter_offset_aligned = MATTER_KVS_OFFSET % SECTOR_SIZE == 0;
         let matter_size_aligned = MATTER_KVS_SIZE % SECTOR_SIZE == 0;
-        let partitions_adjacent = WIFI_KVS_OFFSET + WIFI_KVS_SIZE == MATTER_KVS_OFFSET;
-        let non_overlapping = WIFI_KVS_RANGE.end <= MATTER_KVS_RANGE.start;
+        let partitions_adjacent = SYSTEM_KVS_OFFSET + SYSTEM_KVS_SIZE == MATTER_KVS_OFFSET;
+        let non_overlapping = SYSTEM_KVS_RANGE.end <= MATTER_KVS_RANGE.start;
         let fits_in_flash = MATTER_KVS_RANGE.end <= FLASH_TOTAL_SIZE;
 
         // Assert
-        assert!(wifi_offset_aligned);
-        assert!(wifi_size_aligned);
+        assert!(system_offset_aligned);
+        assert!(system_size_aligned);
         assert!(matter_offset_aligned);
         assert!(matter_size_aligned);
         assert!(partitions_adjacent);

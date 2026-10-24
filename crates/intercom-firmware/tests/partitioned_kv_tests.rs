@@ -64,11 +64,11 @@ impl KvBlobStore for MockKvStore {
 }
 
 #[test]
-fn test_partitioned_kv_store_routes_networks_key_to_wifi_store() {
+fn test_partitioned_kv_store_routes_networks_key_to_system_store() {
     // Arrange
     let matter_store = MockKvStore::new();
-    let wifi_store = MockKvStore::new();
-    let mut partitioned = PartitionedKvBlobStore::new(matter_store, wifi_store);
+    let system_store = MockKvStore::new();
+    let mut partitioned = PartitionedKvBlobStore::new(matter_store, system_store);
     let mut buf = [0u8; 128];
 
     // Act
@@ -80,7 +80,7 @@ fn test_partitioned_kv_store_routes_networks_key_to_wifi_store() {
     let mut read_buf = [0u8; 128];
     assert_eq!(
         partitioned
-            .wifi_store
+            .system_store
             .load(NETWORKS_KEY, &mut read_buf)
             .unwrap(),
         Some(b"ssid_secret_pass".as_slice())
@@ -95,11 +95,47 @@ fn test_partitioned_kv_store_routes_networks_key_to_wifi_store() {
 }
 
 #[test]
+fn test_partitioned_kv_store_routes_door_duration_key_to_system_store() {
+    let matter_store = MockKvStore::new();
+    let system_store = MockKvStore::new();
+    let mut partitioned = PartitionedKvBlobStore::new(matter_store, system_store);
+    let mut scratch = [0u8; 32];
+
+    const DOOR_DURATION_KEY: u16 = 0x1001;
+    let duration_bytes = 7u32.to_le_bytes();
+    partitioned
+        .store(DOOR_DURATION_KEY, &duration_bytes, &mut scratch)
+        .unwrap();
+
+    // Verify written to system store, not matter store
+    assert_eq!(
+        partitioned
+            .matter_store
+            .load(DOOR_DURATION_KEY, &mut scratch)
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        partitioned
+            .system_store
+            .load(DOOR_DURATION_KEY, &mut scratch)
+            .unwrap(),
+        Some(duration_bytes.as_slice())
+    );
+    assert_eq!(
+        partitioned
+            .load(DOOR_DURATION_KEY, &mut scratch)
+            .unwrap(),
+        Some(duration_bytes.as_slice())
+    );
+}
+
+#[test]
 fn test_partitioned_kv_store_routes_fabric_keys_to_matter_store() {
     // Arrange
     let matter_store = MockKvStore::new();
-    let wifi_store = MockKvStore::new();
-    let mut partitioned = PartitionedKvBlobStore::new(matter_store, wifi_store);
+    let system_store = MockKvStore::new();
+    let mut partitioned = PartitionedKvBlobStore::new(matter_store, system_store);
     let mut buf = [0u8; 128];
 
     // Act
@@ -125,20 +161,20 @@ fn test_partitioned_kv_store_routes_fabric_keys_to_matter_store() {
     );
     assert_eq!(
         partitioned
-            .wifi_store
+            .system_store
             .load(BASIC_INFO_KEY, &mut read_buf)
             .unwrap(),
         None
     );
-    assert_eq!(partitioned.wifi_store.load(1, &mut read_buf).unwrap(), None);
+    assert_eq!(partitioned.system_store.load(1, &mut read_buf).unwrap(), None);
 }
 
 #[test]
 fn test_partitioned_kv_store_empty_returns_none() {
     // Arrange
     let matter_store = MockKvStore::new();
-    let wifi_store = MockKvStore::new();
-    let mut partitioned = PartitionedKvBlobStore::new(matter_store, wifi_store);
+    let system_store = MockKvStore::new();
+    let mut partitioned = PartitionedKvBlobStore::new(matter_store, system_store);
     let mut buf1 = [0u8; 128];
     let mut buf2 = [0u8; 128];
 
@@ -155,12 +191,12 @@ fn test_partitioned_kv_store_empty_returns_none() {
 fn test_partitioned_kv_store_load_networks_key_ignores_matter_store() {
     // Arrange
     let mut matter_store = MockKvStore::new();
-    let wifi_store = MockKvStore::new();
+    let system_store = MockKvStore::new();
     let mut setup_buf = [0u8; 128];
     matter_store
         .store(NETWORKS_KEY, b"legacy_matter_creds", &mut setup_buf)
         .unwrap();
-    let mut partitioned = PartitionedKvBlobStore::new(matter_store, wifi_store);
+    let mut partitioned = PartitionedKvBlobStore::new(matter_store, system_store);
     let mut buf = [0u8; 128];
 
     // Act
@@ -171,18 +207,18 @@ fn test_partitioned_kv_store_load_networks_key_ignores_matter_store() {
 }
 
 #[test]
-fn test_partitioned_kv_store_remove_networks_key_only_touches_wifi_store() {
+fn test_partitioned_kv_store_remove_networks_key_only_touches_system_store() {
     // Arrange
     let mut matter_store = MockKvStore::new();
-    let mut wifi_store = MockKvStore::new();
+    let mut system_store = MockKvStore::new();
     let mut setup_buf = [0u8; 128];
     matter_store
         .store(NETWORKS_KEY, b"matter_copy", &mut setup_buf)
         .unwrap();
-    wifi_store
-        .store(NETWORKS_KEY, b"wifi_copy", &mut setup_buf)
+    system_store
+        .store(NETWORKS_KEY, b"system_copy", &mut setup_buf)
         .unwrap();
-    let mut partitioned = PartitionedKvBlobStore::new(matter_store, wifi_store);
+    let mut partitioned = PartitionedKvBlobStore::new(matter_store, system_store);
     let mut buf = [0u8; 128];
 
     // Act
@@ -190,7 +226,7 @@ fn test_partitioned_kv_store_remove_networks_key_only_touches_wifi_store() {
 
     // Assert
     assert_eq!(
-        partitioned.wifi_store.load(NETWORKS_KEY, &mut buf).unwrap(),
+        partitioned.system_store.load(NETWORKS_KEY, &mut buf).unwrap(),
         None
     );
     assert_eq!(
@@ -206,11 +242,11 @@ fn test_partitioned_kv_store_remove_networks_key_only_touches_wifi_store() {
 fn test_partitioned_kv_store_remove_matter_key_only_touches_matter_store() {
     // Arrange
     let matter_store = MockKvStore::new();
-    let wifi_store = MockKvStore::new();
-    let mut partitioned = PartitionedKvBlobStore::new(matter_store, wifi_store);
+    let system_store = MockKvStore::new();
+    let mut partitioned = PartitionedKvBlobStore::new(matter_store, system_store);
     let mut buf = [0u8; 128];
     partitioned
-        .store(NETWORKS_KEY, b"wifi_safe", &mut buf)
+        .store(NETWORKS_KEY, b"system_safe", &mut buf)
         .unwrap();
     partitioned
         .store(BASIC_INFO_KEY, b"info_data", &mut buf)
@@ -223,7 +259,7 @@ fn test_partitioned_kv_store_remove_matter_key_only_touches_matter_store() {
     assert_eq!(partitioned.load(BASIC_INFO_KEY, &mut buf).unwrap(), None);
     assert_eq!(
         partitioned.load(NETWORKS_KEY, &mut buf).unwrap(),
-        Some(b"wifi_safe".as_slice())
+        Some(b"system_safe".as_slice())
     );
 }
 
@@ -231,8 +267,8 @@ fn test_partitioned_kv_store_remove_matter_key_only_touches_matter_store() {
 fn test_partitioned_kv_store_update_existing_networks_key() {
     // Arrange
     let matter_store = MockKvStore::new();
-    let wifi_store = MockKvStore::new();
-    let mut partitioned = PartitionedKvBlobStore::new(matter_store, wifi_store);
+    let system_store = MockKvStore::new();
+    let mut partitioned = PartitionedKvBlobStore::new(matter_store, system_store);
     let mut buf = [0u8; 128];
     partitioned
         .store(NETWORKS_KEY, b"old_ssid_pass", &mut buf)
@@ -254,12 +290,12 @@ fn test_partitioned_kv_store_update_existing_networks_key() {
 fn test_partitioned_kv_store_buffer_too_small_returns_error() {
     // Arrange
     let matter_store = MockKvStore::new();
-    let mut wifi_store = MockKvStore::new();
+    let mut system_store = MockKvStore::new();
     let mut setup_buf = [0u8; 128];
-    wifi_store
+    system_store
         .store(NETWORKS_KEY, b"long_credentials_data", &mut setup_buf)
         .unwrap();
-    let mut partitioned = PartitionedKvBlobStore::new(matter_store, wifi_store);
+    let mut partitioned = PartitionedKvBlobStore::new(matter_store, system_store);
     let mut tiny_buf = [0u8; 4];
 
     // Act
@@ -267,5 +303,82 @@ fn test_partitioned_kv_store_buffer_too_small_returns_error() {
 
     // Assert
     assert!(result.is_err());
-    assert_eq!(result.unwrap_err().code(), rs_matter::error::ErrorCode::BufferTooSmall);
+    assert_eq!(
+        result.unwrap_err().code(),
+        rs_matter::error::ErrorCode::BufferTooSmall
+    );
+}
+
+#[test]
+fn test_load_door_duration_defaults_when_empty() {
+    let mut store = MockKvStore::new();
+    assert_eq!(
+        intercom_firmware::reset::load_door_duration(&mut store),
+        intercom_core::config::DEFAULT_DOOR_UNLOCK_DURATION_SEC
+    );
+}
+
+#[test]
+fn test_save_and_load_door_duration_persists_valid_value() {
+    let mut store = MockKvStore::new();
+    assert!(intercom_firmware::reset::save_door_duration(&mut store, 12).is_ok());
+    assert_eq!(intercom_firmware::reset::load_door_duration(&mut store), 12);
+}
+
+#[test]
+fn test_save_door_duration_clamps_out_of_bounds() {
+    let mut store = MockKvStore::new();
+
+    // Value 0 clamped to MIN (1)
+    assert!(intercom_firmware::reset::save_door_duration(&mut store, 0).is_ok());
+    assert_eq!(intercom_firmware::reset::load_door_duration(&mut store), 1);
+
+    // Value 100 clamped to MAX (30)
+    assert!(intercom_firmware::reset::save_door_duration(&mut store, 100).is_ok());
+    assert_eq!(intercom_firmware::reset::load_door_duration(&mut store), 30);
+}
+
+#[test]
+fn test_load_door_duration_falls_back_on_invalid_or_corrupt_data() {
+    let mut store = MockKvStore::new();
+    let mut scratch = [0u8; 32];
+
+    // Too few bytes (< 4)
+    store
+        .store(
+            intercom_firmware::config::DOOR_DURATION_KEY,
+            &[1, 2],
+            &mut scratch,
+        )
+        .unwrap();
+    assert_eq!(
+        intercom_firmware::reset::load_door_duration(&mut store),
+        intercom_core::config::DEFAULT_DOOR_UNLOCK_DURATION_SEC
+    );
+
+    // Out of bounds (< 1)
+    store
+        .store(
+            intercom_firmware::config::DOOR_DURATION_KEY,
+            &0u32.to_le_bytes(),
+            &mut scratch,
+        )
+        .unwrap();
+    assert_eq!(
+        intercom_firmware::reset::load_door_duration(&mut store),
+        intercom_core::config::DEFAULT_DOOR_UNLOCK_DURATION_SEC
+    );
+
+    // Out of bounds (> 30)
+    store
+        .store(
+            intercom_firmware::config::DOOR_DURATION_KEY,
+            &31u32.to_le_bytes(),
+            &mut scratch,
+        )
+        .unwrap();
+    assert_eq!(
+        intercom_firmware::reset::load_door_duration(&mut store),
+        intercom_core::config::DEFAULT_DOOR_UNLOCK_DURATION_SEC
+    );
 }
