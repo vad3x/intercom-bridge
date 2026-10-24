@@ -9,7 +9,6 @@ members = [
     "crates/intercom-adapter-gpio",
     "crates/intercom-adapter-http",
     "crates/intercom-adapter-matter",
-    "crates/intercom-adapter-ota",
     "crates/intercom-firmware",
     "crates/intercom-pairing-tool",
 ]

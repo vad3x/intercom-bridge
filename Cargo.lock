@@ -2549,23 +2549,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "intercom-adapter-ota"
-version = "0.1.0"
-dependencies = [
- "critical-section",
- "ed25519-dalek",
- "edf-core",
- "edf-ota",
- "embassy-net",
- "embassy-sync 0.8.0",
- "embassy-time",
- "esp-hal",
- "futures",
- "intercom-core",
- "log",
-]
-
-[[package]]
 name = "intercom-core"
 version = "0.1.0"
 dependencies = [
@@ -2603,7 +2586,6 @@ dependencies = [
  "intercom-adapter-gpio",
  "intercom-adapter-http",
  "intercom-adapter-matter",
- "intercom-adapter-ota",
  "intercom-core",
  "log",
  "portable-atomic",

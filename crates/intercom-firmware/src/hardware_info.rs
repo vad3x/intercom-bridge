@@ -164,14 +164,14 @@ fn ensure_bootloader_cached() {
     if SLOT_CACHE.load(core::sync::atomic::Ordering::Relaxed) != 0 {
         return;
     }
-    match intercom_adapter_ota::OtaBootloader::load() {
+    match edf_ota::OtaBootloader::load() {
         Ok(bl) => {
             let slot_val = match bl.get_running_slot() {
-                intercom_adapter_ota::Slot::Ota0 => 1,
-                intercom_adapter_ota::Slot::Ota1 => 2,
+                edf_ota::Slot::Ota0 => 1,
+                edf_ota::Slot::Ota1 => 2,
             };
             SLOT_CACHE.store(slot_val, core::sync::atomic::Ordering::Relaxed);
-            let valid_val = if bl.get_active().state == intercom_adapter_ota::OtaState::Valid {
+            let valid_val = if bl.get_active().state == edf_ota::OtaState::Valid {
                 1
             } else {
                 2

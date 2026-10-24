@@ -40,7 +40,7 @@ Open the worktree directory itself in the editor. Merge or remove completed work
 
 ```bash
 # Run host-capable tests on macOS without hardware
-mise exec -- cargo test -p intercom-core -p intercom-adapter-http -p intercom-adapter-ota -p intercom-pairing-tool --target x86_64-apple-darwin
+mise exec -- cargo test -p intercom-core -p intercom-adapter-http -p intercom-pairing-tool --target x86_64-apple-darwin
 mise exec -- cargo test -p intercom-firmware --lib --target x86_64-apple-darwin
 mise exec -- cargo test -p intercom-firmware --test partitioned_kv_tests --target x86_64-apple-darwin
 
@@ -219,12 +219,6 @@ intercom-bridge/
 │   │       ├── access_control.rs   # MatterAccessControlDriver (bridges services ↔ clusters)
 │   │       ├── commissioning.rs    # Commissioning helpers
 │   │       └── controller.rs       # MatterController builder + runner (WiFi stack)
-│   ├── intercom-adapter-ota/       # Wireless OTA firmware update adapter (HTTP + Ed25519)
-│   │   └── src/
-│   │       ├── lib.rs              # Crate root, error types, and re-exports
-│   │       ├── bootloader.rs       # ESP-IDF otadata parser & dual-slot state machine
-│   │       ├── writer.rs           # Streaming flash sector writer & Ed25519 verifier
-│   │       └── driver.rs           # FlashOtaDriver coordinating writer and bootloader
 │   ├── intercom-pairing-tool/      # Host CLI (`cargo qr`) for Matter QR & manual pairing codes
 │   └── intercom-firmware/          # Composition root binary (intercom-bridge)
 │       └── src/
@@ -269,9 +263,7 @@ intercom-bridge/
 | `crates/intercom-adapter-matter/src/occupancy.rs` | `IntercomOccupancy` — Matter OccupancySensing cluster |
 | `crates/intercom-adapter-matter/src/access_control.rs` | `MatterAccessControlDriver` — implements `IntercomReporter` port |
 | `crates/intercom-adapter-gpio/src/` | GPIO implementations of port traits using `esp-hal` |
-| `crates/intercom-adapter-ota/src/bootloader.rs` | ESP-IDF `otadata` state machine: slot selection, sequence calculation, rollback protection |
-| `crates/intercom-adapter-ota/src/writer.rs` | Streaming flash writer: sector buffering, Ed25519 signature verification |
-| `crates/intercom-adapter-ota/src/driver.rs` | `FlashOtaDriver`: coordinates streaming flash writer and bootloader slot commit |
+| `crates/intercom-adapter-matter/src/` | Matter protocol adapter implementation using `rs-matter` |
 | `scripts/ota.py` | Host CLI: mDNS discovery, Ed25519 signing, and streaming HTTP firmware push |
 | `scripts/generate_keys.py` | Host tool: generates Ed25519 private key and outputs Rust public key array |
 | `scripts/cargo-fe` | Host frontend helper for `cargo fe-dev`, `cargo fe-build`, `cargo fe-check`, `cargo fe-install` |
@@ -658,7 +650,7 @@ Patched crates (via `[patch.crates-io]` in `Cargo.toml`):
 
 ## Testing Changes
 
-1. Run host unit tests: `cargo test -p intercom-core -p intercom-adapter-ota --target x86_64-apple-darwin`
+1. Run host unit tests: `cargo test -p intercom-core -p intercom-adapter-http --target x86_64-apple-darwin`
 2. Build firmware binary: `mise exec -- cargo build -p intercom-firmware --release`
 3. Flash via USB: `mise exec -- cargo run` (or remotely via Wi-Fi: `python3 scripts/ota.py target/riscv32imac-unknown-none-elf/release/intercom-bridge`)
 4. Monitor serial logs: `python3 scripts/monitor.py --no-reset`

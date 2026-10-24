@@ -3,12 +3,9 @@
 //! Provides static route parsing and diagnostic telemetry formatting
 //! directly into pre-allocated byte slices without heap allocation.
 
-use core::fmt::Write;
-use edf_core::domain::diagnostics as edf_diagnostics;
-use edf_http_diagnostics::{parse_diagnostic_route, DiagnosticRoute};
-use intercom_core::domain::diagnostics::SystemDiagnostics;
+use edf_http_diagnostics::{parse_diagnostic_route, DiagnosticPayload, DiagnosticRoute};
+use intercom_core::domain::diagnostics::{IntercomState, SystemDiagnostics};
 use intercom_core::domain::ecosystem::EcosystemType;
-use intercom_core::events::SystemState;
 
 // ============================================================================
 // Public Constants
@@ -91,51 +88,47 @@ pub fn parse_route(request_line: &str) -> Route {
 ///
 /// Returns the number of bytes written, or `Err(())` if the buffer is too small.
 pub fn format_status_json<T: EcosystemType>(
-    diag: &SystemDiagnostics<T>,
+    diag: &SystemDiagnostics<IntercomState, T>,
     out: &mut [u8],
 ) -> Result<usize, ()> {
-    use edf_http_diagnostics::{format_status_json as edf_format_status_json, DiagnosticPayload};
+    let shared = shared_snapshot(diag);
+    edf_http_diagnostics::format_status_json(&shared, out).map_err(|_| ())
+}
 
-    struct IntercomPayload(bool);
-    impl IntercomPayload {
-        fn new(locked: bool) -> Self {
-            Self(locked)
-        }
+pub(crate) fn shared_snapshot<'a, T: EcosystemType>(
+    diag: &'a SystemDiagnostics<IntercomState, T>,
+) -> SystemDiagnostics<IntercomPayload<'a>, T> {
+    SystemDiagnostics {
+        device_type: diag.device_type,
+        state: diag.state,
+        domain: IntercomPayload(&diag.domain),
+        uptime_sec: diag.uptime_sec,
+        wifi_ssid: diag.wifi_ssid,
+        wifi_rssi_dbm: diag.wifi_rssi_dbm,
+        ip: diag.ip,
+        mac: diag.mac,
+        active_slot: diag.active_slot,
+        slot_valid: diag.slot_valid,
+        free_heap_bytes: diag.free_heap_bytes,
+        total_heap_bytes: diag.total_heap_bytes,
+        available_ecosystems: diag.available_ecosystems,
+        active_ecosystem: diag.active_ecosystem.clone(),
+        version: diag.version,
+        git_commit: diag.git_commit,
+        build_date: diag.build_date,
     }
-    impl DiagnosticPayload for IntercomPayload {
-        fn write_fields<W: core::fmt::Write>(&self, out: &mut W) -> core::fmt::Result {
-            write!(out, ",\"door_locked\":{}", if self.0 { "true" } else { "false" })
-        }
+}
+
+pub(crate) struct IntercomPayload<'a>(&'a IntercomState);
+
+impl DiagnosticPayload for IntercomPayload<'_> {
+    fn write_fields<W: core::fmt::Write>(&self, out: &mut W) -> core::fmt::Result {
+        write!(
+            out,
+            ",\"door_locked\":{}",
+            if self.0.door_locked { "true" } else { "false" }
+        )
     }
-
-    let wifi_ssid = if let Some(ref ssid) = diag.wifi_ssid {
-        edf_core::domain::diagnostics::WifiSsid::new(ssid.as_str())
-    } else {
-        None
-    };
-
-    let edf_diag: edf_diagnostics::SystemDiagnostics<IntercomPayload, T> =
-        edf_diagnostics::SystemDiagnostics {
-            device_type: diag.device_type,
-            state: diag.state,
-            uptime_sec: diag.uptime_sec,
-            wifi_ssid,
-            wifi_rssi_dbm: diag.wifi_rssi_dbm,
-            ip: diag.ip,
-            mac: diag.mac,
-            active_slot: diag.active_slot,
-            slot_valid: diag.slot_valid,
-            free_heap_bytes: diag.free_heap_bytes,
-            total_heap_bytes: diag.total_heap_bytes,
-            available_ecosystems: diag.available_ecosystems,
-            active_ecosystem: diag.active_ecosystem.clone(),
-            domain: IntercomPayload::new(diag.door_locked),
-            version: diag.version,
-            git_commit: diag.git_commit,
-            build_date: diag.build_date,
-        };
-
-    edf_format_status_json(&edf_diag, out).map_err(|_| ())
 }
 
 // ============================================================================
