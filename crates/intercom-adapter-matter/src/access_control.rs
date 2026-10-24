@@ -35,4 +35,8 @@ impl IntercomReporter for MatterAccessControlDriver<'_> {
             LockState::Unlocked => self.door_lock.unlock(),
         }
     }
+
+    fn report_unlock_duration(&self, duration_sec: u32) {
+        self.door_lock.set_unlock_duration(duration_sec);
+    }
 }

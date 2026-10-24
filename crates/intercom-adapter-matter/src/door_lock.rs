@@ -4,7 +4,7 @@
 //! Handles lock/unlock commands, pushes subscription reports when state changes,
 //! and notifies readiness via the `ClusterReadinessBarrier`.
 
-use core::sync::atomic::{AtomicU8, Ordering};
+use core::sync::atomic::{AtomicU32, AtomicU8, Ordering};
 
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::signal::Signal;
@@ -43,6 +43,7 @@ pub struct IntercomDoorLock {
     config: IntercomDoorLockConfig,
     dataver: Dataver,
     lock_state: AtomicU8,
+    unlock_duration_sec: AtomicU32,
     /// Signal used to wake the `run()` background task when an out-of-band
     /// state change (e.g. auto-relock) needs to push a subscription report.
     state_changed: Signal<NoopRawMutex, ()>,
@@ -55,6 +56,7 @@ impl IntercomDoorLock {
             config,
             dataver: Dataver::new(1),
             lock_state: AtomicU8::new(DlLockState::Locked as u8),
+            unlock_duration_sec: AtomicU32::new(5),
             state_changed: Signal::new(),
         }
     }
@@ -82,6 +84,21 @@ impl IntercomDoorLock {
         let prev = self.lock_state.swap(DlLockState::Unlocked as u8, Ordering::SeqCst);
         if prev != DlLockState::Unlocked as u8 {
             info!("unlock() called → state=Unlocked, signalling subscription notify");
+            self.dataver.changed();
+            self.state_changed.signal(());
+        }
+    }
+
+    /// Update the door unlock duration in seconds (Matter AutoRelockTime).
+    ///
+    /// Called by `MatterAccessControlDriver` when the unlock duration changes out-of-band (e.g. web dashboard).
+    /// Bumps dataver and signals the `run()` background task to push
+    /// a subscription report to HomeKit immediately.
+    pub fn set_unlock_duration(&self, duration_sec: u32) {
+        let clamped = intercom_core::config::clamp_door_unlock_duration(duration_sec);
+        let prev = self.unlock_duration_sec.swap(clamped, Ordering::SeqCst);
+        if prev != clamped {
+            info!("Door lock auto-relock duration updated: {}s -> {}s", prev, clamped);
             self.dataver.changed();
             self.state_changed.signal(());
         }
@@ -153,10 +170,7 @@ impl AsyncHandler for IntercomDoorLock {
                     }
                     // AutoRelockTime (id=35): u32
                     x if x == door_lock::AttributeId::AutoRelockTime as u16 => {
-                        Reply::set(
-                            writer,
-                            intercom_core::config::AUTO_RELOCK_SEC as u32,
-                        )
+                        Reply::set(writer, self.unlock_duration_sec.load(Ordering::Relaxed))
                     }
                     // OperatingMode (id=37): OperatingModeEnum
                     x if x == door_lock::AttributeId::OperatingMode as u16 => {
@@ -185,7 +199,17 @@ impl AsyncHandler for IntercomDoorLock {
         ctx.attr().check_dataver(self.dataver.get())?;
         match ctx.attr().attr_id as u16 {
             // AutoRelockTime (id=35) - allow controllers to configure auto-relock
-            x if x == door_lock::AttributeId::AutoRelockTime as u16 => Ok(()),
+            x if x == door_lock::AttributeId::AutoRelockTime as u16 => {
+                let val = ctx.data().u32().map_err(|_| ErrorCode::InvalidDataType)?;
+                if !intercom_core::config::is_valid_door_unlock_duration(val) {
+                    return Err(ErrorCode::ConstraintError.into());
+                }
+                self.unlock_duration_sec.store(val, Ordering::Relaxed);
+                self.dataver.changed();
+                ctx.notify_changed();
+                let _ = self.config.access.set_unlock_duration(val);
+                Ok(())
+            }
             // RequirePINforRemoteOperation (id=51) - allow controllers to configure PIN requirement
             x if x == door_lock::AttributeId::RequirePINforRemoteOperation as u16 => Ok(()),
             _ => Err(ErrorCode::AttributeNotFound.into()),
@@ -251,6 +275,11 @@ impl AsyncHandler for IntercomDoorLock {
                     Self::ENDPOINT_ID,
                     Self::CLUSTER.id,
                     door_lock::AttributeId::LockState as _,
+                );
+                ctx.notify_attr_changed(
+                    Self::ENDPOINT_ID,
+                    Self::CLUSTER.id,
+                    door_lock::AttributeId::AutoRelockTime as _,
                 );
             }
         }
