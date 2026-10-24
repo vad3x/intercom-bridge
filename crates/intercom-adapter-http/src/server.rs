@@ -380,6 +380,27 @@ fn build_router<
             ),
         )
         .route(
+            "/api/action/door-duration",
+            picoserve::routing::post(
+                |picoserve::extract::State(state): picoserve::extract::State<
+                    AppState<'a, H, E, O, T>,
+                >,
+                 picoserve::extract::Query(query): picoserve::extract::Query<DoorDurationQuery>| async move {
+                    if intercom_core::config::is_valid_door_unlock_duration(query.seconds) {
+                        let _ = state.access_handle.set_unlock_duration(query.seconds);
+                        picoserve::response::Response::ok("{\"status\":\"ok\"}")
+                            .with_content_type("application/json")
+                    } else {
+                        picoserve::response::Response::new(
+                            picoserve::response::StatusCode::BAD_REQUEST,
+                            "{\"error\":\"invalid_duration\"}",
+                        )
+                        .with_content_type("application/json")
+                    }
+                },
+            ),
+        )
+        .route(
             "/api/action/reset/matter",
             picoserve::routing::post(
                 |picoserve::extract::State(state): picoserve::extract::State<
@@ -399,6 +420,11 @@ fn build_router<
             picoserve::routing::post_service(OtaFlashService(core::marker::PhantomData)),
         )
         .with_state(app_state)
+}
+
+#[derive(serde::Deserialize)]
+struct DoorDurationQuery {
+    seconds: u32,
 }
 
 struct OtaFlashService<T: EcosystemType>(core::marker::PhantomData<fn() -> T>);

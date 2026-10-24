@@ -33,6 +33,7 @@ pub enum Route {
     ActionRing,
     ActionUnlock,
     ActionResetMatter,
+    ActionSetDoorDuration(u32),
     OtaFlash,
     NotFound,
 }
@@ -61,12 +62,13 @@ pub fn parse_route(request_line: &str) -> Route {
         Some(m) => m,
         None => return Route::NotFound,
     };
-    let path = match parts.next() {
-        Some(p) => match p.split_once('?') {
-            Some((base, _query)) => base,
-            None => p,
-        },
+    let full_path = match parts.next() {
+        Some(p) => p,
         None => return Route::NotFound,
+    };
+    let (path, query) = match full_path.split_once('?') {
+        Some((base, query)) => (base, Some(query)),
+        None => (full_path, None),
     };
 
     if let Some(diagnostic) = parse_diagnostic_route(method, path) {
@@ -79,6 +81,20 @@ pub fn parse_route(request_line: &str) -> Route {
     match (method, path) {
         ("POST", "/api/action/ring") => Route::ActionRing,
         ("POST", "/api/action/unlock") => Route::ActionUnlock,
+        ("POST", "/api/action/door-duration") => {
+            if let Some(q) = query {
+                for param in q.split('&') {
+                    if let Some(val_str) = param.strip_prefix("seconds=") {
+                        if let Ok(sec) = val_str.parse::<u32>() {
+                            if intercom_core::config::is_valid_door_unlock_duration(sec) {
+                                return Route::ActionSetDoorDuration(sec);
+                            }
+                        }
+                    }
+                }
+            }
+            Route::NotFound
+        }
         ("POST", "/api/v1/ota/flash") => Route::OtaFlash,
         _ => Route::NotFound,
     }
@@ -125,8 +141,9 @@ impl DiagnosticPayload for IntercomPayload<'_> {
     fn write_fields<W: core::fmt::Write>(&self, out: &mut W) -> core::fmt::Result {
         write!(
             out,
-            ",\"door_locked\":{}",
-            if self.0.door_locked { "true" } else { "false" }
+            ",\"door_locked\":{},\"door_unlock_duration_sec\":{}",
+            if self.0.door_locked { "true" } else { "false" },
+            self.0.door_unlock_duration_sec
         )
     }
 }

@@ -2521,6 +2521,7 @@ dependencies = [
  "intercom-core",
  "log",
  "picoserve",
+ "serde",
  "serde-json-core",
  "serde_json",
 ]

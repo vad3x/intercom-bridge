@@ -262,6 +262,7 @@ fn test_get_status_returns_valid_telemetry_json() {
     assert_eq!(v["device_type"], "intercom_bridge");
     assert_eq!(v["state"], "Operational");
     assert_eq!(v["door_locked"], true);
+    assert_eq!(v["door_unlock_duration_sec"], 5);
     assert_eq!(v["uptime_sec"], 1234);
     assert_eq!(v["wifi_ssid"], "TestNet");
     assert_eq!(v["wifi_rssi_dbm"], -55);
@@ -369,6 +370,69 @@ fn test_post_action_unlock_dispatches_command() {
     assert!(result.is_ok());
     assert!(stream.written_str().contains("HTTP/1.1 200 "));
     assert_eq!(cmd_channel.try_receive(), Ok(AccessCommand::Unlock));
+}
+
+#[test]
+fn test_post_action_door_duration_valid() {
+    // Arrange
+    let cmd_channel = CommandChannel::new();
+    let access_handle = AccessControllerHandle::new(cmd_channel.sender());
+    let hardware = MockHardwareInfo;
+    let state_watch = SystemStateWatch::new();
+    state_watch.sender().send(SystemState::Operational);
+    let diagnostics = DiagnosticsService::new(&hardware, &state_watch);
+    let mut ota_driver = MockOtaFlashDriver::new(false);
+    let mut server = HttpServer::new_unbound(
+        access_handle,
+        &diagnostics,
+        &mut ota_driver,
+        test_log_provider,
+        HttpServerConfig::default(),
+    );
+    let mut stream = MockStream::new(
+        b"POST /api/action/door-duration?seconds=7 HTTP/1.1\r\nHost: 192.168.1.142\r\n\r\n",
+    );
+
+    // Act
+    let result = block_on(server.handle_request(&mut stream));
+
+    // Assert
+    assert!(result.is_ok());
+    assert!(stream.written_str().contains("HTTP/1.1 200 "));
+    assert_eq!(
+        cmd_channel.try_receive(),
+        Ok(AccessCommand::SetUnlockDuration(7))
+    );
+}
+
+#[test]
+fn test_post_action_door_duration_invalid_range() {
+    // Arrange
+    let cmd_channel = CommandChannel::new();
+    let access_handle = AccessControllerHandle::new(cmd_channel.sender());
+    let hardware = MockHardwareInfo;
+    let state_watch = SystemStateWatch::new();
+    state_watch.sender().send(SystemState::Operational);
+    let diagnostics = DiagnosticsService::new(&hardware, &state_watch);
+    let mut ota_driver = MockOtaFlashDriver::new(false);
+    let mut server = HttpServer::new_unbound(
+        access_handle,
+        &diagnostics,
+        &mut ota_driver,
+        test_log_provider,
+        HttpServerConfig::default(),
+    );
+    let mut stream = MockStream::new(
+        b"POST /api/action/door-duration?seconds=0 HTTP/1.1\r\nHost: 192.168.1.142\r\n\r\n",
+    );
+
+    // Act
+    let result = block_on(server.handle_request(&mut stream));
+
+    // Assert
+    assert!(result.is_ok());
+    assert!(stream.written_str().contains("HTTP/1.1 400 "));
+    assert!(cmd_channel.try_receive().is_err());
 }
 
 #[test]

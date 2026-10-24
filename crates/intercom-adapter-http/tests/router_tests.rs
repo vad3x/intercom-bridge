@@ -62,6 +62,32 @@ fn test_parse_route_actions() {
 }
 
 #[test]
+fn parse_route_action_door_duration() {
+    assert_eq!(
+        parse_route("POST /api/action/door-duration?seconds=7 HTTP/1.1"),
+        Route::ActionSetDoorDuration(7)
+    );
+    assert_eq!(
+        parse_route("POST /api/action/door-duration?seconds=0 HTTP/1.1"),
+        Route::NotFound
+    );
+    assert_eq!(
+        parse_route("POST /api/action/door-duration?seconds=35 HTTP/1.1"),
+        Route::NotFound
+    );
+}
+
+#[test]
+fn format_status_json_includes_door_unlock_duration() {
+    let mut diag = test_diagnostics();
+    diag.domain.door_unlock_duration_sec = 8;
+    let mut buf = [0u8; 1024];
+    let len = format_status_json(&diag, &mut buf).unwrap();
+    let json = core::str::from_utf8(&buf[..len]).unwrap();
+    assert!(json.contains("\"door_unlock_duration_sec\":8"));
+}
+
+#[test]
 fn test_parse_route_action_reset_matter() {
     // Arrange
     let req = "POST /api/action/reset/matter HTTP/1.1\r\nHost: 192.168.1.142\r\n\r\n";
@@ -121,6 +147,31 @@ fn test_parse_route_not_found_on_unknown_or_wrong_method() {
     assert_eq!(r5, Route::NotFound);
 }
 
+fn test_diagnostics() -> SystemDiagnostics<IntercomState, intercom_core::domain::EcosystemId> {
+    SystemDiagnostics {
+        device_type: "intercom_bridge",
+        state: SystemState::Operational,
+        domain: IntercomState {
+            door_locked: true,
+            door_unlock_duration_sec: intercom_core::config::DEFAULT_DOOR_UNLOCK_DURATION_SEC,
+        },
+        uptime_sec: 14250,
+        wifi_ssid: intercom_core::domain::diagnostics::WifiSsid::new("MyHomeNetwork"),
+        wifi_rssi_dbm: Some(-58),
+        ip: Some([192, 168, 1, 142]),
+        mac: [0x68, 0xB6, 0xB3, 0x21, 0x40, 0x8C],
+        active_slot: "ota_0",
+        slot_valid: true,
+        free_heap_bytes: 151552,
+        total_heap_bytes: 215040,
+        available_ecosystems: &[],
+        active_ecosystem: None,
+        version: "0.1.0",
+        git_commit: "a3f89b",
+        build_date: "2026-10-15",
+    }
+}
+
 #[test]
 fn test_format_status_json_success() {
     // Arrange
@@ -163,7 +214,10 @@ fn test_format_status_json_success() {
     let diag = SystemDiagnostics::<IntercomState, intercom_core::domain::EcosystemId> {
         device_type: "intercom_bridge",
         state: SystemState::Operational,
-        domain: IntercomState { door_locked: true },
+        domain: IntercomState {
+            door_locked: true,
+            door_unlock_duration_sec: 5,
+        },
         uptime_sec: 14250,
         wifi_ssid: intercom_core::domain::diagnostics::WifiSsid::new("MyHomeNetwork"),
         wifi_rssi_dbm: Some(-58),
@@ -190,6 +244,7 @@ fn test_format_status_json_success() {
     assert_eq!(val["device_type"], "intercom_bridge");
     assert_eq!(val["state"], "Operational");
     assert_eq!(val["door_locked"], true);
+    assert_eq!(val["door_unlock_duration_sec"], 5);
     assert_eq!(val["uptime_sec"], 14250);
     assert_eq!(val["wifi_ssid"], "MyHomeNetwork");
     assert_eq!(val["wifi_rssi_dbm"], -58);
@@ -246,7 +301,10 @@ fn test_format_status_json_with_multiple_fabrics() {
     let diag = SystemDiagnostics::<IntercomState, intercom_core::domain::EcosystemId> {
         device_type: "intercom_bridge",
         state: SystemState::Operational,
-        domain: IntercomState { door_locked: true },
+        domain: IntercomState {
+            door_locked: true,
+            door_unlock_duration_sec: 5,
+        },
         uptime_sec: 100,
         wifi_ssid: None,
         wifi_rssi_dbm: None,
@@ -293,7 +351,10 @@ fn test_format_status_json_with_none_options() {
     let diag = SystemDiagnostics::<IntercomState, intercom_core::domain::EcosystemId> {
         device_type: "intercom_bridge",
         state: SystemState::WifiConnecting,
-        domain: IntercomState { door_locked: false },
+        domain: IntercomState {
+            door_locked: false,
+            door_unlock_duration_sec: 5,
+        },
         uptime_sec: 42,
         wifi_ssid: None,
         wifi_rssi_dbm: None,
@@ -342,7 +403,10 @@ fn test_format_status_json_buffer_overflow_protection() {
     let diag = SystemDiagnostics::<IntercomState, intercom_core::domain::EcosystemId> {
         device_type: "intercom_bridge",
         state: SystemState::Operational,
-        domain: IntercomState { door_locked: true },
+        domain: IntercomState {
+            door_locked: true,
+            door_unlock_duration_sec: 5,
+        },
         uptime_sec: 14250,
         wifi_ssid: intercom_core::domain::diagnostics::WifiSsid::new("MyHomeNetwork"),
         wifi_rssi_dbm: Some(-58),

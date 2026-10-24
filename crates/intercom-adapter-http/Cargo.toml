@@ -11,6 +11,7 @@ embassy-net = { workspace = true, features = ["tcp", "proto-ipv4", "medium-ether
 embassy-time = { workspace = true }
 intercom-core = { path = "../intercom-core" }
 log = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
 serde-json-core = { workspace = true }
 picoserve = { workspace = true, default-features = false, features = ["embassy", "alloc", "log"] }
 
