@@ -1,7 +1,6 @@
+import { Badge, Card, CardBody, CardTitle } from '@embedded-device-foundation/dashboard-core';
 import { Bell, Loader2, Lock, Sparkles, Unlock } from 'lucide-solid';
 import type { Component } from 'solid-js';
-import { Badge } from './ui/Badge';
-import { Card, CardBody, CardTitle } from './ui/Card';
 
 export interface IntercomControlsProps {
   doorLocked: boolean | undefined;

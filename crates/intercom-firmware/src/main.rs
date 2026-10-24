@@ -61,9 +61,9 @@ use intercom_core::ports::inbound::{AccessControllerHandle, CommandChannel};
 use intercom_core::service::DiagnosticsService;
 
 #[cfg(target_arch = "riscv32")]
-use intercom_adapter_http::{HttpServer, HttpServerConfig};
-#[cfg(target_arch = "riscv32")]
 use edf_ota::driver::FlashOtaDriver;
+#[cfg(target_arch = "riscv32")]
+use intercom_adapter_http::{HttpServer, HttpServerConfig};
 
 #[cfg(target_arch = "riscv32")]
 use intercom_adapter_gpio::boot_button::{GpioBootButtonConfig, GpioBootButtonDriver};
@@ -122,7 +122,10 @@ pub fn custom_halt() -> ! {
 #[cfg(target_arch = "riscv32")]
 #[esp_rtos::main]
 async fn main(_spawner: Spawner) {
-    utils::uptime_logger::init(log::LevelFilter::Info);
+    if let Err(error) = utils::uptime_logger::init(log::LevelFilter::Info) {
+        esp_println::println!("Failed to initialize uptime logger: {error:?}");
+        custom_halt();
+    }
 
     info!(
         "Smart Intercom v{} (build: {}, date: {}, rev: {})",
@@ -167,9 +170,7 @@ async fn main(_spawner: Spawner) {
         access: access_handle,
         readiness,
     });
-    let occupancy = IntercomOccupancy::new(IntercomOccupancyConfig {
-        readiness,
-    });
+    let occupancy = IntercomOccupancy::new(IntercomOccupancyConfig { readiness });
 
     // ========================================================================
     // Matter controller — register cluster handlers via builder
@@ -215,7 +216,8 @@ async fn main(_spawner: Spawner) {
     let door = GpioDoorDriver::new(GpioDoorConfig::new(peripherals.GPIO18));
 
     static INDICATOR: StaticCell<GpioLedDriver> = StaticCell::new();
-    let indicator: &'static GpioLedDriver = &*INDICATOR.init(GpioLedDriver::new(peripherals.GPIO19));
+    let indicator: &'static GpioLedDriver =
+        &*INDICATOR.init(GpioLedDriver::new(peripherals.GPIO19));
 
     let access_driver = MatterAccessControlDriver::new(&door_lock, &occupancy);
     let reporter = (access_driver, indicator);
@@ -223,13 +225,7 @@ async fn main(_spawner: Spawner) {
         GpioBootButtonConfig::new(peripherals.GPIO9).with_indicator(indicator),
     );
 
-    let app = App::new(
-        ring,
-        door,
-        reporter,
-        boot_button,
-        FirmwareResetDriver,
-    );
+    let app = App::new(ring, door, reporter, boot_button, FirmwareResetDriver);
 
     info!("Smart Intercom Ready");
 

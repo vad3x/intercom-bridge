@@ -44,9 +44,5 @@ const fn parse_u32(s: &str) -> u32 {
 
 const fn match_bool(s: &str) -> bool {
     let bytes = s.as_bytes();
-    bytes.len() == 4
-        && bytes[0] == b't'
-        && bytes[1] == b'r'
-        && bytes[2] == b'u'
-        && bytes[3] == b'e'
+    bytes.len() == 4 && bytes[0] == b't' && bytes[1] == b'r' && bytes[2] == b'u' && bytes[3] == b'e'
 }

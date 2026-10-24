@@ -1,18 +1,13 @@
-import { Activity, Radio, Sliders, Terminal } from 'lucide-solid';
-import { type Component, createSignal, For, Match, onCleanup, onMount, Switch } from 'solid-js';
-import { DiagnosticsTab } from './components/DiagnosticsTab';
-import { EcosystemTab } from './components/EcosystemTab';
+import { Badge, DashboardShell, Toast } from '@embedded-device-foundation/dashboard-core';
+import { DoorClosed } from 'lucide-solid';
+import { createSignal, onCleanup, onMount } from 'solid-js';
+import { fetchLogs } from './api';
 import { IntercomControls } from './components/IntercomControls';
-import { LogsTab } from './components/LogsTab';
-import { Navbar } from './components/Navbar';
-import { Toast } from './components/Toast';
+import { IntercomEcosystemSupplementalPanel } from './components/IntercomEcosystemSupplementalPanel';
 import { createIntercomStore } from './store/intercomStore';
-
-type TabId = 'controls' | 'ecosystem' | 'diagnostics' | 'logs';
 
 export function App() {
   const store = createIntercomStore();
-  const [activeTab, setActiveTab] = createSignal<TabId>('controls');
   const [toastMsg, setToastMsg] = createSignal<string | null>(null);
   const [toastType, setToastType] = createSignal<'info' | 'success' | 'error'>('info');
 
@@ -25,6 +20,20 @@ export function App() {
     toastTimer = setTimeout(() => {
       setToastMsg(null);
     }, 2500);
+  };
+
+  const doorStatus = () => {
+    if (!store.status()) {
+      return {
+        variant: 'warning' as const,
+        dotClass: 'bg-warning animate-pulse',
+        text: 'connecting',
+      };
+    }
+    if (store.status()?.door_locked) {
+      return { variant: 'success' as const, dotClass: 'bg-success animate-pulse', text: 'locked' };
+    }
+    return { variant: 'warning' as const, dotClass: 'bg-warning animate-pulse', text: 'unlocked' };
   };
 
   const handleUnlock = async () => {
@@ -63,76 +72,39 @@ export function App() {
     onCleanup(() => clearInterval(interval));
   });
 
-  const tabs: {
-    id: TabId;
-    label: string;
-    icon: Component<{ class?: string }>;
-  }[] = [
-    { id: 'controls', label: 'Controls', icon: Sliders },
-    { id: 'ecosystem', label: 'Ecosystem', icon: Radio },
-    { id: 'diagnostics', label: 'Diagnostics', icon: Activity },
-    { id: 'logs', label: 'Logs', icon: Terminal },
-  ];
-
   return (
-    <div class="min-h-screen flex flex-col bg-base-300">
-      <Navbar status={store.status()} />
-
-      {/* Tabs Navigation */}
-      <nav class="bg-base-200 border-b border-base-content/10 px-4 sm:px-6">
-        <div class="flex gap-1 overflow-x-auto max-w-4xl mx-auto">
-          <For each={tabs}>
-            {(t) => {
-              const Icon = t.icon;
-              const isActive = () => activeTab() === t.id;
-              return (
-                <button
-                  type="button"
-                  class={`flex items-center gap-2 py-3 px-4 font-semibold text-sm border-b-2 transition-colors whitespace-nowrap ${
-                    isActive()
-                      ? 'border-primary text-primary'
-                      : 'border-transparent text-base-content/60 hover:text-base-content'
-                  }`}
-                  onClick={() => setActiveTab(t.id)}
-                >
-                  <Icon class="w-4 h-4" />
-                  {t.label}
-                </button>
-              );
-            }}
-          </For>
-        </div>
-      </nav>
-
-      {/* Main Content Area */}
-      <main class="flex-1 max-w-4xl w-full mx-auto p-4 sm:p-6">
-        <Switch>
-          <Match when={activeTab() === 'controls'}>
-            <IntercomControls
-              doorLocked={store.status()?.door_locked}
-              isUnlocking={store.isUnlocking()}
-              isRinging={store.isRinging()}
-              onUnlock={handleUnlock}
-              onRing={handleRing}
-            />
-          </Match>
-          <Match when={activeTab() === 'ecosystem'}>
-            <EcosystemTab
-              ecosystem={store.status()?.active_ecosystem}
-              onResetMatter={handleResetMatter}
-              isResettingMatter={store.isResettingMatter()}
-            />
-          </Match>
-          <Match when={activeTab() === 'diagnostics'}>
-            <DiagnosticsTab status={store.status()} />
-          </Match>
-          <Match when={activeTab() === 'logs'}>
-            <LogsTab />
-          </Match>
-        </Switch>
-      </main>
-
-      <Toast message={toastMsg()} type={toastType()} />
-    </div>
+    <DashboardShell
+      title="Intercom Bridge"
+      brandIcon={<DoorClosed class="w-5 h-5" />}
+      badges={
+        <Badge variant={doorStatus().variant}>
+          <span class={`w-2 h-2 rounded-full ${doorStatus().dotClass}`} />
+          <span class="lowercase">door:</span>
+          <span class="normal-case">{doorStatus().text}</span>
+        </Badge>
+      }
+      controlTab={
+        <IntercomControls
+          doorLocked={store.status()?.door_locked}
+          isUnlocking={store.isUnlocking()}
+          isRinging={store.isRinging()}
+          onUnlock={handleUnlock}
+          onRing={handleRing}
+        />
+      }
+      status={store.status()}
+      themeStorageKey="intercom_theme"
+      subscriptionRows={[
+        { label: '🔒 Door Lock (EP1)', propertyKey: 'door_lock_subscribed' },
+        { label: '🔔 Chime / Ring (EP2)', propertyKey: 'ring_sensor_subscribed' },
+      ]}
+      tabOrder={['controls', 'ecosystem', 'diagnostics', 'logs']}
+      endpointIcon={(endpoint) => (endpoint.id === 1 ? '🔒 ' : endpoint.id === 2 ? '🔔 ' : '')}
+      supplementalPanel={<IntercomEcosystemSupplementalPanel />}
+      onResetMatter={handleResetMatter}
+      isResettingMatter={store.isResettingMatter()}
+      loadLogs={fetchLogs}
+      toast={<Toast message={toastMsg()} type={toastType()} />}
+    />
   );
 }

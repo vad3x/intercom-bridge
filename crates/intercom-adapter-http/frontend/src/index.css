@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@source "../../../../../embedded-device-foundation/packages/dashboard-core/src";
 @plugin "daisyui" {
   themes:
     night --default,

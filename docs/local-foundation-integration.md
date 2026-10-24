@@ -1,8 +1,10 @@
 # Local foundation integration
 
 The host pairing tool and `intercom-core` consume crates from a sibling checkout
-of `embedded-device-foundation`. The validated foundation revision is
-`8e9d2a9cd72c356a96c2ead37d9311ed4a56e774`.
+of `embedded-device-foundation`. The latest integration verification used
+Foundation HEAD `51087f4957c950670e6538ec056c11cb74ecaecb` plus the local working
+tree patch with SHA-256
+`f2bf66d264e40b4517950b9e9d9e142fee8a8accc075902f087aca532d2b9042`.
 The source checkout used here is
 `/Users/vadim/personal/projects/embedded-device-foundation`.
 
@@ -22,9 +24,12 @@ layout is required on every build machine.
 
 This is an unpinned local path dependency. Cargo.lock records the local
 package versions and dependency graph, but it does not fix the foundation Git
-revision. Check out `8e9d2a9cd72c356a96c2ead37d9311ed4a56e774` when reproducing
-these results and review future
-foundation changes before updating this integration.
+revision. The verified working tree includes seven modified logger/dashboard
+files, so the HEAD commit alone does not reproduce the shared APIs used here.
+Preserve or apply the exact Foundation patch above when reproducing the latest
+logger/dashboard results, and review future Foundation changes before updating
+this integration. Earlier sections below retain their original revision values
+as historical stage records.
 
 ## Pairing generation
 
@@ -209,16 +214,56 @@ host test. This is a host and cross-compilation verification only: no physical
 device, firmware flash, OTA upload, private key, or hardware behavior was
 exercised.
 
+## Logger and dashboard integration (latest verification)
+
+The logger and dashboard migrations are now implemented in the Intercom
+consumer. The logger composes `edf-logger` with Intercom-owned uptime, UART
+formatting, severity colors, filters, and HTTP callback. The dashboard composes
+`DashboardShell` with local door/chime controls and its consumer-owned
+supplemental panel. OTA, key-generation, monitor, QR, and `cargo fe-*` wrappers
+remain consumer-owned and unchanged, per the approved option 2.
+An inline firmware test now exercises the public buffered-log callback against
+the HTTP adapter's 4 KiB read window, including retention of the newest bytes
+after the 6 KiB logger ring wraps.
+
+The Tailwind `@source` path now scans the sibling Foundation package correctly.
+A focused generated-asset test failed before the correction because the
+embedded style block lacked `.min-h-screen` and `.max-w-4xl`, then passed after
+rebuilding the single-file dashboard. The Intercom asset is 152,542 bytes; its
+35,590-byte gzip payload decompresses byte-for-byte to the asset and is embedded
+in the release ELF.
+
+| Gate | Command/result | Outcome |
+|------|---------------|---------|
+| Host packages | `cargo test -p intercom-core -p intercom-adapter-http -p intercom-adapter-ota -p intercom-pairing-tool --target x86_64-apple-darwin --locked --offline` | 89 passed |
+| Firmware host library | `cargo test -p intercom-firmware --lib --target x86_64-apple-darwin --locked --offline` | 6 passed |
+| Partitioned KVS | `cargo test -p intercom-firmware --test partitioned_kv_tests --target x86_64-apple-darwin --locked --offline` | 8 passed |
+| Strict core Clippy | `cargo clippy -p intercom-core --all-targets --target x86_64-apple-darwin --locked --offline -- -D warnings` | passed |
+| Frontend | TypeScript, Biome, generated-asset Bun test, production Vite build | passed; test 1/1 |
+| Firmware release | `cargo build -p intercom-firmware --release --target riscv32imac-unknown-none-elf --locked --offline` | passed |
+| OTA slot image | `espflash save-image --chip esp32c6 --flash-size 8mb` | 2,224,416 / 3,473,408 bytes (64.04%), fits |
+| Formatting / scope | changed Rust files with `rustfmt --check`; `git diff --check`; scripts and `.cargo` unchanged | passed |
+
+The canonical frontend build wrapper attempted to rebuild Foundation and was
+blocked by the sandbox's read-only Foundation path (`EPERM` creating
+`node_modules/.vite-temp`). The consumer TypeScript, lint, test, and Vite build
+were run directly against the already-built Foundation `dist`; no Foundation
+files were changed. These are host and cross-compilation results only. No
+browser interaction, hardware, serial device, private key, device network,
+flash, or OTA upload was exercised.
+
 ## Remaining migration scope
 
-Stage A, the Matter identity/runtime slice, and the GPIO product wrapper slice
-do not complete the foundation integration. Follow-on slices remain, each
-requiring an audit and plan against the actual foundation interfaces:
+The local foundation migrations for the current Intercom and HVAC consumers are
+complete through logger and dashboard composition. Follow-on scope is limited
+to optional host-script sharing, which remains deferred because the consumers'
+existing script behavior differs:
 
 1. OTA driver, OTA port, and HTTP error mapping together. *(done)*
 2. Diagnostics and HTTP payload integration. *(done)*
-3. Dashboard composition. *(reviewed; current embedded asset flow aligns with foundation build patterns)*
-4. Host script wrappers. *(reviewed; Intercom-specific scripts remain necessary for product behavior)*
+3. Dashboard composition. *(done; shared CSS rules are verified in the generated asset)*
+4. Host script wrappers. *(deferred by user choice; scripts remain consumer-owned)*
 
-Finish Intercom before applying the validated approach to HVAC. Publishing,
-remote creation, submodules, and `.gitmodules` changes remain out of scope.
+Publishing, remote creation, submodules, and `.gitmodules` changes remain out of
+scope. The Intercom consumer changes remain uncommitted in the existing dirty
+checkout so the concurrent work already there is preserved.

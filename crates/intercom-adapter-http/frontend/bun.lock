@@ -5,6 +5,7 @@
     "": {
       "name": "intercom-dashboard",
       "dependencies": {
+        "@embedded-device-foundation/dashboard-core": "file:../../../../embedded-device-foundation/packages/dashboard-core",
         "clsx": "2.1.1",
         "lucide-solid": "1.61.0",
         "solid-js": "1.9.17",
@@ -84,6 +85,8 @@
     "@biomejs/cli-win32-arm64": ["@biomejs/cli-win32-arm64@2.6.2", "", { "os": "win32", "cpu": "arm64" }, "sha512-/PEOo6evlgrQOfKhMNtC/4Gk8ai3hySXXEtjUzCqZe/4iAbMdqelpp7qvZEDyLxlZS+BjOMQFpq2gXI/BPaAqw=="],
 
     "@biomejs/cli-win32-x64": ["@biomejs/cli-win32-x64@2.6.2", "", { "os": "win32", "cpu": "x64" }, "sha512-FVlWD+mDDz8nN5LWKRWUhhb7wKIK0VE3oXQvQBX7Fwwj00CvqMVhMyiz1iz8O5aZGmnkhFlKSwJPrUvMh5prQw=="],
+
+    "@embedded-device-foundation/dashboard-core": ["@embedded-device-foundation/dashboard-core@file:../../../../embedded-device-foundation/packages/dashboard-core", { "dependencies": { "clsx": "2.1.1", "lucide-solid": "1.61.0", "tailwind-merge": "3.7.0" }, "devDependencies": { "@biomejs/biome": "2.6.2", "@tailwindcss/postcss": "4.3.3", "autoprefixer": "10.6.1", "daisyui": "5.7.50", "postcss": "8.5.31", "solid-js": "1.9.17", "tailwindcss": "4.3.3", "typescript": "7.0.2", "vite": "8.3.5", "vite-plugin-singlefile": "2.3.4", "vite-plugin-solid": "2.11.14" }, "peerDependencies": { "solid-js": "1.9.17" } }],
 
     "@jridgewell/gen-mapping": ["@jridgewell/gen-mapping@0.3.13", "", { "dependencies": { "@jridgewell/sourcemap-codec": "^1.5.0", "@jridgewell/trace-mapping": "^0.3.24" } }, "sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA=="],
 

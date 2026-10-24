@@ -1084,6 +1084,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "edf-logger"
+version = "0.1.0"
+dependencies = [
+ "critical-section",
+ "log",
+]
+
+[[package]]
 name = "edf-matter"
 version = "0.1.0"
 dependencies = [
@@ -2577,6 +2585,7 @@ name = "intercom-firmware"
 version = "0.1.0"
 dependencies = [
  "critical-section",
+ "edf-logger",
  "edf-matter",
  "edf-ota",
  "embassy-executor",

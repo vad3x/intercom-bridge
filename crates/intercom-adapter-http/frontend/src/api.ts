@@ -1,19 +1,27 @@
+import { createDashboardApi } from '@embedded-device-foundation/dashboard-core';
 import type { SystemDiagnostics } from './types';
 
-export async function fetchStatus(): Promise<SystemDiagnostics> {
-  const res = await fetch('/api/status');
-  if (!res.ok) {
-    throw new Error(`HTTP error ${res.status}`);
+const dashboardApi = createDashboardApi<SystemDiagnostics>();
+
+async function preserveHttpError<T>(
+  request: () => Promise<T>,
+  format: (status: number) => string,
+): Promise<T> {
+  try {
+    return await request();
+  } catch (error: unknown) {
+    const match = error instanceof Error ? /^HTTP (\d+):/.exec(error.message) : null;
+    if (!match) throw error;
+    throw new Error(format(Number(match[1])));
   }
-  return res.json();
+}
+
+export async function fetchStatus(): Promise<SystemDiagnostics> {
+  return preserveHttpError(dashboardApi.fetchStatus, (status) => `HTTP error ${status}`);
 }
 
 export async function fetchLogs(): Promise<string> {
-  const res = await fetch('/api/logs');
-  if (!res.ok) {
-    throw new Error(`HTTP error ${res.status}`);
-  }
-  return res.text();
+  return preserveHttpError(dashboardApi.fetchLogs, (status) => `HTTP error ${status}`);
 }
 
 export async function triggerUnlock(): Promise<void> {
@@ -31,8 +39,8 @@ export async function triggerRing(): Promise<void> {
 }
 
 export async function resetMatterKvs(): Promise<void> {
-  const res = await fetch('/api/action/reset/matter', { method: 'POST' });
-  if (!res.ok) {
-    throw new Error(`Matter KVS reset failed: HTTP ${res.status}`);
-  }
+  return preserveHttpError(
+    dashboardApi.resetMatterKvs,
+    (status) => `Matter KVS reset failed: HTTP ${status}`,
+  );
 }
