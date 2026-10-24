@@ -20,6 +20,7 @@
 ### Task 1: Core Domain Access State Machine & Ports (`intercom-core`)
 
 **Files:**
+- Modify: `crates/intercom-core/src/config.rs`
 - Modify: `crates/intercom-core/src/domain/access.rs`
 - Modify: `crates/intercom-core/src/ports/inbound.rs`
 - Modify: `crates/intercom-core/src/ports/mod.rs`
@@ -30,6 +31,11 @@
 
 **Interfaces:**
 - Produces:
+  - `config::MIN_DOOR_UNLOCK_DURATION_SEC = 1`
+  - `config::MAX_DOOR_UNLOCK_DURATION_SEC = 30`
+  - `config::DEFAULT_DOOR_UNLOCK_DURATION_SEC = 5`
+  - `config::is_valid_door_unlock_duration(duration_sec: u32) -> bool`
+  - `config::clamp_door_unlock_duration(duration_sec: u32) -> u32`
   - `AccessStateMachine::with_duration(unlock_duration_sec: u32) -> Self`
   - `AccessStateMachine::unlock_duration_sec(&self) -> u32`
   - `AccessCommand::SetUnlockDuration(u32)`
@@ -76,18 +82,49 @@ fn access_state_machine_clamps_duration_to_bounds() {
 Run: `mise exec -- cargo test -p intercom-core --test service_tests --target x86_64-apple-darwin`
 Expected: FAIL with missing fields/methods on `AccessStateMachine` and `AccessCommand`.
 
-- [ ] **Step 3: Implement domain state machine and port updates**
+- [ ] **Step 3: Implement domain state machine, config constants, and port updates**
+
+In `crates/intercom-core/src/config.rs`:
+Add shared validation and boundary constants:
+```rust
+pub const MIN_DOOR_UNLOCK_DURATION_SEC: u32 = 1;
+pub const MAX_DOOR_UNLOCK_DURATION_SEC: u32 = 30;
+pub const DEFAULT_DOOR_UNLOCK_DURATION_SEC: u32 = 5;
+
+pub const fn is_valid_door_unlock_duration(duration_sec: u32) -> bool {
+    duration_sec >= MIN_DOOR_UNLOCK_DURATION_SEC && duration_sec <= MAX_DOOR_UNLOCK_DURATION_SEC
+}
+
+pub const fn clamp_door_unlock_duration(duration_sec: u32) -> u32 {
+    if duration_sec < MIN_DOOR_UNLOCK_DURATION_SEC {
+        MIN_DOOR_UNLOCK_DURATION_SEC
+    } else if duration_sec > MAX_DOOR_UNLOCK_DURATION_SEC {
+        MAX_DOOR_UNLOCK_DURATION_SEC
+    } else {
+        duration_sec
+    }
+}
+```
 
 In `crates/intercom-core/src/domain/access.rs`:
 - Add `unlock_duration_sec: u32` to `AccessStateMachine`.
-- In `AccessStateMachine::new()`, default `unlock_duration_sec: 5`.
-- Add `pub const fn with_duration(mut self, duration_sec: u32) -> Self` clamping to `1..=30`.
+- In `AccessStateMachine::new()`, default `unlock_duration_sec: crate::config::DEFAULT_DOOR_UNLOCK_DURATION_SEC`.
+- Add `pub const fn with_duration(mut self, duration_sec: u32) -> Self`:
+  `self.unlock_duration_sec = crate::config::clamp_door_unlock_duration(duration_sec); self`
 - Add `pub const fn unlock_duration_sec(&self) -> u32 { self.unlock_duration_sec }`.
 - In `handle_unlock(&mut self, now_ms: u64)`:
   `self.relock_deadline_ms = Some(now_ms + (self.unlock_duration_sec as u64 * 1000));`
 - Add `pub report_duration: Option<u32>` to `AccessEffects`.
 - In `handle_command`:
-  Handle `AccessCommand::SetUnlockDuration(sec)`: clamp to `1..=30`, set `self.unlock_duration_sec = clamped`, return `AccessEffects { report_duration: Some(clamped), ..Default::default() }`.
+  Handle `AccessCommand::SetUnlockDuration(sec)`:
+  ```rust
+  let clamped = crate::config::clamp_door_unlock_duration(sec);
+  self.unlock_duration_sec = clamped;
+  AccessEffects {
+      report_duration: Some(clamped),
+      ..Default::default()
+  }
+  ```
 
 In `crates/intercom-core/src/ports/inbound.rs`:
 - Add `SetUnlockDuration(u32)` to `AccessCommand`.
@@ -290,15 +327,20 @@ In `crates/intercom-firmware/src/reset.rs`:
       match store.load(crate::config::DOOR_DURATION_KEY, &mut buf) {
           Ok(Some(slice)) if slice.len() >= 4 => {
               let val = u32::from_le_bytes(slice[..4].try_into().unwrap());
-              if (1..=30).contains(&val) { val } else { crate::config::DEFAULT_DOOR_DURATION_SEC }
+              if intercom_core::config::is_valid_door_unlock_duration(val) {
+                  val
+              } else {
+                  intercom_core::config::DEFAULT_DOOR_UNLOCK_DURATION_SEC
+              }
           }
-          _ => crate::config::DEFAULT_DOOR_DURATION_SEC,
+          _ => intercom_core::config::DEFAULT_DOOR_UNLOCK_DURATION_SEC,
       }
   }
 
   pub fn save_door_duration<S: rs_matter::persist::KvBlobStore>(store: &mut S, duration_sec: u32) -> Result<(), ()> {
       let mut buf = [0u8; 8];
-      let bytes = duration_sec.to_le_bytes();
+      let clamped = intercom_core::config::clamp_door_unlock_duration(duration_sec);
+      let bytes = clamped.to_le_bytes();
       store.store(crate::config::DOOR_DURATION_KEY, &bytes, &mut buf).map_err(|_| ())
   }
   ```
@@ -339,7 +381,7 @@ In `crates/intercom-adapter-matter/src/door_lock.rs`:
 - Add public method:
   ```rust
   pub fn set_unlock_duration(&self, duration_sec: u32) {
-      let clamped = duration_sec.clamp(1, 30);
+      let clamped = intercom_core::config::clamp_door_unlock_duration(duration_sec);
       let prev = self.unlock_duration_sec.swap(clamped, Ordering::SeqCst);
       if prev != clamped {
           info!("Door lock auto-relock duration updated: {}s -> {}s", prev, clamped);
@@ -358,7 +400,7 @@ In `crates/intercom-adapter-matter/src/door_lock.rs`:
   ```rust
   x if x == door_lock::AttributeId::AutoRelockTime as u16 => {
       let val = ctx.data().u32().map_err(|_| ErrorCode::InvalidDataType)?;
-      if !(1..=30).contains(&val) {
+      if !intercom_core::config::is_valid_door_unlock_duration(val) {
           return Err(ErrorCode::ConstraintError.into());
       }
       self.unlock_duration_sec.store(val, Ordering::Relaxed);
@@ -470,7 +512,7 @@ In `crates/intercom-adapter-http/src/router.rs`:
   ```
 - In `parse_route`:
   Parse `POST /api/action/door-duration`:
-  Extract query param `seconds=N`. Parse as `u32`. If `1..=30`, return `Route::ActionSetDoorDuration(N)`, else `Route::NotFound`.
+  Extract query param `seconds=N`. Parse as `u32`. If `intercom_core::config::is_valid_door_unlock_duration(N)`, return `Route::ActionSetDoorDuration(N)`, else `Route::NotFound`.
 - In `IntercomPayload::write_fields`:
   ```rust
   write!(
@@ -495,7 +537,7 @@ In `crates/intercom-adapter-http/src/server.rs`:
       picoserve::routing::post(
           |picoserve::extract::State(state): picoserve::extract::State<AppState<'a, H, E, O, T>>,
            picoserve::extract::Query(query): picoserve::extract::Query<DoorDurationQuery>| async move {
-              if (1..=30).contains(&query.seconds) {
+              if intercom_core::config::is_valid_door_unlock_duration(query.seconds) {
                   let _ = state.access_handle.set_unlock_duration(query.seconds);
                   picoserve::response::Response::ok("{\"status\":\"ok\"}")
                       .with_content_type("application/json")
@@ -541,6 +583,10 @@ git commit -m "feat(http): add /api/action/door-duration endpoint and status ser
 
 In `crates/intercom-adapter-http/frontend/src/types.ts`:
 ```typescript
+export const MIN_DOOR_UNLOCK_DURATION_SEC = 1;
+export const MAX_DOOR_UNLOCK_DURATION_SEC = 30;
+export const DEFAULT_DOOR_UNLOCK_DURATION_SEC = 5;
+
 export interface IntercomStatus {
   door_locked: boolean;
   door_unlock_duration_sec?: number;
@@ -560,12 +606,13 @@ export async function setDoorUnlockDuration(seconds: number): Promise<void> {
 - [ ] **Step 2: Add duration state and handler in `intercomStore.ts`**
 
 In `crates/intercom-adapter-http/frontend/src/store/intercomStore.ts`:
-- Expose `doorUnlockDurationSec: () => number` (default 5).
+- Expose `doorUnlockDurationSec: () => number` (default `DEFAULT_DOOR_UNLOCK_DURATION_SEC`).
 - Add `updateDoorUnlockDuration(seconds: number): Promise<void>` that optimistically updates the local duration and calls `api.setDoorUnlockDuration(seconds)`.
 
 - [ ] **Step 3: Add stepper controls to `IntercomControls.tsx`**
 
 In `crates/intercom-adapter-http/frontend/src/components/IntercomControls.tsx`:
+- Import `MIN_DOOR_UNLOCK_DURATION_SEC`, `MAX_DOOR_UNLOCK_DURATION_SEC`, `DEFAULT_DOOR_UNLOCK_DURATION_SEC` from `../types`.
 - Add props:
   ```typescript
   export interface IntercomControlsProps {
@@ -588,19 +635,19 @@ In `crates/intercom-adapter-http/frontend/src/components/IntercomControls.tsx`:
         <button
           type="button"
           class="join-item btn btn-xs btn-ghost px-2 font-bold"
-          disabled={props.isUnlocking || (props.doorUnlockDurationSec ?? 5) <= 1}
-          onClick={() => props.onDurationChange?.((props.doorUnlockDurationSec ?? 5) - 1)}
+          disabled={props.isUnlocking || (props.doorUnlockDurationSec ?? DEFAULT_DOOR_UNLOCK_DURATION_SEC) <= MIN_DOOR_UNLOCK_DURATION_SEC}
+          onClick={() => props.onDurationChange?.((props.doorUnlockDurationSec ?? DEFAULT_DOOR_UNLOCK_DURATION_SEC) - 1)}
         >
           -
         </button>
         <span class="join-item px-2.5 py-0.5 text-xs font-mono font-bold flex items-center bg-base-200">
-          {(props.doorUnlockDurationSec ?? 5)}s
+          {(props.doorUnlockDurationSec ?? DEFAULT_DOOR_UNLOCK_DURATION_SEC)}s
         </span>
         <button
           type="button"
           class="join-item btn btn-xs btn-ghost px-2 font-bold"
-          disabled={props.isUnlocking || (props.doorUnlockDurationSec ?? 5) >= 30}
-          onClick={() => props.onDurationChange?.((props.doorUnlockDurationSec ?? 5) + 1)}
+          disabled={props.isUnlocking || (props.doorUnlockDurationSec ?? DEFAULT_DOOR_UNLOCK_DURATION_SEC) >= MAX_DOOR_UNLOCK_DURATION_SEC}
+          onClick={() => props.onDurationChange?.((props.doorUnlockDurationSec ?? DEFAULT_DOOR_UNLOCK_DURATION_SEC) + 1)}
         >
           +
         </button>

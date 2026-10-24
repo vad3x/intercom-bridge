@@ -52,8 +52,30 @@ matter_kvs,   data, nvs,     0x6c2000, 0x6000,
 
 ### 3.1 Domain Core (`intercom-core`)
 
+#### Domain Configuration (`config.rs`)
+Single source of truth for duration policy and shared validation:
+```rust
+pub const MIN_DOOR_UNLOCK_DURATION_SEC: u32 = 1;
+pub const MAX_DOOR_UNLOCK_DURATION_SEC: u32 = 30;
+pub const DEFAULT_DOOR_UNLOCK_DURATION_SEC: u32 = 5;
+
+pub const fn is_valid_door_unlock_duration(duration_sec: u32) -> bool {
+    duration_sec >= MIN_DOOR_UNLOCK_DURATION_SEC && duration_sec <= MAX_DOOR_UNLOCK_DURATION_SEC
+}
+
+pub const fn clamp_door_unlock_duration(duration_sec: u32) -> u32 {
+    if duration_sec < MIN_DOOR_UNLOCK_DURATION_SEC {
+        MIN_DOOR_UNLOCK_DURATION_SEC
+    } else if duration_sec > MAX_DOOR_UNLOCK_DURATION_SEC {
+        MAX_DOOR_UNLOCK_DURATION_SEC
+    } else {
+        duration_sec
+    }
+}
+```
+
 #### `AccessStateMachine` (`domain/access.rs`)
-- Tracks active `unlock_duration_sec: u32` (constrained to `1..=30`, default `5`).
+- Tracks active `unlock_duration_sec: u32` (clamped via `clamp_door_unlock_duration`, defaulting to `DEFAULT_DOOR_UNLOCK_DURATION_SEC`).
 - On `AccessCommand::Unlock`:
   ```rust
   self.relock_deadline_ms = Some(now_ms + (self.unlock_duration_sec as u64 * 1000));
@@ -65,7 +87,7 @@ matter_kvs,   data, nvs,     0x6c2000, 0x6000,
   }
   ```
 - New domain command: `AccessCommand::SetUnlockDuration(u32)`.
-  - Clamps/validates input against `1..=30`.
+  - Clamps via `clamp_door_unlock_duration(duration_sec)`.
   - Sets `self.unlock_duration_sec = duration_sec`.
   - Emits `AccessEffects { report_duration: Some(duration_sec), .. }`.
 - In `AccessController`:
