@@ -58,7 +58,7 @@ matter_kvs,   data, nvs,     0x6c2000, 0x6000,
   ```rust
   self.relock_deadline_ms = Some(now_ms + (self.unlock_duration_sec as u64 * 1000));
   AccessEffects {
-      trigger_unlock: Some(self.unlock_duration_sec * 1000),
+      trigger_unlock: true,
       report_lock: Some(LockState::Unlocked),
       report_ring: None,
       report_duration: None,
@@ -66,13 +66,20 @@ matter_kvs,   data, nvs,     0x6c2000, 0x6000,
   ```
 - New domain command: `AccessCommand::SetUnlockDuration(u32)`.
   - Clamps/validates input against `1..=30`.
-  - Emits `AccessEffects { report_duration: Some(new_duration), ... }`.
+  - Sets `self.unlock_duration_sec = duration_sec`.
+  - Emits `AccessEffects { report_duration: Some(duration_sec), .. }`.
+- In `AccessController`:
+  When handling `SetUnlockDuration(sec)`:
+  - Updates state machine.
+  - Calls `self.door.set_unlock_duration_ms(sec * 1000)`.
+  - Dispatches `report_unlock_duration` to reporter.
 
 #### Port Interfaces
 - **`DoorDriver` (`ports/mod.rs`)**:
   ```rust
   pub trait DoorDriver {
-      async fn trigger_unlock(&mut self, duration_ms: u32);
+      async fn trigger_unlock(&mut self);
+      fn set_unlock_duration_ms(&mut self, _duration_ms: u32) {}
   }
   ```
 - **`AccessControllerHandle` (`ports/inbound.rs`)**:
@@ -104,20 +111,27 @@ matter_kvs,   data, nvs,     0x6c2000, 0x6000,
 ### 3.2 Hardware Driver Adapter (`intercom-adapter-gpio`)
 
 #### `GpioDoorDriver` (`door.rs`)
-- Method signature updated:
+- `trigger_unlock(&mut self)` remains parameterless, using `self.config.unlock_pulse_ms` directly:
   ```rust
-  async fn trigger_unlock(&mut self, duration_ms: u32) {
-      if self.unlocking {
-          warn!("Unlock already in progress, ignoring");
-          return;
+  impl DoorDriver for GpioDoorDriver {
+      async fn trigger_unlock(&mut self) {
+          if self.unlocking {
+              warn!("Unlock already in progress, ignoring");
+              return;
+          }
+          info!("Unlock pulse start ({}ms)", self.config.unlock_pulse_ms);
+          self.unlocking = true;
+          self.config.pin.set_high();
+          Timer::after(Duration::from_millis(self.config.unlock_pulse_ms)).await;
+          self.config.pin.set_low();
+          self.unlocking = false;
+          info!("Unlock pulse end");
       }
-      info!("Unlock pulse start ({}ms)", duration_ms);
-      self.unlocking = true;
-      self.config.pin.set_high();
-      Timer::after(Duration::from_millis(duration_ms as u64)).await;
-      self.config.pin.set_low();
-      self.unlocking = false;
-      info!("Unlock pulse end");
+
+      fn set_unlock_duration_ms(&mut self, duration_ms: u32) {
+          info!("Updating unlock pulse duration: {}ms", duration_ms);
+          self.config.unlock_pulse_ms = duration_ms as u64;
+      }
   }
   ```
 
