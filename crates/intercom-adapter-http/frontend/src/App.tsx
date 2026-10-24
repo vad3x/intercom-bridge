@@ -1,9 +1,14 @@
-import { Badge, DashboardShell, Toast } from '@embedded-device-foundation/dashboard-core';
-import { DoorClosed } from 'lucide-solid';
+import {
+  Badge,
+  DashboardShell,
+  type EcosystemStrategy,
+  MatterEcosystemPanel,
+  Toast,
+} from '@embedded-device-foundation/dashboard-core';
+import { DoorClosed, Layers } from 'lucide-solid';
 import { createSignal, onCleanup, onMount } from 'solid-js';
 import { fetchLogs } from './api';
 import { IntercomControls } from './components/IntercomControls';
-import { IntercomEcosystemSupplementalPanel } from './components/IntercomEcosystemSupplementalPanel';
 import { createIntercomStore } from './store/intercomStore';
 
 export function App() {
@@ -66,6 +71,26 @@ export function App() {
     }
   };
 
+  const ecosystemStrategies: EcosystemStrategy[] = [
+    {
+      id: 'matter',
+      label: 'Matter over Wi-Fi',
+      icon: Layers,
+      Component: (props) => (
+        <MatterEcosystemPanel
+          ecosystem={props.ecosystem}
+          subscriptionRows={[
+            { label: '🔒 Door Lock (EP1)', propertyKey: 'door_lock_subscribed' },
+            { label: '🔔 Chime / Ring (EP2)', propertyKey: 'ring_sensor_subscribed' },
+          ]}
+          endpointIcon={(endpoint) => (endpoint.id === 1 ? '🔒 ' : endpoint.id === 2 ? '🔔 ' : '')}
+          onResetMatter={handleResetMatter}
+          isResettingMatter={store.isResettingMatter()}
+        />
+      ),
+    },
+  ];
+
   onMount(() => {
     store.poll();
     const interval = setInterval(store.poll, 2500);
@@ -94,15 +119,8 @@ export function App() {
       }
       status={store.status()}
       themeStorageKey="intercom_theme"
-      subscriptionRows={[
-        { label: '🔒 Door Lock (EP1)', propertyKey: 'door_lock_subscribed' },
-        { label: '🔔 Chime / Ring (EP2)', propertyKey: 'ring_sensor_subscribed' },
-      ]}
       tabOrder={['controls', 'ecosystem', 'diagnostics', 'logs']}
-      endpointIcon={(endpoint) => (endpoint.id === 1 ? '🔒 ' : endpoint.id === 2 ? '🔔 ' : '')}
-      supplementalPanel={<IntercomEcosystemSupplementalPanel />}
-      onResetMatter={handleResetMatter}
-      isResettingMatter={store.isResettingMatter()}
+      ecosystemStrategies={ecosystemStrategies}
       loadLogs={fetchLogs}
       toast={<Toast message={toastMsg()} type={toastType()} />}
     />
