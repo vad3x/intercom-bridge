@@ -15,8 +15,8 @@ pub mod service;
 
 pub use app::App;
 pub use domain::{
-    EcosystemId, EcosystemStatus, EcosystemType, EcosystemValue, SystemDiagnostics, WifiSsid,
-    MAX_ECOSYSTEM_PROPERTIES,
+    EcosystemId, EcosystemStatus, EcosystemType, EcosystemValue, IntercomState, SystemDiagnostics,
+    WifiSsid, MAX_ECOSYSTEM_PROPERTIES,
 };
 pub use events::{SystemState, SystemStateReceiver, SystemStateSender, SystemStateWatch};
 pub use service::DiagnosticsService;

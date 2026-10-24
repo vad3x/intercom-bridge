@@ -1,63 +1,56 @@
-//! System diagnostics domain model.
+//! Compatibility re-exports for shared diagnostics contracts.
 
-use crate::domain::ecosystem::{EcosystemId, EcosystemStatus, EcosystemType};
-use crate::events::SystemState;
+pub use edf_core::domain::diagnostics::{SystemDiagnostics, WifiSsid};
 
-/// Real-time health, network, flash, ecosystem, and firmware telemetry snapshot.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SystemDiagnostics<T: EcosystemType = EcosystemId> {
-    pub device_type: &'static str,
-    pub state: SystemState,
-    pub door_locked: bool,
-    pub uptime_sec: u64,
-    pub wifi_ssid: Option<WifiSsid>,
-    pub wifi_rssi_dbm: Option<i8>,
-    pub ip: Option<[u8; 4]>,
-    pub mac: [u8; 6],
-    pub active_slot: &'static str,
-    pub slot_valid: bool,
-    pub free_heap_bytes: usize,
-    pub total_heap_bytes: usize,
-    pub available_ecosystems: &'static [T],
-    pub active_ecosystem: Option<EcosystemStatus>,
-    pub version: &'static str,
-    pub git_commit: &'static str,
-    pub build_date: &'static str,
-}
-
-/// Up to 32-byte Wi-Fi SSID string (IEEE 802.11 maximum SSID length).
+/// Intercom-specific telemetry domain payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WifiSsid {
-    bytes: [u8; 32],
-    len: u8,
+pub struct IntercomState {
+    pub door_locked: bool,
+    pub door_unlock_duration_sec: u32,
 }
 
-impl WifiSsid {
-    /// Create a new WifiSsid from a string slice if within 32 bytes.
-    pub fn new(s: &str) -> Option<Self> {
-        Self::from_bytes(s.as_bytes())
-    }
-
-    /// Create a new WifiSsid from a byte slice if within 32 bytes.
-    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() > 32 {
-            return None;
+impl Default for IntercomState {
+    fn default() -> Self {
+        Self {
+            door_locked: true,
+            door_unlock_duration_sec: crate::config::DEFAULT_DOOR_UNLOCK_DURATION_SEC,
         }
-        let mut buf = [0u8; 32];
-        buf[..bytes.len()].copy_from_slice(bytes);
-        Some(Self {
-            bytes: buf,
-            len: bytes.len() as u8,
-        })
     }
+}
 
-    /// Return the SSID as a string slice (or empty string if not valid UTF-8).
-    pub fn as_str(&self) -> &str {
-        core::str::from_utf8(&self.bytes[..self.len as usize]).unwrap_or("")
-    }
+#[cfg(test)]
+mod tests {
+    use super::{IntercomState, SystemDiagnostics};
+    use crate::events::SystemState;
 
-    /// Return the raw SSID bytes.
-    pub fn as_bytes(&self) -> &[u8] {
-        &self.bytes[..self.len as usize]
+    #[test]
+    fn diagnostics_contract_keeps_intercom_as_generic_domain_payload() {
+        let intercom = IntercomState {
+            door_locked: true,
+            door_unlock_duration_sec: 5,
+        };
+        let diagnostics = SystemDiagnostics::<IntercomState> {
+            device_type: "intercom_bridge",
+            state: SystemState::Operational,
+            domain: intercom,
+            uptime_sec: 0,
+            wifi_ssid: None,
+            wifi_rssi_dbm: None,
+            ip: None,
+            mac: [0; 6],
+            active_slot: "ota_0",
+            slot_valid: true,
+            free_heap_bytes: 0,
+            total_heap_bytes: 0,
+            available_ecosystems: &[],
+            active_ecosystem: None,
+            version: "0.1.0",
+            git_commit: "test",
+            build_date: "test",
+        };
+
+        assert_eq!(diagnostics.domain, intercom);
+        assert!(diagnostics.domain.door_locked);
+        assert_eq!(diagnostics.domain.door_unlock_duration_sec, 5);
     }
 }

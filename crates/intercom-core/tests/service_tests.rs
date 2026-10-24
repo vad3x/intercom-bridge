@@ -3,6 +3,7 @@
 //! Follows the Arrange -> Act -> Assert pattern strictly.
 
 use intercom_core::app::App;
+use intercom_core::domain::access::AccessStateMachine;
 use intercom_core::events::{SystemState, SystemStateSender, SystemStateWatch};
 use intercom_core::ports::inbound::{AccessCommand, AccessControllerHandle, CommandChannel};
 use intercom_core::ports::reporter::{IntercomReporter, LockState};
@@ -19,12 +20,14 @@ use portable_atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
 
 struct MockDoorDriver {
     trigger_count: AtomicU32,
+    duration_ms: AtomicU32,
 }
 
 impl MockDoorDriver {
     fn new() -> Self {
         Self {
             trigger_count: AtomicU32::new(0),
+            duration_ms: AtomicU32::new(5000),
         }
     }
 }
@@ -32,6 +35,10 @@ impl MockDoorDriver {
 impl DoorDriver for &MockDoorDriver {
     async fn trigger_unlock(&mut self) {
         self.trigger_count.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn set_unlock_duration_ms(&mut self, duration_ms: u32) {
+        self.duration_ms.store(duration_ms, Ordering::SeqCst);
     }
 }
 
@@ -100,6 +107,7 @@ impl ResetTriggerDriver for &MockResetTriggerDriver {
 struct MockReporter {
     ring: AtomicBool,
     lock_state: AtomicU8,
+    duration_sec: AtomicU32,
 }
 
 impl MockReporter {
@@ -107,6 +115,7 @@ impl MockReporter {
         Self {
             ring: AtomicBool::new(false),
             lock_state: AtomicU8::new(0),
+            duration_sec: AtomicU32::new(5),
         }
     }
 }
@@ -122,6 +131,10 @@ impl IntercomReporter for &MockReporter {
             LockState::Unlocked => 2,
         };
         self.lock_state.store(val, Ordering::SeqCst);
+    }
+
+    fn report_unlock_duration(&self, duration_sec: u32) {
+        self.duration_sec.store(duration_sec, Ordering::SeqCst);
     }
 }
 
@@ -425,4 +438,73 @@ fn test_reset_service_erases_factory_scope_and_reboots() {
     assert_eq!(service.reset.erased_scope.get(), Some(ResetScope::Factory));
     assert_eq!(state_watch.try_get(), Some(SystemState::FactoryReset));
 }
+
+#[test]
+fn access_state_machine_default_duration_is_5_seconds() {
+    let sm = AccessStateMachine::new();
+    assert_eq!(sm.unlock_duration_sec(), 5);
+}
+
+#[test]
+fn access_state_machine_set_duration_updates_deadline() {
+    let mut sm = AccessStateMachine::new();
+    let effects = sm.handle_command(AccessCommand::SetUnlockDuration(10), 1000);
+    assert_eq!(sm.unlock_duration_sec(), 10);
+    assert_eq!(effects.report_duration, Some(10));
+
+    let unlock_effects = sm.handle_command(AccessCommand::Unlock, 2000);
+    assert!(unlock_effects.trigger_unlock);
+    assert_eq!(sm.next_deadline(), Some(2000 + 10_000));
+}
+
+#[test]
+fn access_state_machine_clamps_duration_to_bounds() {
+    let mut sm = AccessStateMachine::new();
+    sm.handle_command(AccessCommand::SetUnlockDuration(0), 1000);
+    assert_eq!(sm.unlock_duration_sec(), 1);
+
+    sm.handle_command(AccessCommand::SetUnlockDuration(45), 1000);
+    assert_eq!(sm.unlock_duration_sec(), 30);
+}
+
+#[test]
+fn access_controller_processes_set_unlock_duration_command() {
+    // Arrange
+    let channel = CommandChannel::new();
+    let handle = AccessControllerHandle::new(channel.sender());
+    let door = MockDoorDriver::new();
+    let reporter = MockReporter::new();
+    let mut controller = AccessController::new(&door, &reporter);
+
+    // Act
+    assert!(handle.set_unlock_duration(8).is_ok());
+    futures::executor::block_on(controller.next(&channel.receiver()));
+
+    // Assert
+    assert_eq!(door.duration_ms.load(Ordering::SeqCst), 8000);
+    assert_eq!(reporter.duration_sec.load(Ordering::SeqCst), 8);
+}
+
+#[test]
+fn access_controller_dispatches_duration_to_composite_reporters() {
+    // Arrange
+    let channel = CommandChannel::new();
+    let handle = AccessControllerHandle::new(channel.sender());
+    let door = MockDoorDriver::new();
+    let rep1 = MockReporter::new();
+    let rep2 = MockReporter::new();
+    let composite = (&rep1, &rep2);
+    let mut controller = AccessController::new(&door, composite);
+
+    // Act
+    handle.send(AccessCommand::SetUnlockDuration(12));
+    futures::executor::block_on(controller.next(&channel.receiver()));
+
+    // Assert
+    assert_eq!(door.duration_ms.load(Ordering::SeqCst), 12_000);
+    assert_eq!(rep1.duration_sec.load(Ordering::SeqCst), 12);
+    assert_eq!(rep2.duration_sec.load(Ordering::SeqCst), 12);
+}
+
+
 

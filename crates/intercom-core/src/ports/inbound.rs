@@ -17,6 +17,8 @@ pub enum AccessCommand {
     Unlock,
     /// Hardware trigger indicating the intercom buzzer/chime is ringing.
     Ring,
+    /// Request to update the door unlock duration in seconds.
+    SetUnlockDuration(u32),
 }
 
 /// Channel for queuing access commands.
@@ -55,11 +57,23 @@ impl<'a> AccessControllerHandle<'a> {
         }
     }
 
+    /// Update the door unlock duration in seconds.
+    pub fn set_unlock_duration(&self, duration_sec: u32) -> Result<(), ()> {
+        self.sender
+            .try_send(AccessCommand::SetUnlockDuration(duration_sec))
+            .map_err(|_| ())
+    }
+
     /// Dispatches an access command directly to the command queue.
     pub fn send(&self, cmd: AccessCommand) {
         match cmd {
             AccessCommand::Unlock => self.request_unlock(),
             AccessCommand::Ring => self.trigger_ring(),
+            AccessCommand::SetUnlockDuration(sec) => {
+                if self.set_unlock_duration(sec).is_err() {
+                    warn!("Set unlock duration command dropped: command queue full");
+                }
+            }
         }
     }
 }

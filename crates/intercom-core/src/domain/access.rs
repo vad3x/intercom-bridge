@@ -4,7 +4,7 @@
 //! auto-relock deadlines, and visitor chime holds.
 //! Completely independent of Embassy, timers, or hardware ports.
 
-use crate::config::{AUTO_RELOCK_SEC, RING_HOLD_MS};
+use crate::config::{clamp_door_unlock_duration, DEFAULT_DOOR_UNLOCK_DURATION_SEC, RING_HOLD_MS};
 use crate::ports::inbound::AccessCommand;
 use crate::ports::reporter::LockState;
 
@@ -17,6 +17,8 @@ pub struct AccessEffects {
     pub report_lock: Option<LockState>,
     /// Updated chime/ring active state to report to outbound observers.
     pub report_ring: Option<bool>,
+    /// Updated configured unlock duration in seconds to report to outbound observers.
+    pub report_duration: Option<u32>,
 }
 
 /// Pure domain state machine for intercom access control.
@@ -25,6 +27,7 @@ pub struct AccessStateMachine {
     ring_active: bool,
     ring_deadline_ms: Option<u64>,
     relock_deadline_ms: Option<u64>,
+    unlock_duration_sec: u32,
 }
 
 impl AccessStateMachine {
@@ -34,7 +37,19 @@ impl AccessStateMachine {
             ring_active: false,
             ring_deadline_ms: None,
             relock_deadline_ms: None,
+            unlock_duration_sec: DEFAULT_DOOR_UNLOCK_DURATION_SEC,
         }
+    }
+
+    /// Create a new access state machine with a specific unlock duration in seconds.
+    pub const fn with_duration(mut self, duration_sec: u32) -> Self {
+        self.unlock_duration_sec = clamp_door_unlock_duration(duration_sec);
+        self
+    }
+
+    /// Returns the configured unlock duration in seconds.
+    pub const fn unlock_duration_sec(&self) -> u32 {
+        self.unlock_duration_sec
     }
 
     /// Process an inbound command and return the required effects.
@@ -42,17 +57,26 @@ impl AccessStateMachine {
         match cmd {
             AccessCommand::Unlock => self.handle_unlock(now_ms),
             AccessCommand::Ring => self.handle_ring(now_ms),
+            AccessCommand::SetUnlockDuration(sec) => {
+                let clamped = clamp_door_unlock_duration(sec);
+                self.unlock_duration_sec = clamped;
+                AccessEffects {
+                    report_duration: Some(clamped),
+                    ..Default::default()
+                }
+            }
         }
     }
 
     /// Process an unlock request: triggers unlock actuation and schedules auto-relock.
     pub fn handle_unlock(&mut self, now_ms: u64) -> AccessEffects {
-        self.relock_deadline_ms = Some(now_ms + (AUTO_RELOCK_SEC * 1000));
+        self.relock_deadline_ms = Some(now_ms + (self.unlock_duration_sec as u64 * 1000));
 
         AccessEffects {
             trigger_unlock: true,
             report_lock: Some(LockState::Unlocked),
             report_ring: None,
+            report_duration: None,
         }
     }
 
@@ -65,6 +89,7 @@ impl AccessStateMachine {
             trigger_unlock: false,
             report_lock: None,
             report_ring: Some(true),
+            report_duration: None,
         }
     }
 
@@ -136,7 +161,7 @@ mod tests {
         // Assert
         assert!(effects.trigger_unlock);
         assert_eq!(effects.report_lock, Some(LockState::Unlocked));
-        assert_eq!(sm.next_deadline(), Some(1000 + AUTO_RELOCK_SEC * 1000));
+        assert_eq!(sm.next_deadline(), Some(1000 + sm.unlock_duration_sec() as u64 * 1000));
     }
 
     #[test]
@@ -144,7 +169,7 @@ mod tests {
         // Arrange
         let mut sm = AccessStateMachine::new();
         sm.handle_unlock(1000);
-        let relock_time = 1000 + (AUTO_RELOCK_SEC * 1000);
+        let relock_time = 1000 + (sm.unlock_duration_sec() as u64 * 1000);
 
         // Act - before deadline
         let pre_effects = sm.poll_deadlines(relock_time - 1);
@@ -191,13 +216,13 @@ mod tests {
 
         // Act - ring at t=1000, unlock at t=2000
         sm.handle_ring(1000); // Ring deadline = 1000 + 15000 = 16000
-        sm.handle_unlock(2000); // Relock deadline = 2000 + 4000 = 6000
+        sm.handle_unlock(2000); // Relock deadline = 2000 + 5000 = 7000
 
-        // Assert - earliest deadline is the relock at t=6000
-        assert_eq!(sm.next_deadline(), Some(6000));
+        // Assert - earliest deadline is the relock at t=7000
+        assert_eq!(sm.next_deadline(), Some(7000));
 
-        // Act - advance time to relock deadline (t=6000)
-        let relock_effects = sm.poll_deadlines(6000);
+        // Act - advance time to relock deadline (t=7000)
+        let relock_effects = sm.poll_deadlines(7000);
 
         // Assert - door relocked, ring still active, next deadline is ring hold expiry (t=16000)
         assert_eq!(relock_effects.report_lock, Some(LockState::Locked));
@@ -220,27 +245,39 @@ mod tests {
     fn repeated_unlock_command_extends_relock_deadline() {
         // Arrange
         let mut sm = AccessStateMachine::new();
-        sm.handle_unlock(1000); // Initial deadline = 1000 + 4000 = 5000
+        sm.handle_unlock(1000); // Initial deadline = 1000 + 5000 = 6000
 
         // Act - user taps unlock again at t=3000
-        sm.handle_unlock(3000); // Extended deadline = 3000 + 4000 = 7000
+        sm.handle_unlock(3000); // Extended deadline = 3000 + 5000 = 8000
 
         // Assert - deadline was pushed back
-        assert_eq!(sm.next_deadline(), Some(7000));
+        assert_eq!(sm.next_deadline(), Some(8000));
 
-        // Act - check at original expiration time (t=5000)
-        let mid_effects = sm.poll_deadlines(5000);
+        // Act - check at original expiration time (t=6000)
+        let mid_effects = sm.poll_deadlines(6000);
 
         // Assert - door remains unlocked
         assert_eq!(mid_effects.report_lock, None);
         assert!(sm.is_unlock_pending());
 
-        // Act - check at new extended expiration time (t=7000)
-        let final_effects = sm.poll_deadlines(7000);
+        // Act - check at new extended expiration time (t=8000)
+        let final_effects = sm.poll_deadlines(8000);
 
         // Assert - door locks at the extended deadline
         assert_eq!(final_effects.report_lock, Some(LockState::Locked));
         assert!(!sm.is_unlock_pending());
+    }
+
+    #[test]
+    fn access_state_machine_with_duration_clamps_properly() {
+        let sm1 = AccessStateMachine::new().with_duration(15);
+        assert_eq!(sm1.unlock_duration_sec(), 15);
+
+        let sm2 = AccessStateMachine::new().with_duration(0);
+        assert_eq!(sm2.unlock_duration_sec(), 1);
+
+        let sm3 = AccessStateMachine::new().with_duration(100);
+        assert_eq!(sm3.unlock_duration_sec(), 30);
     }
 
     #[test]

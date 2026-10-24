@@ -27,6 +27,9 @@ pub use reset::{ResetScope, ResetTriggerDriver, SystemResetDriver};
 pub trait DoorDriver {
     /// Trigger an unlock pulse. Returns when the actuation completes.
     async fn trigger_unlock(&mut self);
+
+    /// Set the physical unlock pulse duration in milliseconds.
+    fn set_unlock_duration_ms(&mut self, _duration_ms: u32) {}
 }
 
 /// Ring detection port.

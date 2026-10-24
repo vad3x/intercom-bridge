@@ -33,6 +33,15 @@ impl<D: DoorDriver, R: IntercomReporter> AccessController<D, R> {
         }
     }
 
+    /// Create a new Access Controller with a specific initial unlock duration in seconds.
+    pub fn with_duration(door: D, reporter: R, unlock_duration_sec: u32) -> Self {
+        Self {
+            door,
+            reporter,
+            state: AccessStateMachine::new().with_duration(unlock_duration_sec),
+        }
+    }
+
     /// Run the access controller loop indefinitely.
     pub async fn run(&mut self, receiver: &CommandReceiver<'_>) {
         info!("started");
@@ -86,6 +95,12 @@ impl<D: DoorDriver, R: IntercomReporter> AccessController<D, R> {
             info!("triggering door unlock");
             self.door.trigger_unlock().await;
             info!("door unlock complete");
+        }
+
+        if let Some(duration_sec) = effects.report_duration {
+            info!("updating unlock duration: {}s", duration_sec);
+            self.door.set_unlock_duration_ms(duration_sec * 1000);
+            self.reporter.report_unlock_duration(duration_sec);
         }
     }
 }

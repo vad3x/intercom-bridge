@@ -2,7 +2,7 @@
 //!
 //! Follows the Arrange -> Act -> Assert pattern strictly.
 
-use intercom_core::domain::diagnostics::{SystemDiagnostics, WifiSsid};
+use intercom_core::domain::diagnostics::{IntercomState, SystemDiagnostics, WifiSsid};
 use intercom_core::domain::ecosystem::{
     EcosystemId, EcosystemStatus, EcosystemType, EcosystemValue,
 };
@@ -158,7 +158,10 @@ fn diagnostics_service_snapshot_with_default_ecosystem() {
         SystemDiagnostics {
             device_type: "intercom_bridge",
             state: SystemState::Operational,
-            door_locked: true,
+            domain: IntercomState {
+                door_locked: true,
+                door_unlock_duration_sec: 5,
+            },
             uptime_sec: 12345,
             wifi_ssid: WifiSsid::new("HomeNet-IoT"),
             wifi_rssi_dbm: Some(-65),
@@ -204,7 +207,10 @@ fn diagnostics_service_snapshot_with_explicit_ecosystem_and_properties() {
         SystemDiagnostics {
             device_type: "intercom_bridge",
             state: SystemState::EcosystemConnecting,
-            door_locked: true,
+            domain: IntercomState {
+                door_locked: true,
+                door_unlock_duration_sec: 5,
+            },
             uptime_sec: 12345,
             wifi_ssid: WifiSsid::new("HomeNet-IoT"),
             wifi_rssi_dbm: Some(-65),

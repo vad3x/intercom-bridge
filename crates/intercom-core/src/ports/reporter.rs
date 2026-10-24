@@ -21,6 +21,9 @@ pub trait IntercomReporter {
 
     /// Report current lock latch state.
     fn report_lock_state(&self, state: LockState);
+
+    /// Report current configured door unlock duration in seconds.
+    fn report_unlock_duration(&self, duration_sec: u32);
 }
 
 impl<T: IntercomReporter> IntercomReporter for &T {
@@ -30,6 +33,10 @@ impl<T: IntercomReporter> IntercomReporter for &T {
 
     fn report_lock_state(&self, state: LockState) {
         (*self).report_lock_state(state);
+    }
+
+    fn report_unlock_duration(&self, duration_sec: u32) {
+        (*self).report_unlock_duration(duration_sec);
     }
 }
 
@@ -42,5 +49,10 @@ impl<A: IntercomReporter, B: IntercomReporter> IntercomReporter for (A, B) {
     fn report_lock_state(&self, state: LockState) {
         self.0.report_lock_state(state);
         self.1.report_lock_state(state);
+    }
+
+    fn report_unlock_duration(&self, duration_sec: u32) {
+        self.0.report_unlock_duration(duration_sec);
+        self.1.report_unlock_duration(duration_sec);
     }
 }
