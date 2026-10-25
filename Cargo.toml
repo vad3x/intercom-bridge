@@ -64,10 +64,12 @@ rs-matter-stack = { path = "../rs-matter-stack" }
 
 [profile.dev]
 opt-level = "z"
+incremental = false
+debug = 1
 
 [profile.release]
 codegen-units = 1
-debug = 2
+debug = 1
 debug-assertions = false
 opt-level = "s"
 overflow-checks = false
