@@ -1,0 +1,64 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Directory metadata
+.directory
+
+# Temporary files
+*~
+*.swp
+*.swo
+*.bak
+*.tmp
+
+# Log files
+*.log
+
+# Python environment files
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+*.egg-info/
+dist/
+
+# Virtual environment folders
+venv/
+.venv/
+env/
+
+# Windows specific
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# User-specific configuration files
+*.user
+*.workspace
+*.suo
+*.sln.docstates
+
+# Rust build artifacts
+target/
+
+# Vendored dependencies (local patches)
+vendor/
+
+# OTA Firmware Signing Keys
+ota_public_key.bin
+
+# AI artifacts
+.superpowers
+
+# Generated web dashboard bundle
+crates/intercom-adapter-http/assets/dashboard.html
+
+# Local debug logs and packet analysis
+logs/
+analysis/
+*.plog
+
+# Superpowers specs and implementation plans
+docs/superpowers/

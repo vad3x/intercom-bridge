@@ -1,0 +1,26 @@
+[package]
+name = "intercom-adapter-http"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+edf-core = { workspace = true }
+edf-http-diagnostics = { workspace = true }
+edf-http-ota = { workspace = true }
+embassy-net = { workspace = true, features = ["tcp", "proto-ipv4", "medium-ethernet"] }
+embassy-time = { workspace = true }
+intercom-core = { path = "../intercom-core" }
+log = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde-json-core = { workspace = true }
+picoserve = { workspace = true, default-features = false, features = ["embassy", "alloc", "log"] }
+
+[build-dependencies]
+flate2 = { workspace = true }
+
+[dev-dependencies]
+critical-section = { workspace = true, features = ["std"] }
+embassy-time = { workspace = true, features = ["std", "generic-queue-8"] }
+flate2 = { workspace = true }
+futures = { workspace = true }
+serde_json = { workspace = true }

@@ -1,0 +1,15 @@
+[package]
+name = "intercom-adapter-gpio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Hardware GPIO adapter for Intercom Bridge (IR204E & ESP32-C6)"
+
+[dependencies]
+intercom-core = { path = "../intercom-core" }
+edf-gpio = { workspace = true }
+log = { workspace = true }
+embassy-sync = { workspace = true }
+embassy-futures = { workspace = true }
+embassy-time = { workspace = true, features = ["generic-queue-8"] }
+esp-hal = { workspace = true, features = ["log-04", "unstable", "esp32c6"] }

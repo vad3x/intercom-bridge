@@ -1,0 +1,20 @@
+[package]
+name = "intercom-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Universal domain logic, services, events, and port definitions for Intercom Bridge"
+
+[dependencies]
+edf-core = { workspace = true }
+log = { workspace = true }
+embassy-sync = { workspace = true }
+embassy-time = { workspace = true, features = ["generic-queue-8"] }
+embassy-futures = { workspace = true }
+heapless = { workspace = true }
+
+[dev-dependencies]
+critical-section = { workspace = true, features = ["std"] }
+embassy-time = { workspace = true, features = ["std", "generic-queue-8"] }
+portable-atomic = { workspace = true }
+futures = { workspace = true }
