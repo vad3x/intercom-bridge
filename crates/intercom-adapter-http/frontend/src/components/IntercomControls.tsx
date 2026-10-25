@@ -1,6 +1,6 @@
 import { Badge, Card, CardBody, CardTitle } from '@embedded-device-foundation/dashboard-core';
 import { Bell, Loader2, Lock, Sparkles, Unlock } from 'lucide-solid';
-import type { Component } from 'solid-js';
+import { type Component, createEffect, createSignal, onCleanup } from 'solid-js';
 import {
   DEFAULT_DOOR_UNLOCK_DURATION_SEC,
   MAX_DOOR_UNLOCK_DURATION_SEC,
@@ -14,12 +14,61 @@ export interface IntercomControlsProps {
   isRinging: boolean;
   onUnlock: () => void;
   onRing: () => void;
-  onDurationChange?: (seconds: number) => void;
+  onDurationChange?: (seconds: number) => Promise<void> | void;
 }
 
 export const IntercomControls: Component<IntercomControlsProps> = (props) => {
   const isInitialLoading = () => props.doorLocked === undefined;
   const isLocked = () => !props.isUnlocking && props.doorLocked === true;
+
+  const serverDuration = () => props.doorUnlockDurationSec ?? DEFAULT_DOOR_UNLOCK_DURATION_SEC;
+  const [draftDuration, setDraftDuration] = createSignal(serverDuration());
+  const [isSaving, setIsSaving] = createSignal(false);
+  let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const isDirty = () => draftDuration() !== serverDuration();
+
+  createEffect(() => {
+    const val = serverDuration();
+    if (!isSaving() && !isDirty()) {
+      setDraftDuration(val);
+    }
+  });
+
+  onCleanup(() => {
+    if (debounceTimer) clearTimeout(debounceTimer);
+  });
+
+  const save = async (val: number) => {
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
+      debounceTimer = undefined;
+    }
+    if (val === serverDuration()) return;
+    setIsSaving(true);
+    try {
+      await props.onDurationChange?.(val);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleStep = (delta: number) => {
+    const next = Math.max(
+      MIN_DOOR_UNLOCK_DURATION_SEC,
+      Math.min(MAX_DOOR_UNLOCK_DURATION_SEC, draftDuration() + delta),
+    );
+    setDraftDuration(next);
+
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      save(next);
+    }, 800);
+  };
+
+  const handleExplicitSave = () => {
+    save(draftDuration());
+  };
 
   const strikeIconClass = () => {
     if (isInitialLoading()) return 'bg-base-300 text-base-content/40';
@@ -106,8 +155,7 @@ export const IntercomControls: Component<IntercomControlsProps> = (props) => {
                 {strikeHeadline().text}
               </div>
               <div class="text-xs text-base-content/60 mt-1">
-                PhotoMOS Relay • Auto-relocks after{' '}
-                {props.doorUnlockDurationSec ?? DEFAULT_DOOR_UNLOCK_DURATION_SEC}s strike pulse
+                PhotoMOS Relay • Auto-relocks after {draftDuration()}s strike pulse
               </div>
               <div class="flex items-center justify-center gap-2 mt-3">
                 <span class="text-xs text-base-content/70">Duration:</span>
@@ -117,37 +165,46 @@ export const IntercomControls: Component<IntercomControlsProps> = (props) => {
                     class="join-item btn btn-xs btn-ghost px-2 font-bold"
                     disabled={
                       props.isUnlocking ||
-                      (props.doorUnlockDurationSec ?? DEFAULT_DOOR_UNLOCK_DURATION_SEC) <=
-                        MIN_DOOR_UNLOCK_DURATION_SEC
+                      isSaving() ||
+                      draftDuration() <= MIN_DOOR_UNLOCK_DURATION_SEC
                     }
-                    onClick={() =>
-                      props.onDurationChange?.(
-                        (props.doorUnlockDurationSec ?? DEFAULT_DOOR_UNLOCK_DURATION_SEC) - 1,
-                      )
-                    }
+                    onClick={() => handleStep(-1)}
                   >
                     -
                   </button>
                   <span class="join-item px-2.5 py-0.5 text-xs font-mono font-bold flex items-center bg-base-200">
-                    {props.doorUnlockDurationSec ?? DEFAULT_DOOR_UNLOCK_DURATION_SEC}s
+                    {draftDuration()}s
                   </span>
                   <button
                     type="button"
                     class="join-item btn btn-xs btn-ghost px-2 font-bold"
                     disabled={
                       props.isUnlocking ||
-                      (props.doorUnlockDurationSec ?? DEFAULT_DOOR_UNLOCK_DURATION_SEC) >=
-                        MAX_DOOR_UNLOCK_DURATION_SEC
+                      isSaving() ||
+                      draftDuration() >= MAX_DOOR_UNLOCK_DURATION_SEC
                     }
-                    onClick={() =>
-                      props.onDurationChange?.(
-                        (props.doorUnlockDurationSec ?? DEFAULT_DOOR_UNLOCK_DURATION_SEC) + 1,
-                      )
-                    }
+                    onClick={() => handleStep(1)}
                   >
                     +
                   </button>
                 </div>
+                {(isDirty() || isSaving()) && (
+                  <button
+                    type="button"
+                    class="btn btn-xs btn-primary gap-1"
+                    disabled={isSaving()}
+                    onClick={handleExplicitSave}
+                  >
+                    {isSaving() ? (
+                      <>
+                        <Loader2 class="w-3 h-3 animate-spin" />
+                        <span>Saving...</span>
+                      </>
+                    ) : (
+                      'Save'
+                    )}
+                  </button>
+                )}
               </div>
               <div class="w-full mt-5">
                 <button
