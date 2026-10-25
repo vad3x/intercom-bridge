@@ -33,6 +33,8 @@ pub enum Route {
     ActionRing,
     ActionUnlock,
     ActionResetMatter,
+    ActionResetFactory,
+    ActionReboot,
     ActionSetDoorDuration(u32),
     OtaFlash,
     NotFound,
@@ -44,12 +46,12 @@ impl From<DiagnosticRoute> for Route {
             DiagnosticRoute::Dashboard => Route::Dashboard,
             DiagnosticRoute::Status => Route::Status,
             DiagnosticRoute::Logs => Route::Logs,
-            DiagnosticRoute::Reboot => Route::NotFound,
+            DiagnosticRoute::Reboot => Route::ActionReboot,
             DiagnosticRoute::Reset(edf_core::domain::reset::ResetScope::Ecosystem) => {
                 Route::ActionResetMatter
             }
             DiagnosticRoute::Reset(edf_core::domain::reset::ResetScope::Factory) => {
-                Route::NotFound
+                Route::ActionResetFactory
             }
         }
     }

@@ -289,7 +289,7 @@ impl<
             }
 
             if reboot_requested.get() {
-                info!("OTA update committed; rebooting in {:?}...", self.config.reboot_delay);
+                info!("Reboot requested; rebooting in {:?}...", self.config.reboot_delay);
                 Timer::after(self.config.reboot_delay).await;
                 if let Some(reset) = self.reset_driver {
                     reset.reboot();
@@ -410,6 +410,33 @@ fn build_router<
                         sender.ecosystem_reset();
                     }
                     state.reset_requested.set(Some(ResetScope::Ecosystem));
+                    picoserve::response::Response::ok("{\"status\":\"ok\"}")
+                        .with_content_type("application/json")
+                },
+            ),
+        )
+        .route(
+            "/api/action/reboot",
+            picoserve::routing::post(
+                |picoserve::extract::State(state): picoserve::extract::State<
+                    AppState<'a, H, E, O, T>,
+                >| async move {
+                    state.reboot_requested.set(true);
+                    picoserve::response::Response::ok("{\"status\":\"ok\"}")
+                        .with_content_type("application/json")
+                },
+            ),
+        )
+        .route(
+            "/api/action/reset/factory",
+            picoserve::routing::post(
+                |picoserve::extract::State(state): picoserve::extract::State<
+                    AppState<'a, H, E, O, T>,
+                >| async move {
+                    if let Some(sender) = state.state_sender {
+                        sender.ecosystem_reset();
+                    }
+                    state.reset_requested.set(Some(ResetScope::Factory));
                     picoserve::response::Response::ok("{\"status\":\"ok\"}")
                         .with_content_type("application/json")
                 },

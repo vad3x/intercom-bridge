@@ -730,4 +730,78 @@ fn test_post_action_reset_matter_sets_ecosystem_reset_state() {
     );
 }
 
+#[test]
+#[should_panic(expected = "MOCK_REBOOT_TRIGGERED")]
+fn test_post_action_reboot_invokes_reboot() {
+    let cmd_channel = CommandChannel::new();
+    let access_handle = AccessControllerHandle::new(cmd_channel.sender());
+    let hardware = MockHardwareInfo;
+    let state_watch = SystemStateWatch::new();
+    let diagnostics = DiagnosticsService::new(&hardware, &state_watch);
+    let mut ota_driver = MockOtaFlashDriver::new(false);
+    let reset_driver = MockResetDriver;
+    let mut server = HttpServer::new_unbound(
+        access_handle,
+        &diagnostics,
+        &mut ota_driver,
+        test_log_provider,
+        HttpServerConfig::default(),
+    )
+    .with_reset_driver(&reset_driver);
+
+    let mut stream =
+        MockStream::new(b"POST /api/action/reboot HTTP/1.1\r\nHost: 192.168.1.142\r\n\r\n");
+
+    let _ = block_on(server.handle_request(&mut stream));
+}
+
+struct RecordingFactoryResetDriver {
+    erased_scope: std::sync::atomic::AtomicU8,
+}
+
+impl intercom_core::ports::SystemResetDriver for RecordingFactoryResetDriver {
+    fn erase_credentials(&self, scope: intercom_core::ports::ResetScope) {
+        let val = match scope {
+            intercom_core::ports::ResetScope::Ecosystem => 1,
+            intercom_core::ports::ResetScope::Factory => 2,
+        };
+        self.erased_scope.store(val, std::sync::atomic::Ordering::SeqCst);
+    }
+    fn reboot(&self) -> ! {
+        assert_eq!(
+            self.erased_scope.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "expected ResetScope::Factory to be erased before reboot"
+        );
+        panic!("MOCK_FACTORY_RESET_REBOOT_TRIGGERED");
+    }
+}
+
+#[test]
+#[should_panic(expected = "MOCK_FACTORY_RESET_REBOOT_TRIGGERED")]
+fn test_post_action_reset_factory_erases_and_reboots() {
+    let cmd_channel = CommandChannel::new();
+    let access_handle = AccessControllerHandle::new(cmd_channel.sender());
+    let hardware = MockHardwareInfo;
+    let state_watch = SystemStateWatch::new();
+    let diagnostics = DiagnosticsService::new(&hardware, &state_watch);
+    let mut ota_driver = MockOtaFlashDriver::new(false);
+    let reset_driver = RecordingFactoryResetDriver {
+        erased_scope: std::sync::atomic::AtomicU8::new(0),
+    };
+    let mut server = HttpServer::new_unbound(
+        access_handle,
+        &diagnostics,
+        &mut ota_driver,
+        test_log_provider,
+        HttpServerConfig::default(),
+    )
+    .with_reset_driver(&reset_driver);
+
+    let mut stream =
+        MockStream::new(b"POST /api/action/reset/factory HTTP/1.1\r\nHost: 192.168.1.142\r\n\r\n");
+
+    let _ = block_on(server.handle_request(&mut stream));
+}
+
 

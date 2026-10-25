@@ -100,6 +100,20 @@ fn test_parse_route_action_reset_matter() {
 }
 
 #[test]
+fn test_parse_route_action_reboot() {
+    let req = "POST /api/action/reboot HTTP/1.1\r\nHost: 192.168.1.142\r\n\r\n";
+    let route = parse_route(req);
+    assert_eq!(route, Route::ActionReboot);
+}
+
+#[test]
+fn test_parse_route_action_reset_factory() {
+    let req = "POST /api/action/reset/factory HTTP/1.1\r\nHost: 192.168.1.142\r\n\r\n";
+    let route = parse_route(req);
+    assert_eq!(route, Route::ActionResetFactory);
+}
+
+#[test]
 fn test_parse_route_ota_flash() {
     // Arrange
     let req = "POST /api/v1/ota/flash HTTP/1.1\r\nContent-Length: 1024\r\n";
