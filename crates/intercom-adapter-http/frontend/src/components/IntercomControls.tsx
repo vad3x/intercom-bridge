@@ -21,32 +21,47 @@ export const IntercomControls: Component<IntercomControlsProps> = (props) => {
   const isInitialLoading = () => props.doorLocked === undefined;
   const isLocked = () => !props.isUnlocking && props.doorLocked === true;
 
-  const serverDuration = () => props.doorUnlockDurationSec ?? DEFAULT_DOOR_UNLOCK_DURATION_SEC;
-  const [draftDuration, setDraftDuration] = createSignal(serverDuration());
+  const [draftDuration, setDraftDuration] = createSignal<number | undefined>(
+    props.doorUnlockDurationSec,
+  );
+  const [userEdited, setUserEdited] = createSignal(false);
   const [isSaving, setIsSaving] = createSignal(false);
 
-  const isDirty = () => draftDuration() !== serverDuration();
-
+  // Sync draft from server whenever server updates and user hasn't actively edited
   createEffect(() => {
-    const val = serverDuration();
-    if (!isSaving() && !isDirty()) {
-      setDraftDuration(val);
+    const serverVal = props.doorUnlockDurationSec;
+    if (serverVal !== undefined && !userEdited() && !isSaving()) {
+      setDraftDuration(serverVal);
     }
   });
 
+  const effectiveDuration = () =>
+    draftDuration() ?? props.doorUnlockDurationSec ?? DEFAULT_DOOR_UNLOCK_DURATION_SEC;
+
+  const isDirty = () => {
+    if (props.doorUnlockDurationSec === undefined) return false;
+    return userEdited() && draftDuration() !== props.doorUnlockDurationSec;
+  };
+
   const handleStep = (delta: number) => {
+    const current = effectiveDuration();
     const next = Math.max(
       MIN_DOOR_UNLOCK_DURATION_SEC,
-      Math.min(MAX_DOOR_UNLOCK_DURATION_SEC, draftDuration() + delta),
+      Math.min(MAX_DOOR_UNLOCK_DURATION_SEC, current + delta),
     );
     setDraftDuration(next);
+    setUserEdited(
+      props.doorUnlockDurationSec !== undefined && next !== props.doorUnlockDurationSec,
+    );
   };
 
   const handleSave = async () => {
     if (!isDirty() || isSaving()) return;
+    const val = effectiveDuration();
     setIsSaving(true);
     try {
-      await props.onDurationChange?.(draftDuration());
+      await props.onDurationChange?.(val);
+      setUserEdited(false);
     } finally {
       setIsSaving(false);
     }
@@ -137,7 +152,7 @@ export const IntercomControls: Component<IntercomControlsProps> = (props) => {
                 {strikeHeadline().text}
               </div>
               <div class="text-xs text-base-content/60 mt-1">
-                PhotoMOS Relay • Auto-relocks after {draftDuration()}s strike pulse
+                PhotoMOS Relay • Auto-relocks after {effectiveDuration()}s strike pulse
               </div>
               <div class="flex items-center justify-center gap-2 mt-3">
                 <span class="text-xs text-base-content/70">Duration:</span>
@@ -148,14 +163,14 @@ export const IntercomControls: Component<IntercomControlsProps> = (props) => {
                     disabled={
                       props.isUnlocking ||
                       isSaving() ||
-                      draftDuration() <= MIN_DOOR_UNLOCK_DURATION_SEC
+                      effectiveDuration() <= MIN_DOOR_UNLOCK_DURATION_SEC
                     }
                     onClick={() => handleStep(-1)}
                   >
                     -
                   </button>
                   <span class="join-item px-2.5 py-0.5 text-xs font-mono font-bold flex items-center bg-base-200">
-                    {draftDuration()}s
+                    {effectiveDuration()}s
                   </span>
                   <button
                     type="button"
@@ -163,7 +178,7 @@ export const IntercomControls: Component<IntercomControlsProps> = (props) => {
                     disabled={
                       props.isUnlocking ||
                       isSaving() ||
-                      draftDuration() >= MAX_DOOR_UNLOCK_DURATION_SEC
+                      effectiveDuration() >= MAX_DOOR_UNLOCK_DURATION_SEC
                     }
                     onClick={() => handleStep(1)}
                   >

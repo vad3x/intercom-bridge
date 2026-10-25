@@ -6,12 +6,12 @@ import {
   triggerRing,
   triggerUnlock,
 } from '../api';
-import { DEFAULT_DOOR_UNLOCK_DURATION_SEC, type SystemDiagnostics } from '../types';
+import type { SystemDiagnostics } from '../types';
 
 export function createIntercomStore() {
   const [status, setStatus] = createSignal<SystemDiagnostics | null>(null);
-  const [doorUnlockDurationSec, setDoorUnlockDurationSec] = createSignal<number>(
-    DEFAULT_DOOR_UNLOCK_DURATION_SEC,
+  const [doorUnlockDurationSec, setDoorUnlockDurationSec] = createSignal<number | undefined>(
+    undefined,
   );
   const [isUnlocking, setIsUnlocking] = createSignal(false);
   const [isRinging, setIsRinging] = createSignal(false);
