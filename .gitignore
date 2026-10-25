@@ -52,3 +52,5 @@ ota_public_key.bin
 # AI artifacts
 .superpowers
 
+# Generated web dashboard bundle
+crates/intercom-adapter-http/assets/dashboard.html
