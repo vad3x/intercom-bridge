@@ -74,7 +74,7 @@ impl<M: KvBlobStore, S: KvBlobStore> KvBlobStore for PartitionedKvBlobStore<M, S
 /// Falls back to [`intercom_core::config::DEFAULT_DOOR_UNLOCK_DURATION_SEC`] if the key
 /// is missing, corrupted, or outside domain valid bounds [1, 30].
 pub fn load_door_duration<S: KvBlobStore>(store: &mut S) -> u32 {
-    let mut buf = [0u8; 8];
+    let mut buf = [0u8; 512];
     match store.load(crate::config::DOOR_DURATION_KEY, &mut buf) {
         Ok(Some(slice)) if slice.len() >= 4 => {
             let val = u32::from_le_bytes(slice[..4].try_into().unwrap());
@@ -92,7 +92,7 @@ pub fn load_door_duration<S: KvBlobStore>(store: &mut S) -> u32 {
 ///
 /// Clamps duration to domain valid bounds [1, 30] before persisting.
 pub fn save_door_duration<S: KvBlobStore>(store: &mut S, duration_sec: u32) -> Result<(), ()> {
-    let mut buf = [0u8; 32];
+    let mut buf = [0u8; 512];
     let clamped = intercom_core::config::clamp_door_unlock_duration(duration_sec);
     let bytes = clamped.to_le_bytes();
     store

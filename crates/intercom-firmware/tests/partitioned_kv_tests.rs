@@ -382,3 +382,13 @@ fn test_load_door_duration_falls_back_on_invalid_or_corrupt_data() {
         intercom_core::config::DEFAULT_DOOR_UNLOCK_DURATION_SEC
     );
 }
+
+#[test]
+fn test_load_door_duration_succeeds_when_larger_network_key_stored() {
+    let mut store = MockKvStore::new();
+    let mut scratch = [0u8; 128];
+    store.store(NETWORKS_KEY, &[0xAA; 40], &mut scratch).unwrap();
+    intercom_firmware::reset::save_door_duration(&mut store, 10).unwrap();
+    let loaded = intercom_firmware::reset::load_door_duration(&mut store);
+    assert_eq!(loaded, 10, "Expected 10 but got {}", loaded);
+}
