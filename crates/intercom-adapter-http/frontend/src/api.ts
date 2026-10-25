@@ -51,3 +51,14 @@ export async function resetMatterKvs(): Promise<void> {
     (status) => `Matter KVS reset failed: HTTP ${status}`,
   );
 }
+
+export async function reboot(): Promise<void> {
+  return preserveHttpError(dashboardApi.reboot, (status) => `Reboot failed: HTTP ${status}`);
+}
+
+export async function factoryReset(): Promise<void> {
+  return preserveHttpError(
+    dashboardApi.factoryReset,
+    (status) => `Factory reset failed: HTTP ${status}`,
+  );
+}

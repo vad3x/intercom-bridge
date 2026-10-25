@@ -1,6 +1,8 @@
 import { createSignal } from 'solid-js';
 import {
+  factoryReset,
   fetchStatus,
+  reboot,
   resetMatterKvs,
   setDoorUnlockDuration,
   triggerRing,
@@ -78,6 +80,14 @@ export function createIntercomStore() {
     }
   };
 
+  const rebootDevice = async () => {
+    await reboot();
+  };
+
+  const factoryResetDevice = async () => {
+    await factoryReset();
+  };
+
   return {
     status,
     doorUnlockDurationSec,
@@ -88,6 +98,8 @@ export function createIntercomStore() {
     unlockDoor,
     testRing,
     resetMatter,
+    rebootDevice,
+    factoryResetDevice,
     updateDoorUnlockDuration,
   };
 }

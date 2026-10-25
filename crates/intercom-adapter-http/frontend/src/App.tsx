@@ -81,6 +81,26 @@ export function App() {
     }
   };
 
+  const handleReboot = async () => {
+    try {
+      await store.rebootDevice();
+      showToast('Device reboot initiated...', 'info');
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Failed to reboot device';
+      showToast(msg, 'error');
+    }
+  };
+
+  const handleFactoryReset = async () => {
+    try {
+      await store.factoryResetDevice();
+      showToast('Factory reset initiated. Device will reboot into setup mode...', 'info');
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Failed to factory reset';
+      showToast(msg, 'error');
+    }
+  };
+
   const ecosystemStrategies: EcosystemStrategy[] = [
     {
       id: 'matter',
@@ -143,6 +163,8 @@ export function App() {
       tabOrder={['controls', 'ecosystem', 'diagnostics', 'logs']}
       ecosystemStrategies={ecosystemStrategies}
       loadLogs={fetchLogs}
+      onReboot={handleReboot}
+      onFactoryReset={handleFactoryReset}
       toast={<Toast message={toastMsg()} type={toastType()} />}
     />
   );
