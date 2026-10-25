@@ -58,8 +58,11 @@ pub const SYSTEM_KVS_SIZE: u32 = 0x2000;
 pub const SYSTEM_KVS_RANGE: Range<u32> = SYSTEM_KVS_OFFSET..SYSTEM_KVS_OFFSET + SYSTEM_KVS_SIZE;
 
 // Backward compatibility aliases:
+#[allow(dead_code)]
 pub const WIFI_KVS_OFFSET: u32 = SYSTEM_KVS_OFFSET;
+#[allow(dead_code)]
 pub const WIFI_KVS_SIZE: u32 = SYSTEM_KVS_SIZE;
+#[allow(dead_code)]
 pub const WIFI_KVS_RANGE: Range<u32> = SYSTEM_KVS_RANGE;
 
 /// Start offset of the `matter_kvs` partition in flash (from partitions.csv).
@@ -75,6 +78,7 @@ pub const MATTER_KVS_RANGE: Range<u32> = MATTER_KVS_OFFSET..MATTER_KVS_OFFSET + 
 pub const DOOR_DURATION_KEY: u16 = 0x1001;
 
 /// Default door unlock duration in seconds.
+#[allow(dead_code)]
 pub const DEFAULT_DOOR_DURATION_SEC: u32 = intercom_core::config::DEFAULT_DOOR_UNLOCK_DURATION_SEC;
 
 // ============================================================================

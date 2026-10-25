@@ -56,6 +56,22 @@ where
         }
     }
 
+    /// Create the application from port driver implementations with a specific initial unlock duration.
+    pub fn with_duration(
+        ring: R,
+        door: D,
+        reporter: REP,
+        reset_trigger: T,
+        reset: RST,
+        unlock_duration_sec: u32,
+    ) -> Self {
+        Self {
+            ring_watcher: RingWatcher::new(ring),
+            access_controller: AccessController::with_duration(door, reporter, unlock_duration_sec),
+            reset_service: ResetService::new(reset_trigger, reset),
+        }
+    }
+
     /// Run all core domain services concurrently (never returns).
     pub async fn run(
         mut self,

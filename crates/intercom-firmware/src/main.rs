@@ -56,6 +56,8 @@ use intercom_core::app::App;
 #[cfg(target_arch = "riscv32")]
 use intercom_core::events::{SystemStateSender, SystemStateWatch};
 #[cfg(target_arch = "riscv32")]
+use intercom_core::ports::DoorDriver;
+#[cfg(target_arch = "riscv32")]
 use intercom_core::ports::inbound::{AccessControllerHandle, CommandChannel};
 #[cfg(target_arch = "riscv32")]
 use intercom_core::service::DiagnosticsService;
@@ -84,7 +86,7 @@ use intercom_adapter_matter::{
 #[cfg(target_arch = "riscv32")]
 use self::hardware_info::FirmwareHardwareInfo;
 #[cfg(target_arch = "riscv32")]
-use self::reset::FirmwareResetDriver;
+use self::reset::{FirmwarePersistenceReporter, FirmwareResetDriver};
 
 #[cfg(target_arch = "riscv32")]
 const RECLAIMED_RAM: usize =
@@ -163,6 +165,22 @@ async fn main(_spawner: Spawner) {
     let readiness = READINESS.init(ClusterReadinessBarrier::new(state_sender));
 
     // ========================================================================
+    // Persistence & initial configuration
+    // ========================================================================
+
+    #[cfg(not(feature = "dummy-persist"))]
+    let mut store = reset::create_kv_blob_store(config::MATTER_KVS_RANGE, config::SYSTEM_KVS_RANGE);
+    #[cfg(not(feature = "dummy-persist"))]
+    let initial_duration_sec = reset::load_door_duration(&mut store);
+    #[cfg(feature = "dummy-persist")]
+    let store = DummyKvBlobStore;
+    #[cfg(feature = "dummy-persist")]
+    let initial_duration_sec = intercom_core::config::DEFAULT_DOOR_UNLOCK_DURATION_SEC;
+
+    info!("Loaded door unlock duration: {}s", initial_duration_sec);
+    intercom_core::domain::diagnostics::update_door_unlock_duration(initial_duration_sec);
+
+    // ========================================================================
     // Matter drivers — own their state internally
     // ========================================================================
 
@@ -170,6 +188,8 @@ async fn main(_spawner: Spawner) {
         access: access_handle,
         readiness,
     });
+    door_lock.set_unlock_duration(initial_duration_sec);
+
     let occupancy = IntercomOccupancy::new(IntercomOccupancyConfig { readiness });
 
     // ========================================================================
@@ -195,10 +215,7 @@ async fn main(_spawner: Spawner) {
                 product_name: config::PRODUCT_NAME,
                 device_name: config::DEVICE_NAME,
             },
-            #[cfg(not(feature = "dummy-persist"))]
-            store: reset::create_kv_blob_store(config::MATTER_KVS_RANGE, config::WIFI_KVS_RANGE),
-            #[cfg(feature = "dummy-persist")]
-            store: DummyKvBlobStore,
+            store,
             comm_data: None,
         },
         state_sender,
@@ -213,19 +230,27 @@ async fn main(_spawner: Spawner) {
     // ========================================================================
 
     let ring = GpioRingDriver::new(GpioRingConfig::new(peripherals.GPIO2));
-    let door = GpioDoorDriver::new(GpioDoorConfig::new(peripherals.GPIO18));
+    let mut door = GpioDoorDriver::new(GpioDoorConfig::new(peripherals.GPIO18));
+    door.set_unlock_duration_ms(initial_duration_sec * 1000);
 
     static INDICATOR: StaticCell<GpioLedDriver> = StaticCell::new();
     let indicator: &'static GpioLedDriver =
         &*INDICATOR.init(GpioLedDriver::new(peripherals.GPIO19));
 
     let access_driver = MatterAccessControlDriver::new(&door_lock, &occupancy);
-    let reporter = (access_driver, indicator);
+    let reporter = (access_driver, indicator, FirmwarePersistenceReporter);
     let boot_button = GpioBootButtonDriver::new(
         GpioBootButtonConfig::new(peripherals.GPIO9).with_indicator(indicator),
     );
 
-    let app = App::new(ring, door, reporter, boot_button, FirmwareResetDriver);
+    let app = App::with_duration(
+        ring,
+        door,
+        reporter,
+        boot_button,
+        FirmwareResetDriver,
+        initial_duration_sec,
+    );
 
     info!("Smart Intercom Ready");
 

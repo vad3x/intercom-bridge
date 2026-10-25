@@ -56,3 +56,23 @@ impl<A: IntercomReporter, B: IntercomReporter> IntercomReporter for (A, B) {
         self.1.report_unlock_duration(duration_sec);
     }
 }
+
+impl<A: IntercomReporter, B: IntercomReporter, C: IntercomReporter> IntercomReporter for (A, B, C) {
+    fn report_ring(&self, ringing: bool) {
+        self.0.report_ring(ringing);
+        self.1.report_ring(ringing);
+        self.2.report_ring(ringing);
+    }
+
+    fn report_lock_state(&self, state: LockState) {
+        self.0.report_lock_state(state);
+        self.1.report_lock_state(state);
+        self.2.report_lock_state(state);
+    }
+
+    fn report_unlock_duration(&self, duration_sec: u32) {
+        self.0.report_unlock_duration(duration_sec);
+        self.1.report_unlock_duration(duration_sec);
+        self.2.report_unlock_duration(duration_sec);
+    }
+}

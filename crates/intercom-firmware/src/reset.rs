@@ -2,7 +2,7 @@
 //!
 //! Handles SPI flash Matter KVS sector erasure and software system reboot.
 
-use intercom_core::ports::{ResetScope, SystemResetDriver};
+use intercom_core::ports::{IntercomReporter, LockState, ResetScope, SystemResetDriver};
 use log::info;
 #[cfg(target_arch = "riscv32")]
 use log::warn;
@@ -36,6 +36,7 @@ impl<M, S> PartitionedKvBlobStore<M, S> {
 }
 
 /// Compatibility alias for the partitioned Wi-Fi/system store.
+#[allow(dead_code)]
 pub type PartitionedWifiStore<M, S> = PartitionedKvBlobStore<M, S>;
 
 fn is_system_key(key: u16) -> bool {
@@ -97,6 +98,42 @@ pub fn save_door_duration<S: KvBlobStore>(store: &mut S, duration_sec: u32) -> R
     store
         .store(crate::config::DOOR_DURATION_KEY, &bytes, &mut buf)
         .map_err(|_| ())
+}
+
+/// Persist door duration to the `system_kvs` partition in flash.
+pub fn persist_door_duration(duration_sec: u32) {
+    #[cfg(target_arch = "riscv32")]
+    #[cfg(not(feature = "dummy-persist"))]
+    {
+        let system_flash = EspFlash::new(crate::config::SYSTEM_KVS_RANGE);
+        let mut store = SeqMapKvBlobStore::new(system_flash, crate::config::SYSTEM_KVS_RANGE);
+        if let Err(_) = save_door_duration(&mut store, duration_sec) {
+            warn!("Failed to persist door duration to system_kvs");
+        } else {
+            info!("Persisted door duration to system_kvs: {}s", duration_sec);
+        }
+    }
+    #[cfg(any(not(target_arch = "riscv32"), feature = "dummy-persist"))]
+    {
+        info!("Persisted door duration (simulated): {}s", duration_sec);
+    }
+}
+
+/// Outbound reporter that synchronizes runtime lock and duration state with telemetry
+/// and persists duration changes into system flash.
+pub struct FirmwarePersistenceReporter;
+
+impl IntercomReporter for FirmwarePersistenceReporter {
+    fn report_ring(&self, _ringing: bool) {}
+
+    fn report_lock_state(&self, state: LockState) {
+        intercom_core::domain::diagnostics::update_door_locked(matches!(state, LockState::Locked));
+    }
+
+    fn report_unlock_duration(&self, duration_sec: u32) {
+        intercom_core::domain::diagnostics::update_door_unlock_duration(duration_sec);
+        persist_door_duration(duration_sec);
+    }
 }
 
 /// Outbound reset driver implementing persistent credential erasure and hardware reboot.

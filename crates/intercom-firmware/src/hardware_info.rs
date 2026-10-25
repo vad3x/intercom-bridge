@@ -190,6 +190,20 @@ extern "C" {
     fn esp_wifi_sta_get_rssi(rssi: *mut i32) -> i32;
 }
 
+/// Helper to update the active door unlock duration reflected in telemetry snapshots.
+#[inline]
+#[allow(dead_code)]
+pub fn set_door_unlock_duration(duration_sec: u32) {
+    intercom_core::domain::diagnostics::update_door_unlock_duration(duration_sec);
+}
+
+/// Helper to update the active door lock state reflected in telemetry snapshots.
+#[inline]
+#[allow(dead_code)]
+pub fn set_door_locked(locked: bool) {
+    intercom_core::domain::diagnostics::update_door_locked(locked);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -210,5 +224,13 @@ mod tests {
         assert!(!commit.is_empty());
         assert!(!date.is_empty());
         assert_eq!(total_heap, crate::config::HEAP_SIZE);
+    }
+
+    #[test]
+    fn test_telemetry_snapshot_door_unlock_duration() {
+        set_door_unlock_duration(12);
+        let state = intercom_core::domain::diagnostics::current_intercom_state();
+        assert_eq!(state.door_unlock_duration_sec, 12);
+        set_door_unlock_duration(intercom_core::config::DEFAULT_DOOR_UNLOCK_DURATION_SEC);
     }
 }

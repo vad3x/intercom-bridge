@@ -2,6 +2,30 @@
 
 pub use edf_core::domain::diagnostics::{SystemDiagnostics, WifiSsid};
 
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+
+static DOOR_LOCKED: AtomicBool = AtomicBool::new(true);
+static DOOR_UNLOCK_DURATION: AtomicU32 =
+    AtomicU32::new(crate::config::DEFAULT_DOOR_UNLOCK_DURATION_SEC);
+
+/// Update the active door lock latch state reflected in telemetry snapshots.
+pub fn update_door_locked(locked: bool) {
+    DOOR_LOCKED.store(locked, Ordering::Relaxed);
+}
+
+/// Update the active door unlock duration reflected in telemetry snapshots.
+pub fn update_door_unlock_duration(duration_sec: u32) {
+    DOOR_UNLOCK_DURATION.store(duration_sec, Ordering::Relaxed);
+}
+
+/// Retrieve the active intercom domain state for telemetry snapshots.
+pub fn current_intercom_state() -> IntercomState {
+    IntercomState {
+        door_locked: DOOR_LOCKED.load(Ordering::Relaxed),
+        door_unlock_duration_sec: DOOR_UNLOCK_DURATION.load(Ordering::Relaxed),
+    }
+}
+
 /// Intercom-specific telemetry domain payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IntercomState {
