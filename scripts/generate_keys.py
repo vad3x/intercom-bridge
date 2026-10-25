@@ -16,6 +16,8 @@ except ImportError:
 
 KEY_DIR = Path.home() / ".intercom"
 KEY_PATH = KEY_DIR / "ota_key.pem"
+REPO_ROOT = Path(__file__).resolve().parent.parent
+BIN_KEY_PATH = REPO_ROOT / "crates" / "intercom-firmware" / "ota_public_key.bin"
 
 
 def main():
@@ -41,9 +43,10 @@ def main():
         encoding=serialization.Encoding.Raw,
         format=serialization.PublicFormat.Raw,
     )
-    rust_bytes = ", ".join(f"0x{b:02x}" for b in pub_bytes)
-    print("\nCopy this public key into your firmware config:")
-    print(f"pub const OTA_PUBLIC_KEY: [u8; 32] = [{rust_bytes}];\n")
+
+    BIN_KEY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    BIN_KEY_PATH.write_bytes(pub_bytes)
+    print(f"Wrote 32-byte public key binary to {BIN_KEY_PATH}")
 
 
 if __name__ == "__main__":

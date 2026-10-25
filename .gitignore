@@ -46,5 +46,9 @@ target/
 # Vendored dependencies (local patches)
 vendor/
 
+# OTA Firmware Signing Keys
+ota_public_key.bin
+
 # AI artifacts
 .superpowers
+
