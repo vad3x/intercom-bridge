@@ -1,6 +1,6 @@
 import { Badge, Card, CardBody, CardTitle } from '@embedded-device-foundation/dashboard-core';
 import { Bell, Loader2, Lock, Sparkles, Unlock } from 'lucide-solid';
-import { type Component, createEffect, createSignal, onCleanup } from 'solid-js';
+import { type Component, createEffect, createSignal } from 'solid-js';
 import {
   DEFAULT_DOOR_UNLOCK_DURATION_SEC,
   MAX_DOOR_UNLOCK_DURATION_SEC,
@@ -24,7 +24,6 @@ export const IntercomControls: Component<IntercomControlsProps> = (props) => {
   const serverDuration = () => props.doorUnlockDurationSec ?? DEFAULT_DOOR_UNLOCK_DURATION_SEC;
   const [draftDuration, setDraftDuration] = createSignal(serverDuration());
   const [isSaving, setIsSaving] = createSignal(false);
-  let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 
   const isDirty = () => draftDuration() !== serverDuration();
 
@@ -35,39 +34,22 @@ export const IntercomControls: Component<IntercomControlsProps> = (props) => {
     }
   });
 
-  onCleanup(() => {
-    if (debounceTimer) clearTimeout(debounceTimer);
-  });
-
-  const save = async (val: number) => {
-    if (debounceTimer) {
-      clearTimeout(debounceTimer);
-      debounceTimer = undefined;
-    }
-    if (val === serverDuration()) return;
-    setIsSaving(true);
-    try {
-      await props.onDurationChange?.(val);
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
   const handleStep = (delta: number) => {
     const next = Math.max(
       MIN_DOOR_UNLOCK_DURATION_SEC,
       Math.min(MAX_DOOR_UNLOCK_DURATION_SEC, draftDuration() + delta),
     );
     setDraftDuration(next);
-
-    if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
-      save(next);
-    }, 800);
   };
 
-  const handleExplicitSave = () => {
-    save(draftDuration());
+  const handleSave = async () => {
+    if (!isDirty() || isSaving()) return;
+    setIsSaving(true);
+    try {
+      await props.onDurationChange?.(draftDuration());
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const strikeIconClass = () => {
@@ -188,23 +170,21 @@ export const IntercomControls: Component<IntercomControlsProps> = (props) => {
                     +
                   </button>
                 </div>
-                {(isDirty() || isSaving()) && (
-                  <button
-                    type="button"
-                    class="btn btn-xs btn-primary gap-1"
-                    disabled={isSaving()}
-                    onClick={handleExplicitSave}
-                  >
-                    {isSaving() ? (
-                      <>
-                        <Loader2 class="w-3 h-3 animate-spin" />
-                        <span>Saving...</span>
-                      </>
-                    ) : (
-                      'Save'
-                    )}
-                  </button>
-                )}
+                <button
+                  type="button"
+                  class="btn btn-xs btn-primary gap-1"
+                  disabled={!isDirty() || isSaving() || props.isUnlocking}
+                  onClick={handleSave}
+                >
+                  {isSaving() ? (
+                    <>
+                      <Loader2 class="w-3 h-3 animate-spin" />
+                      <span>Saving...</span>
+                    </>
+                  ) : (
+                    'Save'
+                  )}
+                </button>
               </div>
               <div class="w-full mt-5">
                 <button
