@@ -103,15 +103,15 @@ The Intercom Bridge supports secure, wireless Over-The-Air firmware updates over
 
 #### 1. Generate Signing Key (One-Time Setup)
 
-Firmware images are cryptographically signed using Ed25519 asymmetric cryptography. The private key resides exclusively on the operator's machine (`~/.intercom/ota_key.pem`); the matching 32-byte public key is embedded in `crates/intercom-firmware/src/config.rs`.
+Firmware images are cryptographically signed using Ed25519 asymmetric cryptography. The private key resides exclusively on the operator's machine (`~/.intercom/ota_key.pem`); the matching 32-byte public key is loaded at compile time from the gitignored `crates/intercom-firmware/ota_public_key.bin`.
 
 ```bash
 # Generate private key at ~/.intercom/ota_key.pem (0600 permissions)
-# and print the Rust byte array for config.rs:
+# and write public key binary to crates/intercom-firmware/ota_public_key.bin:
 python3 scripts/generate_keys.py
 ```
 
-If `crates/intercom-firmware/src/config.rs` has a newly generated `OTA_PUBLIC_KEY`, re-compile the firmware before deploying.
+If a new key is generated, re-compile the firmware before deploying.
 
 #### 2. Build Release Firmware Binary
 
@@ -265,7 +265,7 @@ intercom-bridge/
 | `crates/intercom-adapter-gpio/src/` | GPIO implementations of port traits using `esp-hal` |
 | `crates/intercom-adapter-matter/src/` | Matter protocol adapter implementation using `rs-matter` |
 | `scripts/ota.py` | Host CLI: mDNS discovery, Ed25519 signing, and streaming HTTP firmware push |
-| `scripts/generate_keys.py` | Host tool: generates Ed25519 private key and outputs Rust public key array |
+| `scripts/generate_keys.py` | Host tool: generates Ed25519 private key and writes `ota_public_key.bin` |
 | `scripts/cargo-fe` | Host frontend helper for `cargo fe-dev`, `cargo fe-build`, `cargo fe-check`, `cargo fe-install` |
 
 ## Architecture Patterns
