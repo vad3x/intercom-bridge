@@ -5,6 +5,8 @@
 pub mod access;
 pub mod diagnostics;
 pub mod ecosystem;
+pub mod intercom;
+pub mod policy;
 pub mod reset;
 
 pub use access::{AccessEffects, AccessStateMachine};
