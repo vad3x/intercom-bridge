@@ -6,7 +6,7 @@ use log::warn;
 
 use crate::domain::intercom::{IntercomAction, SessionOwner};
 
-/// Non-blocking inbound handle for intercom bus, strike, and session commands.
+/// Inbound handle for intercom bus, strike, and session commands.
 #[derive(Clone, Copy)]
 pub struct IntercomControllerHandle<'a> {
     sender: CommandSender<'a>,
@@ -67,6 +67,14 @@ impl<'a> IntercomControllerHandle<'a> {
     /// Release the given owner’s session.
     pub fn end_session(&self, owner: SessionOwner) {
         self.send(IntercomCommand::EndSession(owner));
+    }
+
+    /// Wait for command capacity to queue session release without discarding it.
+    ///
+    /// Async adapters should await this before accepting another session. The
+    /// controller must keep draining its command channel while this is pending.
+    pub async fn end_session_wait(&self, owner: SessionOwner) {
+        self.sender.send(IntercomCommand::EndSession(owner)).await;
     }
 
     /// Request that the bus and audio return to their safe idle state.

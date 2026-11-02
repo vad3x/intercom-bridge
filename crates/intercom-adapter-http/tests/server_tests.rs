@@ -1765,3 +1765,103 @@ fn websocket_releases_reservation_and_session_on_io_errors_and_cancellation() {
         assert!(channel.try_receive().is_err(), "{fault}");
     }
 }
+
+#[test]
+fn websocket_close_waits_for_end_session_capacity_before_releasing_reservation() {
+    use core::sync::atomic::{AtomicBool, Ordering};
+    use futures::Future;
+    use intercom_adapter_http::HttpAudioMedia;
+    use intercom_core::domain::intercom::SessionOwner;
+    use intercom_core::events::CallStateWatch;
+    use intercom_core::ports::inbound::CMD_QUEUE_CAP;
+
+    // Arrange
+    for queue_starts_full in [true, false] {
+        let channel = CommandChannel::new();
+        let handle = AccessControllerHandle::new(channel.sender());
+        let hardware = MockHardwareInfo;
+        let watch = SystemStateWatch::new();
+        let calls = CallStateWatch::new();
+        let diagnostics = DiagnosticsService::new(&hardware, &watch);
+        let mut ota = MockOtaFlashDriver::new(false);
+        let rx_audio = intercom_media::RxAudioChannel::new();
+        let tx_audio = intercom_media::TxAudioChannel::new();
+        let active = AtomicBool::new(false);
+        let mut server = HttpServer::new_unbound(
+            handle,
+            &BusSafetyDriverMock,
+            &diagnostics,
+            &mut ota,
+            test_log_provider,
+            HttpServerConfig::default(),
+        )
+        .with_audio_media(HttpAudioMedia {
+            rx_audio: &rx_audio,
+            tx_audio: &tx_audio,
+            call_watch: &calls,
+            state_watch: &watch,
+            ws_active: &active,
+        });
+        let mut input = WS_AUDIO_REQUEST.to_vec();
+        if queue_starts_full {
+            for _ in 0..CMD_QUEUE_CAP {
+                handle.send(AccessCommand::Ring);
+            }
+        } else {
+            // StartListen + StartTalk + six heartbeats fill the queue before Close.
+            input.extend(masked_ws_frame(2, &[1]));
+            for _ in 0..CMD_QUEUE_CAP - 2 {
+                input.extend(masked_ws_frame(2, &[0]));
+            }
+        }
+        input.extend(masked_ws_frame(8, &[]));
+        let mut stream = MockStream::new(&input);
+        let mut request = Box::pin(server.handle_request(&mut stream));
+        let waker = futures::task::noop_waker();
+        let mut cx = std::task::Context::from_waker(&waker);
+
+        // Act: Close must wait while the controller queue has no room.
+        let blocked = request.as_mut().poll(&mut cx);
+
+        // Assert
+        assert!(blocked.is_pending(), "Close must not discard EndSession");
+        assert!(
+            active.load(Ordering::Acquire),
+            "reservation remains held during cleanup"
+        );
+        assert_eq!(channel.len(), CMD_QUEUE_CAP);
+        let first = channel.try_receive().unwrap();
+        assert_eq!(
+            first,
+            if queue_starts_full {
+                AccessCommand::Ring
+            } else {
+                AccessCommand::StartListen(SessionOwner::HttpDebug)
+            }
+        );
+
+        // Act: The controller consumes one command, permitting reliable cleanup.
+        let completed = request.as_mut().poll(&mut cx);
+        drop(request);
+
+        // Assert
+        assert!(matches!(completed, std::task::Poll::Ready(Ok(()))));
+        assert!(!active.load(Ordering::Acquire));
+        let mut remaining = Vec::new();
+        while let Ok(command) = channel.try_receive() {
+            remaining.push(command);
+        }
+        assert_eq!(remaining.len(), CMD_QUEUE_CAP);
+        assert_eq!(
+            remaining.last(),
+            Some(&AccessCommand::EndSession(SessionOwner::HttpDebug))
+        );
+        assert_eq!(
+            remaining
+                .iter()
+                .filter(|command| **command == AccessCommand::EndSession(SessionOwner::HttpDebug))
+                .count(),
+            1
+        );
+    }
+}

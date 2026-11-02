@@ -66,53 +66,29 @@ impl<'a> WsAudioSession<'a> {
         }
     }
 
-    fn release(&mut self) {
-        if self.reserved {
-            if self.started {
-                self.access_handle.end_session(SessionOwner::HttpDebug);
-            }
-            self.media.ws_active.store(false, Ordering::Release);
-            self.reserved = false;
-        }
-    }
-}
-
-// The callback owns the reservation even before the 101 response is written.
-// Dropping a failed upgrade or cancelled session must release it too.
-impl Drop for WsAudioSession<'_> {
-    fn drop(&mut self) {
-        self.release();
-    }
-}
-
-impl WebSocketCallback for WsAudioSession<'_> {
-    async fn run<R: picoserve::io::Read, W: picoserve::io::Write<Error = R::Error>>(
-        mut self,
-        mut rx: SocketRx<R>,
-        mut tx: SocketTx<W>,
-    ) -> Result<(), W::Error> {
+    async fn run_media<R: picoserve::io::Read, W: picoserve::io::Write<Error = R::Error>>(
+        &mut self,
+        rx: &mut SocketRx<R>,
+        tx: &mut SocketTx<W>,
+    ) -> Result<SessionEnd, W::Error> {
         let mut rx_audio = self.media.rx_audio.receiver();
         let mut tx_audio = self.media.tx_audio.sender();
         let (Some(mut call_rx), Some(mut state_rx)) = (
             self.media.call_watch.receiver(),
             self.media.state_watch.receiver(),
         ) else {
-            self.release();
-            return tx.close((1013, "audio watches unavailable")).await;
+            return Ok(SessionEnd::Unavailable);
         };
         if self.media.is_preempted() {
-            self.release();
-            return tx.close((1013, "preempted")).await;
+            return Ok(SessionEnd::Preempted);
         }
         self.access_handle.start_listen(SessionOwner::HttpDebug);
         self.started = true;
         let mut msg_buf = [0u8; AUDIO_FRAME_SAMPLES];
-        let mut preempted = false;
 
         loop {
             if self.media.is_preempted() {
-                preempted = true;
-                break;
+                return Ok(SessionEnd::Preempted);
             }
             let preempt_fut = wait_for_preemption(&mut call_rx, &mut state_rx);
 
@@ -126,8 +102,7 @@ impl WebSocketCallback for WsAudioSession<'_> {
             .await;
             let event = match event {
                 EmbEither::First(()) => {
-                    preempted = true;
-                    break;
+                    return Ok(SessionEnd::Preempted);
                 }
                 EmbEither::Second(event) => event?,
             };
@@ -163,15 +138,14 @@ impl WebSocketCallback for WsAudioSession<'_> {
                     .await
                     {
                         EmbEither::First(()) => {
-                            preempted = true;
-                            break;
+                            return Ok(SessionEnd::Preempted);
                         }
                         EmbEither::Second(result) => result?,
                     }
                     false
                 }
                 WsEither::First(Ok(Message::Close(_))) | WsEither::First(Err(_)) => {
-                    break;
+                    return Ok(SessionEnd::Normal);
                 }
                 WsEither::First(Ok(_)) => false,
                 WsEither::Second(pcm_frame) => {
@@ -189,20 +163,63 @@ impl WebSocketCallback for WsAudioSession<'_> {
                 .await
                 {
                     EmbEither::First(()) => {
-                        preempted = true;
-                        break;
+                        return Ok(SessionEnd::Preempted);
                     }
                     EmbEither::Second(result) => result?,
                 }
             }
         }
+    }
 
+    fn release(&mut self) {
+        if self.reserved {
+            if self.started {
+                self.access_handle.end_session(SessionOwner::HttpDebug);
+            }
+            self.media.ws_active.store(false, Ordering::Release);
+            self.reserved = false;
+        }
+    }
+}
+
+// The callback owns the reservation even before the 101 response is written.
+// Cancellation releases that reservation and attempts non-blocking session cleanup;
+// normal completion uses awaited delivery instead.
+impl Drop for WsAudioSession<'_> {
+    fn drop(&mut self) {
         self.release();
+    }
+}
 
-        if preempted {
-            tx.close((1013, "preempted")).await
-        } else {
-            tx.close(None).await
+enum SessionEnd {
+    Normal,
+    Preempted,
+    Unavailable,
+}
+
+impl WebSocketCallback for WsAudioSession<'_> {
+    async fn run<R: picoserve::io::Read, W: picoserve::io::Write<Error = R::Error>>(
+        mut self,
+        mut rx: SocketRx<R>,
+        mut tx: SocketTx<W>,
+    ) -> Result<(), W::Error> {
+        // The media helper is gone before command-queue cleanup waits, so PCM
+        // frames and watch receivers never remain allocated across that wait.
+        let result = self.run_media(&mut rx, &mut tx).await;
+        // Normal completion, preemption and I/O errors retain the reservation
+        // until EndSession has entered the controller queue. Drop remains the
+        // best-effort fallback if this task is cancelled while waiting.
+        if self.started {
+            self.access_handle
+                .end_session_wait(SessionOwner::HttpDebug)
+                .await;
+            self.started = false;
+        }
+        self.release();
+        match result? {
+            SessionEnd::Normal => tx.close(None).await,
+            SessionEnd::Preempted => tx.close((1013, "preempted")).await,
+            SessionEnd::Unavailable => tx.close((1013, "audio watches unavailable")).await,
         }
     }
 }
