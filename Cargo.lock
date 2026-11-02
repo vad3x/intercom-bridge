@@ -2596,6 +2596,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "intercom-media"
+version = "0.1.0"
+dependencies = [
+ "critical-section",
+ "embassy-sync 0.8.0",
+ "futures",
+]
+
+[[package]]
 name = "intercom-pairing-tool"
 version = "0.1.0"
 dependencies = [

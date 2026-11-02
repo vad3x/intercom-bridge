@@ -6,6 +6,7 @@ license = "MIT OR Apache-2.0"
 [workspace]
 members = [
     "crates/intercom-core",
+    "crates/intercom-media",
     "crates/intercom-adapter-gpio",
     "crates/intercom-adapter-http",
     "crates/intercom-adapter-matter",
@@ -16,6 +17,7 @@ default-members = ["crates/intercom-firmware"]
 resolver = "2"
 
 [workspace.dependencies]
+intercom-media = { path = "crates/intercom-media" }
 edf-core = { path = "../embedded-device-foundation/crates/edf-core" }
 edf-gpio = { path = "../embedded-device-foundation/crates/edf-gpio" }
 edf-matter = { path = "../embedded-device-foundation/crates/edf-matter" }

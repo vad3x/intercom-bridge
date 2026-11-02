@@ -1,0 +1,13 @@
+[package]
+name = "intercom-media"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Zero-infrastructure no_std 16 kHz PCM frame and media stream contracts"
+
+[dependencies]
+embassy-sync = { workspace = true }
+
+[dev-dependencies]
+critical-section = { workspace = true, features = ["std"] }
+futures = { workspace = true }
