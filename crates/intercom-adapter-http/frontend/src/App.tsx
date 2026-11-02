@@ -8,6 +8,7 @@ import {
 import { DoorClosed, Layers } from 'lucide-solid';
 import { createSignal, onCleanup, onMount } from 'solid-js';
 import { fetchLogs } from './api';
+import { BusDebugCard } from './components/BusDebugCard';
 import { IntercomControls } from './components/IntercomControls';
 import { createIntercomStore } from './store/intercomStore';
 
@@ -148,15 +149,25 @@ export function App() {
         </Badge>
       }
       controlTab={
-        <IntercomControls
-          doorLocked={store.status()?.door_locked}
-          doorUnlockDurationSec={store.doorUnlockDurationSec()}
-          isUnlocking={store.isUnlocking()}
-          isRinging={store.isRinging()}
-          onUnlock={handleUnlock}
-          onRing={handleRing}
-          onDurationChange={handleDurationChange}
-        />
+        <>
+          <IntercomControls
+            doorLocked={store.status()?.door_locked}
+            doorUnlockDurationSec={store.doorUnlockDurationSec()}
+            isUnlocking={store.isUnlocking()}
+            isRinging={store.isRinging()}
+            onUnlock={handleUnlock}
+            onRing={handleRing}
+            onDurationChange={handleDurationChange}
+          />
+          <BusDebugCard
+            busState={store.status()?.bus_state}
+            callState={store.status()?.call_state}
+            onStartListen={store.startListen}
+            onStartTalk={store.startTalk}
+            onStopTalk={store.stopTalk}
+            onHangup={store.hangupSession}
+          />
+        </>
       }
       status={store.status()}
       themeStorageKey="intercom_theme"

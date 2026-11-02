@@ -1,10 +1,15 @@
-import { createSignal } from 'solid-js';
+import { createEffect, createSignal, onCleanup } from 'solid-js';
 import {
   factoryReset,
   fetchStatus,
+  hangupBusSession,
   reboot,
   resetMatterKvs,
+  sendBusHeartbeat,
   setDoorUnlockDuration,
+  startBusListen,
+  startBusTalk,
+  stopBusTalk,
   triggerRing,
   triggerUnlock,
 } from '../api';
@@ -18,22 +23,62 @@ export function createIntercomStore() {
   const [isUnlocking, setIsUnlocking] = createSignal(false);
   const [isRinging, setIsRinging] = createSignal(false);
   const [isResettingMatter, setIsResettingMatter] = createSignal(false);
+  const [debugSessionActive, setDebugSessionActive] = createSignal(false);
 
   const poll = async () => {
-    if (typeof document !== 'undefined' && document.hidden) return;
+    if (typeof document !== 'undefined' && document.hidden) {
+      return;
+    }
     try {
       const data = await fetchStatus();
       setStatus(data);
       if (data.door_unlock_duration_sec !== undefined) {
         setDoorUnlockDurationSec(data.door_unlock_duration_sec);
       }
-      // If hardware reports locked and unlocking intent expired, clear unlocking
       if (data.door_locked && isUnlocking()) {
         setIsUnlocking(false);
+      }
+      if (data.call_state === 'idle' && debugSessionActive()) {
+        setDebugSessionActive(false);
       }
     } catch {
       // Offline / server unreachable
     }
+  };
+
+  createEffect(() => {
+    if (!debugSessionActive()) {
+      return;
+    }
+    const timer = setInterval(() => {
+      void sendBusHeartbeat().catch(() => {
+        setDebugSessionActive(false);
+      });
+    }, 2000);
+    onCleanup(() => clearInterval(timer));
+  });
+
+  const startListen = async () => {
+    await startBusListen();
+    setDebugSessionActive(true);
+    await poll();
+  };
+
+  const startTalk = async () => {
+    await startBusTalk();
+    setDebugSessionActive(true);
+    await poll();
+  };
+
+  const stopTalk = async () => {
+    await stopBusTalk();
+    await poll();
+  };
+
+  const hangupSession = async () => {
+    setDebugSessionActive(false);
+    await hangupBusSession();
+    await poll();
   };
 
   const unlockDoor = async () => {
@@ -94,6 +139,7 @@ export function createIntercomStore() {
     isUnlocking,
     isRinging,
     isResettingMatter,
+    debugSessionActive,
     poll,
     unlockDoor,
     testRing,
@@ -101,5 +147,9 @@ export function createIntercomStore() {
     rebootDevice,
     factoryResetDevice,
     updateDoorUnlockDuration,
+    startListen,
+    startTalk,
+    stopTalk,
+    hangupSession,
   };
 }

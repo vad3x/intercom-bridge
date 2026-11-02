@@ -38,6 +38,41 @@ export async function triggerRing(): Promise<void> {
   }
 }
 
+export async function startBusListen(): Promise<void> {
+  const res = await fetch('/api/action/listen', { method: 'POST' });
+  if (!res.ok) {
+    throw new Error(`Listen failed: HTTP ${res.status}`);
+  }
+}
+
+export async function startBusTalk(): Promise<void> {
+  const res = await fetch('/api/action/talk/start', { method: 'POST' });
+  if (!res.ok) {
+    throw new Error(`Start talk failed: HTTP ${res.status}`);
+  }
+}
+
+export async function stopBusTalk(): Promise<void> {
+  const res = await fetch('/api/action/talk/stop', { method: 'POST' });
+  if (!res.ok) {
+    throw new Error(`Stop talk failed: HTTP ${res.status}`);
+  }
+}
+
+export async function sendBusHeartbeat(): Promise<void> {
+  const res = await fetch('/api/action/heartbeat', { method: 'POST' });
+  if (!res.ok) {
+    throw new Error(`Heartbeat failed: HTTP ${res.status}`);
+  }
+}
+
+export async function hangupBusSession(): Promise<void> {
+  const res = await fetch('/api/action/hangup', { method: 'POST' });
+  if (!res.ok) {
+    throw new Error(`Hangup failed: HTTP ${res.status}`);
+  }
+}
+
 export async function setDoorUnlockDuration(seconds: number): Promise<void> {
   const res = await fetch(`/api/action/door-duration?seconds=${seconds}`, { method: 'POST' });
   if (!res.ok) {
