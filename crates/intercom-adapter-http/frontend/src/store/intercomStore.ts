@@ -28,6 +28,12 @@ export function createIntercomStore() {
   const [isRinging, setIsRinging] = createSignal(false);
   const [isResettingMatter, setIsResettingMatter] = createSignal(false);
   const [debugSessionActive, setDebugSessionActive] = createSignal(false);
+  const [desiredAudioGain, setDesiredAudioGain] = createSignal<AudioGainUpdate | null>(null);
+  let lastPostedAudioGain: AudioGainUpdate | null = null;
+  let audioGainGeneration = 0;
+  let completedAudioGainGeneration = 0;
+  let audioGainQueue = Promise.resolve();
+  let latestStatusPoll = 0;
   let debugSessionGeneration = 0;
   let debugSessionStartupDeadline = 0;
   let debugSessionAcknowledged = false;
@@ -39,10 +45,27 @@ export function createIntercomStore() {
       return;
     }
     const generation = debugSessionGeneration;
+    const gainGeneration = audioGainGeneration;
+    const completedGainGeneration = completedAudioGainGeneration;
     const sequence = ++pollSequence;
     try {
       const data = await fetchStatus();
+      if (sequence < latestStatusPoll) return;
+      latestStatusPoll = sequence;
       setStatus(data);
+      const desired = desiredAudioGain();
+      // Gain routes queue commands. Keep the desired or rollback pair until a
+      // poll started after its successful POST observes it.
+      if (
+        desired &&
+        gainGeneration === audioGainGeneration &&
+        completedGainGeneration === desired.generation &&
+        data.rx_gain_half_db === desired.rxHalfDb &&
+        data.tx_gain_half_db === desired.txHalfDb
+      ) {
+        setDesiredAudioGain(null);
+        if (lastPostedAudioGain?.generation === desired.generation) lastPostedAudioGain = null;
+      }
       if (data.door_unlock_duration_sec !== undefined) {
         setDoorUnlockDurationSec(data.door_unlock_duration_sec);
       }
@@ -160,9 +183,30 @@ export function createIntercomStore() {
     }
   };
 
+  const rxGainHalfDb = () => desiredAudioGain()?.rxHalfDb ?? status()?.rx_gain_half_db;
+  const txGainHalfDb = () => desiredAudioGain()?.txHalfDb ?? status()?.tx_gain_half_db;
+
   const updateAudioGain = async (rxHalfDb: number, txHalfDb: number) => {
-    await setAudioGain(rxHalfDb, txHalfDb);
-    await poll();
+    const generation = ++audioGainGeneration;
+    // Publish synchronously so the other slider combines with this edit.
+    const update = { rxHalfDb, txHalfDb, generation };
+    setDesiredAudioGain(update);
+    const write = audioGainQueue.then(async () => {
+      await setAudioGain(rxHalfDb, txHalfDb);
+      completedAudioGainGeneration = generation;
+      lastPostedAudioGain = update;
+    });
+    // A failed request must not prevent a later queued edit from being sent.
+    audioGainQueue = write.catch(() => {});
+    try {
+      await write;
+      await poll();
+    } catch (error: unknown) {
+      // A previous POST may be accepted while status still predates it. Retain
+      // that successful pair until observed instead of reverting to stale status.
+      if (generation === audioGainGeneration) setDesiredAudioGain(lastPostedAudioGain);
+      throw error;
+    }
   };
 
   const toggleBenchTone = async (enable: boolean) => {
@@ -192,6 +236,8 @@ export function createIntercomStore() {
     rebootDevice,
     factoryResetDevice,
     updateDoorUnlockDuration,
+    rxGainHalfDb,
+    txGainHalfDb,
     updateAudioGain,
     toggleBenchTone,
     startListen,
@@ -199,4 +245,10 @@ export function createIntercomStore() {
     stopTalk,
     hangupSession,
   };
+}
+
+interface AudioGainUpdate {
+  rxHalfDb: number;
+  txHalfDb: number;
+  generation: number;
 }

@@ -315,3 +315,241 @@ test.each(audioActions)(
     await expect(request).rejects.toThrow(`${message}: HTTP 409`);
   },
 );
+
+test('rapid independent gain edits preserve the optimistic pair and serialize POSTs', async () => {
+  // Arrange
+  const firstResponse = Promise.withResolvers<Response>();
+  const secondResponse = Promise.withResolvers<Response>();
+  const firstStarted = Promise.withResolvers<void>();
+  const secondStarted = Promise.withResolvers<void>();
+  let backendGain = { rx_gain_half_db: 40, tx_gain_half_db: 0 };
+  const posts: string[] = [];
+  fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (path) => {
+    if (path === '/api/status') return Response.json({ door_locked: true, ...backendGain });
+    posts.push(String(path));
+    if (posts.length === 1) {
+      firstStarted.resolve();
+      return firstResponse.promise;
+    }
+    secondStarted.resolve();
+    return secondResponse.promise;
+  });
+  const store = createIntercomStore();
+  const rxGain = Reflect.get(store, 'rxGainHalfDb') as () => number | undefined;
+  const txGain = Reflect.get(store, 'txGainHalfDb') as () => number | undefined;
+  expect(rxGain).toBeFunction();
+  expect(txGain).toBeFunction();
+  await store.poll();
+
+  // Act
+  const rxEdit = store.updateAudioGain(50, txGain() ?? 0);
+  const txEdit = store.updateAudioGain(rxGain() ?? 40, -12);
+  await firstStarted.promise;
+
+  // Assert
+  expect([rxGain(), txGain()]).toEqual([50, -12]);
+  expect(posts).toEqual(['/api/action/audio/gain?rx_half_db=50&tx_half_db=0']);
+  backendGain = { rx_gain_half_db: 50, tx_gain_half_db: 0 };
+  firstResponse.resolve(new Response(null, { status: 204 }));
+  await rxEdit;
+  await secondStarted.promise;
+  expect(posts).toEqual([
+    '/api/action/audio/gain?rx_half_db=50&tx_half_db=0',
+    '/api/action/audio/gain?rx_half_db=50&tx_half_db=-12',
+  ]);
+  expect([rxGain(), txGain()]).toEqual([50, -12]);
+  secondResponse.resolve(new Response(null, { status: 204 }));
+  await txEdit;
+  // The REST endpoint queues a command; its first status response may still be old.
+  expect([rxGain(), txGain()]).toEqual([50, -12]);
+  backendGain = { rx_gain_half_db: 50, tx_gain_half_db: -12 };
+  await store.poll();
+  expect([rxGain(), txGain()]).toEqual([50, -12]);
+});
+
+test('a delayed older poll cannot undo a confirmed gain pair', async () => {
+  // Arrange
+  const stale = Promise.withResolvers<Response>();
+  fetchSpy = spyOn(globalThis, 'fetch')
+    .mockResolvedValueOnce(
+      Response.json({ door_locked: true, rx_gain_half_db: 40, tx_gain_half_db: 0 }),
+    )
+    .mockReturnValueOnce(stale.promise)
+    .mockResolvedValueOnce(new Response(null, { status: 204 }))
+    .mockResolvedValueOnce(
+      Response.json({ door_locked: true, rx_gain_half_db: 50, tx_gain_half_db: -12 }),
+    );
+  const store = createIntercomStore();
+  const rxGain = Reflect.get(store, 'rxGainHalfDb') as () => number | undefined;
+  const txGain = Reflect.get(store, 'txGainHalfDb') as () => number | undefined;
+  expect(rxGain).toBeFunction();
+  expect(txGain).toBeFunction();
+  await store.poll();
+  const oldPoll = store.poll();
+  await store.updateAudioGain(50, -12);
+
+  // Act
+  stale.resolve(Response.json({ door_locked: true, rx_gain_half_db: 40, tx_gain_half_db: 0 }));
+  await oldPoll;
+
+  // Assert
+  expect([rxGain(), txGain()]).toEqual([50, -12]);
+});
+
+test('a rejected gain write rolls back its optimistic pair without poisoning later writes', async () => {
+  // Arrange
+  fetchSpy = spyOn(globalThis, 'fetch')
+    .mockResolvedValueOnce(
+      Response.json({ door_locked: true, rx_gain_half_db: 40, tx_gain_half_db: 0 }),
+    )
+    .mockResolvedValueOnce(new Response(null, { status: 503 }))
+    .mockResolvedValueOnce(new Response(null, { status: 204 }))
+    .mockResolvedValueOnce(
+      Response.json({ door_locked: true, rx_gain_half_db: 60, tx_gain_half_db: -10 }),
+    );
+  const store = createIntercomStore();
+  const rxGain = Reflect.get(store, 'rxGainHalfDb') as () => number | undefined;
+  const txGain = Reflect.get(store, 'txGainHalfDb') as () => number | undefined;
+  expect(rxGain).toBeFunction();
+  expect(txGain).toBeFunction();
+  await store.poll();
+
+  // Act
+  const rejected = store.updateAudioGain(50, -12);
+
+  // Assert
+  await expect(rejected).rejects.toThrow('Audio gain update failed: HTTP 503');
+  expect([rxGain(), txGain()]).toEqual([40, 0]);
+  await store.updateAudioGain(60, -10);
+  expect([rxGain(), txGain()]).toEqual([60, -10]);
+});
+
+test('matching pre-write status cannot acknowledge a pair while earlier writes are queued', async () => {
+  // Arrange
+  const firstResponse = Promise.withResolvers<Response>();
+  const secondResponse = Promise.withResolvers<Response>();
+  const firstStarted = Promise.withResolvers<void>();
+  let backendRx = 40;
+  let posts = 0;
+  fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (path) => {
+    if (path === '/api/status') {
+      return Response.json({ door_locked: true, rx_gain_half_db: backendRx, tx_gain_half_db: 0 });
+    }
+    if (++posts === 1) {
+      firstStarted.resolve();
+      return firstResponse.promise;
+    }
+    return secondResponse.promise;
+  });
+  const store = createIntercomStore();
+  await store.poll();
+  const first = store.updateAudioGain(50, 0);
+  const second = store.updateAudioGain(40, 0);
+  await firstStarted.promise;
+
+  // Act
+  await store.poll();
+  backendRx = 50;
+  firstResponse.resolve(new Response(null, { status: 204 }));
+  await first;
+
+  // Assert
+  expect(store.rxGainHalfDb()).toBe(40);
+  backendRx = 40;
+  secondResponse.resolve(new Response(null, { status: 204 }));
+  await second;
+  expect(store.rxGainHalfDb()).toBe(40);
+});
+
+test('failure of an older queued gain write cannot roll back the newer desired pair', async () => {
+  // Arrange
+  const firstResponse = Promise.withResolvers<Response>();
+  let posts = 0;
+  fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (path) => {
+    if (path === '/api/status') {
+      return Response.json({ door_locked: true, rx_gain_half_db: 40, tx_gain_half_db: 0 });
+    }
+    return ++posts === 1 ? firstResponse.promise : new Response(null, { status: 204 });
+  });
+  const store = createIntercomStore();
+  await store.poll();
+  const first = store.updateAudioGain(50, 0);
+  const second = store.updateAudioGain(store.rxGainHalfDb() ?? 40, -12);
+
+  // Act
+  firstResponse.resolve(new Response(null, { status: 503 }));
+  await expect(first).rejects.toThrow('Audio gain update failed: HTTP 503');
+  await second;
+
+  // Assert
+  expect(posts).toBe(2);
+  expect([store.rxGainHalfDb(), store.txGainHalfDb()]).toEqual([50, -12]);
+});
+
+test('failed queued TX edit preserves a successful RX write through stale status and retry', async () => {
+  // Arrange
+  const firstResponse = Promise.withResolvers<Response>();
+  const secondResponse = Promise.withResolvers<Response>();
+  const posts: string[] = [];
+  fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (path) => {
+    if (path === '/api/status') {
+      return Response.json({ door_locked: true, rx_gain_half_db: 40, tx_gain_half_db: 0 });
+    }
+    posts.push(String(path));
+    if (posts.length === 1) return firstResponse.promise;
+    if (posts.length === 2) return secondResponse.promise;
+    return new Response(null, { status: 204 });
+  });
+  const store = createIntercomStore();
+  await store.poll();
+  const rxEdit = store.updateAudioGain(50, 0);
+  const txEdit = store.updateAudioGain(store.rxGainHalfDb() ?? 40, -12);
+
+  // Act
+  firstResponse.resolve(new Response(null, { status: 204 }));
+  await rxEdit;
+  secondResponse.resolve(new Response(null, { status: 503 }));
+  await expect(txEdit).rejects.toThrow('Audio gain update failed: HTTP 503');
+
+  // Assert
+  expect([store.rxGainHalfDb(), store.txGainHalfDb()]).toEqual([50, 0]);
+  await store.updateAudioGain(store.rxGainHalfDb() ?? 40, -12);
+  expect(posts).toEqual([
+    '/api/action/audio/gain?rx_half_db=50&tx_half_db=0',
+    '/api/action/audio/gain?rx_half_db=50&tx_half_db=-12',
+    '/api/action/audio/gain?rx_half_db=50&tx_half_db=-12',
+  ]);
+});
+
+test('rollback after latest failure remains until confirmed then follows fresh status', async () => {
+  // Arrange
+  let backendRx = 40;
+  let posts = 0;
+  fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (path) => {
+    if (path === '/api/status') {
+      return Response.json({ door_locked: true, rx_gain_half_db: backendRx, tx_gain_half_db: 0 });
+    }
+    return new Response(null, { status: ++posts === 1 ? 204 : 503 });
+  });
+  const store = createIntercomStore();
+  await store.poll();
+  await store.updateAudioGain(50, 0);
+  await expect(store.updateAudioGain(50, -12)).rejects.toThrow(
+    'Audio gain update failed: HTTP 503',
+  );
+
+  // Act
+  await store.poll();
+
+  // Assert
+  expect([store.rxGainHalfDb(), store.txGainHalfDb()]).toEqual([50, 0]);
+  backendRx = 50;
+  await store.poll();
+  backendRx = 55;
+  await store.poll();
+  expect(store.rxGainHalfDb()).toBe(55);
+  await expect(store.updateAudioGain(60, -12)).rejects.toThrow(
+    'Audio gain update failed: HTTP 503',
+  );
+  expect([store.rxGainHalfDb(), store.txGainHalfDb()]).toEqual([55, 0]);
+});

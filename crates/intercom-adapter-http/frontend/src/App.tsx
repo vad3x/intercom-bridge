@@ -171,8 +171,8 @@ export function App() {
           <LiveAudioCard
             rxRmsDbfs={store.status()?.rx_rms_dbfs}
             rxPeakDbfs={store.status()?.rx_peak_dbfs}
-            rxGainHalfDb={store.status()?.rx_gain_half_db}
-            txGainHalfDb={store.status()?.tx_gain_half_db}
+            rxGainHalfDb={store.rxGainHalfDb()}
+            txGainHalfDb={store.txGainHalfDb()}
             toneActive={store.status()?.tone_active}
             onGainChange={store.updateAudioGain}
             onToggleTone={store.toggleBenchTone}
