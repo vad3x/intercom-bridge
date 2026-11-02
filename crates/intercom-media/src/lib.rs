@@ -80,11 +80,13 @@ pub fn compute_frame_levels_dbfs(frame: &PcmFrame) -> FrameLevelsDbfs {
         sum_sq += (mag as u64) * (mag as u64);
         i += 1;
     }
-    let mean_sq = sum_sq / AUDIO_FRAME_SAMPLES as u64;
-    let rms = isqrt_u64(mean_sq) as u16;
+    const RMS_FRACTION_BITS: u32 = 10;
+    let rms_scale = 1u64 << RMS_FRACTION_BITS;
+    let rms_squared_q20 = sum_sq * rms_scale * rms_scale / AUDIO_FRAME_SAMPLES as u64;
+    let rms_q10 = isqrt_u64(rms_squared_q20);
     FrameLevelsDbfs {
-        rms_dbfs: amplitude_to_dbfs(rms),
-        peak_dbfs: amplitude_to_dbfs(peak),
+        rms_dbfs: amplitude_to_dbfs(rms_q10),
+        peak_dbfs: amplitude_to_dbfs(peak as u64 * rms_scale),
     }
 }
 
@@ -129,19 +131,34 @@ fn isqrt_u64(n: u64) -> u64 {
 }
 
 /// Integer approximation of `20 * log10(amp / 32767)` clamped to `[-96, 0]` dBFS.
-fn amplitude_to_dbfs(amp: u16) -> i8 {
-    if amp == 0 {
+fn amplitude_to_dbfs(amp_q10: u64) -> i8 {
+    const SCALE: u64 = 1 << 10;
+    const MAX_AMPLITUDE_Q10: u64 = 32_767 * SCALE;
+    const NORMALIZED_BASE_Q10: u64 = 16_384 * SCALE;
+
+    if amp_q10 == 0 {
         return SILENCE_DBFS;
     }
-    if amp >= 32_767 {
+    if amp_q10 >= MAX_AMPLITUDE_Q10 {
         return 0;
     }
-    let octaves_down = (amp.leading_zeros() - 1) as i32;
-    let norm = (amp as u32) << octaves_down;
-    let frac_db = (((32_767u32 - norm) * 602) / 16_384) as i32;
+    let octaves_down = (amp_q10.leading_zeros() - 39) as i32;
+    let norm = amp_q10 << octaves_down;
+    let offset = norm - NORMALIZED_BASE_Q10;
+    let bucket_scaled = offset * 16;
+    let bucket = (bucket_scaled / NORMALIZED_BASE_Q10) as usize;
+    let remainder = bucket_scaled % NORMALIZED_BASE_Q10;
+    let lower = DBFS_FRACTION_HUNDREDTHS[bucket] as u64;
+    let upper = DBFS_FRACTION_HUNDREDTHS[bucket + 1] as u64;
+    let frac_db = (lower - (lower - upper) * remainder / NORMALIZED_BASE_Q10) as i32;
     let total_hundredths = -(octaves_down * 602 + frac_db);
     ((total_hundredths - 50) / 100).clamp(SILENCE_DBFS as i32, 0) as i8
 }
+
+/// Attenuation from full scale, in hundredths of a dB, at sixteenth-octave steps.
+const DBFS_FRACTION_HUNDREDTHS: [u16; 17] = [
+    602, 550, 500, 453, 408, 366, 326, 287, 250, 214, 180, 147, 116, 86, 56, 28, 0,
+];
 
 #[cfg(test)]
 mod tests {
@@ -182,18 +199,62 @@ mod tests {
     }
 
     #[test]
+    fn negative_full_scale_measures_zero_dbfs_rms_and_peak() {
+        // Arrange
+        let frame = PcmFrame {
+            samples: [i16::MIN; AUDIO_FRAME_SAMPLES],
+        };
+        // Act
+        let levels = compute_frame_levels_dbfs(&frame);
+        // Assert
+        assert_eq!(levels.rms_dbfs, 0);
+        assert_eq!(levels.peak_dbfs, 0);
+    }
+
+    #[test]
+    fn minus_20_dbfs_constant_frame_measures_minus_20_dbfs() {
+        // Arrange
+        let frame = PcmFrame {
+            samples: [3_277; AUDIO_FRAME_SAMPLES],
+        };
+        // Act
+        let levels = compute_frame_levels_dbfs(&frame);
+        // Assert
+        assert_eq!(levels.rms_dbfs, -20);
+        assert_eq!(levels.peak_dbfs, -20);
+    }
+
+    #[test]
+    fn fractional_low_level_rms_keeps_energy_below_one_sample_squared() {
+        // Arrange
+        let mut samples = [0; AUDIO_FRAME_SAMPLES];
+        samples[..AUDIO_FRAME_SAMPLES / 2].fill(1);
+        let frame = PcmFrame { samples };
+        // Act
+        let levels = compute_frame_levels_dbfs(&frame);
+        // Assert
+        assert_eq!(levels.rms_dbfs, -93);
+        assert_eq!(levels.peak_dbfs, -90);
+    }
+
+    #[test]
     fn bench_tone_generator_emits_exact_16_sample_1khz_sine_at_minus_3_dbfs_peak() {
         // Arrange
         let mut gen = BenchToneGenerator::new();
         // Act
         let frame = gen.next_frame();
+        let next_frame = gen.next_frame();
         let levels = compute_frame_levels_dbfs(&frame);
         // Assert
-        assert_eq!(frame.samples[0], 0);
-        assert_eq!(frame.samples[4], 23_170);
-        assert_eq!(frame.samples[8], 0);
-        assert_eq!(frame.samples[12], -23_170);
-        assert_eq!(frame.samples[16], frame.samples[0]);
+        assert_eq!(
+            &frame.samples[..16],
+            &[
+                0, 8_867, 16_384, 21_406, 23_170, 21_406, 16_384, 8_867, 0, -8_867, -16_384,
+                -21_406, -23_170, -21_406, -16_384, -8_867,
+            ]
+        );
+        assert_eq!(next_frame, frame);
+        assert_eq!(next_frame.samples[0], frame.samples[0]);
         assert!((-4..=-3).contains(&levels.peak_dbfs));
         assert!((-7..=-5).contains(&levels.rms_dbfs));
     }
