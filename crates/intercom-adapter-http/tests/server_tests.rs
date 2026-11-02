@@ -1172,3 +1172,111 @@ fn cancelled_ota_keeps_relays_inhibited_until_reboot() {
     assert_eq!(physical_state.get(), BusLineState::Idle);
     assert_eq!(channel.try_receive(), Ok(AccessCommand::EmergencyStop));
 }
+
+struct RelayObservingResetDriverMock<'a> {
+    interlock: &'a intercom_core::service::BusSafetyInterlock<BusSwitchDriverMock<'a>>,
+    physical_state: &'a std::cell::Cell<intercom_core::domain::intercom::BusLineState>,
+    erased_scope: std::cell::Cell<Option<intercom_core::ports::ResetScope>>,
+    reboot_entered: std::cell::Cell<bool>,
+}
+
+impl RelayObservingResetDriverMock<'_> {
+    fn assert_relays_are_idle_and_inhibited(&self, entry_point: &str) {
+        use intercom_core::domain::intercom::BusLineState;
+        use intercom_core::ports::BusSwitchDriver;
+        assert_eq!(
+            self.physical_state.get(),
+            BusLineState::Idle,
+            "physical relays must be LOW on entry to {entry_point}"
+        );
+        for requested in [
+            BusLineState::Listen,
+            BusLineState::Talk,
+            BusLineState::DoorUnlock,
+        ] {
+            let mut bus = self.interlock;
+            bus.set_bus_state(requested);
+            assert_eq!(
+                self.physical_state.get(),
+                BusLineState::Idle,
+                "physical relays must stay inhibited inside {entry_point}"
+            );
+        }
+    }
+}
+
+impl intercom_core::ports::SystemResetDriver for RelayObservingResetDriverMock<'_> {
+    fn erase_credentials(&self, scope: intercom_core::ports::ResetScope) {
+        self.assert_relays_are_idle_and_inhibited("erase_credentials");
+        self.erased_scope.set(Some(scope));
+    }
+
+    fn reboot(&self) -> ! {
+        self.assert_relays_are_idle_and_inhibited("reboot");
+        self.reboot_entered.set(true);
+        panic!("RELAY_OBSERVING_REBOOT_REACHED");
+    }
+}
+
+#[test]
+fn maintenance_reset_driver_entry_points_observe_idle_and_inhibited_relays() {
+    use intercom_core::domain::intercom::{BusLineState, SessionOwner};
+    use intercom_core::ports::ResetScope;
+    // Arrange
+    for (path, expected_scope) in [
+        ("reboot", None),
+        ("reset/matter", Some(ResetScope::Ecosystem)),
+        ("reset/factory", Some(ResetScope::Factory)),
+    ] {
+        for saturated in [false, true] {
+            let channel = CommandChannel::new();
+            let handle = AccessControllerHandle::new(channel.sender());
+            if saturated {
+                for _ in 0..intercom_core::ports::inbound::CMD_QUEUE_CAP {
+                    handle.start_talk(SessionOwner::HttpDebug);
+                }
+            }
+            let physical_state = std::cell::Cell::new(BusLineState::DoorUnlock);
+            let interlock = intercom_core::service::BusSafetyInterlock::new(BusSwitchDriverMock(
+                &physical_state,
+            ));
+            let reset = RelayObservingResetDriverMock {
+                interlock: &interlock,
+                physical_state: &physical_state,
+                erased_scope: std::cell::Cell::new(None),
+                reboot_entered: std::cell::Cell::new(false),
+            };
+            let hardware = MockHardwareInfo;
+            let watch = SystemStateWatch::new();
+            let diagnostics = DiagnosticsService::new(&hardware, &watch);
+            let mut ota = MockOtaFlashDriver::new(false);
+            let mut server = HttpServer::new_unbound(
+                handle,
+                &interlock,
+                &diagnostics,
+                &mut ota,
+                test_log_provider,
+                HttpServerConfig::default(),
+            )
+            .with_reset_driver(&reset);
+            let request = format!("POST /api/action/{path} HTTP/1.1\r\nHost: device\r\n\r\n");
+            let mut stream = MockStream::new(request.as_bytes());
+
+            // Act
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                block_on(server.handle_request(&mut stream))
+            }));
+
+            // Assert
+            let panic = outcome.expect_err("the reset driver must reach its diverging reboot");
+            assert_eq!(
+                panic.downcast_ref::<&str>().copied(),
+                Some("RELAY_OBSERVING_REBOOT_REACHED"),
+                "{path} must reach reboot after passing the physical safety assertions"
+            );
+            assert_eq!(reset.erased_scope.get(), expected_scope);
+            assert!(reset.reboot_entered.get());
+            assert_eq!(physical_state.get(), BusLineState::Idle);
+        }
+    }
+}
