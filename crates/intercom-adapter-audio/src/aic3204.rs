@@ -99,7 +99,10 @@ impl<I2C: I2c, RST: OutputPin> Aic3204AudioDriver<I2C, RST> {
         self.write_reg(P0_CLK_MUX, 0x00)?; // CODEC_CLKIN = MCLK
         self.write_reg(P0_AUDIO_IF_1, 0x00)?; // Philips I2S, 16-bit word, BCLK/WCLK inputs
         self.write_reg(P0_DAC_PRB, 0x01)?; // PRB_P1
-        self.write_reg(P0_ADC_PRB, 0x04)?; // PRB_R4
+
+        // TI datasheet ADC Processing Blocks table: PRB_R1 includes the Left ADC
+        // at AOSR=128. PRB_R4 is Right-only and cannot process IN1_L capture.
+        self.write_reg(P0_ADC_PRB, 0x01)?; // PRB_R1
         self.write_reg(P0_NDAC, 0x81)?; // Power up NDAC = 1
         self.write_reg(P0_MDAC, 0x82)?; // Power up MDAC = 2
         self.write_reg(P0_DOSR_MSB, 0x00)?;
@@ -353,7 +356,8 @@ mod tests {
             [P0_CLK_MUX, 0],
             [P0_AUDIO_IF_1, 0],
             [P0_DAC_PRB, 1],
-            [P0_ADC_PRB, 4],
+            // PRB_R1 supports the Left ADC at AOSR=128; PRB_R4 is Right-only.
+            [P0_ADC_PRB, 1],
             [P0_NDAC, 0x81],
             [P0_MDAC, 0x82],
             [P0_DOSR_MSB, 0],
