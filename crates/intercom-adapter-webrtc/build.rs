@@ -58,6 +58,8 @@ fn main() {
         .flag_if_supported("-Os")
         .flag_if_supported("-Wno-unused-parameter");
 
+    mbed.file(csrc_dir.join("dtls_intercom.c"));
+
     for entry in std::fs::read_dir(mbedtls_dir.join("library")).expect("vendored mbedtls dir") {
         let path = entry.unwrap().path();
         if path.extension().and_then(|e| e.to_str()) == Some("c") {

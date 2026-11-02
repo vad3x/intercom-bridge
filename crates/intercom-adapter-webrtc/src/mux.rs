@@ -19,7 +19,7 @@ pub const fn classify_rfc7983_packet(packet: &[u8]) -> DemuxedPacket {
 
 #[cfg(test)]
 mod tests {
-    use super::{DemuxedPacket, classify_rfc7983_packet};
+    use super::{classify_rfc7983_packet, DemuxedPacket};
 
     #[test]
     fn classifies_stun_dtls_and_srtp_first_bytes_per_rfc7983() {

@@ -11,7 +11,7 @@ aes-gcm = { version = "0.10", default-features = false, features = ["aes"] }
 crc32fast = { version = "1.4", default-features = false }
 ctr = { version = "0.9", default-features = false }
 embassy-futures = { workspace = true }
-embassy-net = { workspace = true, features = ["proto-ipv4", "udp", "medium-ethernet"] }
+embassy-net = { workspace = true, features = ["proto-ipv4", "proto-ipv6", "udp", "medium-ethernet"] }
 embassy-sync = { workspace = true }
 embassy-time = { workspace = true }
 heapless = { workspace = true }
