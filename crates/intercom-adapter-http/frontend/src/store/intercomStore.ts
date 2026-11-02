@@ -24,11 +24,13 @@ export function createIntercomStore() {
   const [isRinging, setIsRinging] = createSignal(false);
   const [isResettingMatter, setIsResettingMatter] = createSignal(false);
   const [debugSessionActive, setDebugSessionActive] = createSignal(false);
+  let debugSessionGeneration = 0;
 
-  const poll = async () => {
+  const poll = async (options: { syncDebugSession?: boolean } = {}) => {
     if (typeof document !== 'undefined' && document.hidden) {
       return;
     }
+    const generation = debugSessionGeneration;
     try {
       const data = await fetchStatus();
       setStatus(data);
@@ -38,7 +40,12 @@ export function createIntercomStore() {
       if (data.door_locked && isUnlocking()) {
         setIsUnlocking(false);
       }
-      if (data.call_state === 'idle' && debugSessionActive()) {
+      if (
+        options.syncDebugSession !== false &&
+        generation === debugSessionGeneration &&
+        data.call_state === 'idle' &&
+        debugSessionActive()
+      ) {
         setDebugSessionActive(false);
       }
     } catch {
@@ -51,8 +58,11 @@ export function createIntercomStore() {
       return;
     }
     const timer = setInterval(() => {
+      const generation = debugSessionGeneration;
       void sendBusHeartbeat().catch(() => {
-        setDebugSessionActive(false);
+        if (generation === debugSessionGeneration) {
+          setDebugSessionActive(false);
+        }
       });
     }, 2000);
     onCleanup(() => clearInterval(timer));
@@ -60,14 +70,16 @@ export function createIntercomStore() {
 
   const startListen = async () => {
     await startBusListen();
+    debugSessionGeneration += 1;
     setDebugSessionActive(true);
-    await poll();
+    await poll({ syncDebugSession: false });
   };
 
   const startTalk = async () => {
     await startBusTalk();
+    debugSessionGeneration += 1;
     setDebugSessionActive(true);
-    await poll();
+    await poll({ syncDebugSession: false });
   };
 
   const stopTalk = async () => {
@@ -76,6 +88,7 @@ export function createIntercomStore() {
   };
 
   const hangupSession = async () => {
+    debugSessionGeneration += 1;
     setDebugSessionActive(false);
     await hangupBusSession();
     await poll();
