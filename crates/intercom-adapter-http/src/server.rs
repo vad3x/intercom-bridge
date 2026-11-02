@@ -4,16 +4,17 @@
 //! serving the pre-compressed web dashboard and REST API endpoints for telemetry,
 //! domain actions, and firmware OTA flashing.
 
+use edf_core::ports::ota::{OtaFlashDriver, OtaStream};
 use embassy_net::tcp::TcpSocket;
 use embassy_net::Stack;
 use embassy_time::{Duration, Timer};
 use intercom_core::domain::ecosystem::{EcosystemId, EcosystemType};
+use intercom_core::domain::intercom::SessionOwner;
 use intercom_core::events::SystemStateSender;
 use intercom_core::ports::diagnostics::HardwareInfoDriver;
 use intercom_core::ports::ecosystem::EcosystemInfoDriver;
 use intercom_core::ports::inbound::{AccessCommand, AccessControllerHandle};
-use edf_core::ports::ota::{OtaFlashDriver, OtaStream};
-use intercom_core::ports::{ResetScope, SystemResetDriver};
+use intercom_core::ports::{BusSafetyDriver, ResetScope, SystemResetDriver};
 use intercom_core::service::DiagnosticsService;
 use log::{info, warn};
 use picoserve::response::IntoResponse;
@@ -37,6 +38,7 @@ pub(crate) struct AppState<
     T: EcosystemType = EcosystemId,
 > {
     pub(crate) access_handle: AccessControllerHandle<'a>,
+    pub(crate) bus_safety: &'a dyn BusSafetyDriver,
     pub(crate) diagnostics: &'a DiagnosticsService<'a, H, E, T>,
     pub(crate) ota_driver: &'a core::cell::RefCell<&'a mut O>,
     pub(crate) state_sender: Option<SystemStateSender<'a>>,
@@ -81,6 +83,7 @@ pub struct HttpServer<
 > {
     stack: Option<Stack<'static>>,
     access_handle: AccessControllerHandle<'a>,
+    bus_safety: &'a dyn BusSafetyDriver,
     diagnostics: &'a DiagnosticsService<'a, H, E, T>,
     ota_driver: &'a mut O,
     reset_driver: Option<&'a R>,
@@ -95,6 +98,7 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, T: Ec
     /// Create an unbound `HttpServer` without a network stack or reset driver, suitable for testing.
     pub fn new_unbound(
         access_handle: AccessControllerHandle<'a>,
+        bus_safety: &'a dyn BusSafetyDriver,
         diagnostics: &'a DiagnosticsService<'a, H, E, T>,
         ota_driver: &'a mut O,
         log_provider: fn(&mut [u8]) -> usize,
@@ -104,6 +108,7 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, T: Ec
         Self {
             stack: None,
             access_handle,
+            bus_safety,
             diagnostics,
             ota_driver,
             reset_driver: None,
@@ -127,6 +132,7 @@ impl<
     pub fn new(
         stack: Stack<'static>,
         access_handle: AccessControllerHandle<'a>,
+        bus_safety: &'a dyn BusSafetyDriver,
         diagnostics: &'a DiagnosticsService<'a, H, E, T>,
         ota_driver: &'a mut O,
         reset_driver: &'a R,
@@ -137,6 +143,7 @@ impl<
         Self {
             stack: Some(stack),
             access_handle,
+            bus_safety,
             diagnostics,
             ota_driver,
             reset_driver: Some(reset_driver),
@@ -154,6 +161,7 @@ impl<
         HttpServer {
             stack: self.stack,
             access_handle: self.access_handle,
+            bus_safety: self.bus_safety,
             diagnostics: self.diagnostics,
             ota_driver: self.ota_driver,
             reset_driver: Some(reset_driver),
@@ -186,6 +194,7 @@ impl<
         let reset_requested = core::cell::Cell::new(None);
         let app_state = AppState {
             access_handle: self.access_handle,
+            bus_safety: self.bus_safety,
             diagnostics: self.diagnostics,
             ota_driver: &ota_driver_cell,
             state_sender: self.state_sender,
@@ -246,6 +255,7 @@ impl<
         let reset_requested = core::cell::Cell::new(None);
         let app_state = AppState {
             access_handle: self.access_handle,
+            bus_safety: self.bus_safety,
             diagnostics: self.diagnostics,
             ota_driver: &ota_driver_cell,
             state_sender: self.state_sender,
@@ -401,11 +411,73 @@ fn build_router<
             ),
         )
         .route(
+            "/api/action/listen",
+            picoserve::routing::post(
+                |picoserve::extract::State(state): picoserve::extract::State<
+                    AppState<'a, H, E, O, T>,
+                >| async move {
+                    state.access_handle.start_listen(SessionOwner::HttpDebug);
+                    picoserve::response::Response::ok("{\"status\":\"ok\"}")
+                        .with_content_type("application/json")
+                },
+            ),
+        )
+        .route(
+            "/api/action/talk/start",
+            picoserve::routing::post(
+                |picoserve::extract::State(state): picoserve::extract::State<
+                    AppState<'a, H, E, O, T>,
+                >| async move {
+                    state.access_handle.start_talk(SessionOwner::HttpDebug);
+                    picoserve::response::Response::ok("{\"status\":\"ok\"}")
+                        .with_content_type("application/json")
+                },
+            ),
+        )
+        .route(
+            "/api/action/talk/stop",
+            picoserve::routing::post(
+                |picoserve::extract::State(state): picoserve::extract::State<
+                    AppState<'a, H, E, O, T>,
+                >| async move {
+                    state.access_handle.stop_talk(SessionOwner::HttpDebug);
+                    picoserve::response::Response::ok("{\"status\":\"ok\"}")
+                        .with_content_type("application/json")
+                },
+            ),
+        )
+        .route(
+            "/api/action/heartbeat",
+            picoserve::routing::post(
+                |picoserve::extract::State(state): picoserve::extract::State<
+                    AppState<'a, H, E, O, T>,
+                >| async move {
+                    state.access_handle.session_heartbeat(SessionOwner::HttpDebug);
+                    picoserve::response::Response::ok("{\"status\":\"ok\"}")
+                        .with_content_type("application/json")
+                },
+            ),
+        )
+        .route(
+            "/api/action/hangup",
+            picoserve::routing::post(
+                |picoserve::extract::State(state): picoserve::extract::State<
+                    AppState<'a, H, E, O, T>,
+                >| async move {
+                    state.access_handle.end_session(SessionOwner::HttpDebug);
+                    picoserve::response::Response::ok("{\"status\":\"ok\"}")
+                        .with_content_type("application/json")
+                },
+            ),
+        )
+        .route(
             "/api/action/reset/matter",
             picoserve::routing::post(
                 |picoserve::extract::State(state): picoserve::extract::State<
                     AppState<'a, H, E, O, T>,
                 >| async move {
+                    state.bus_safety.inhibit();
+                    state.access_handle.emergency_stop();
                     if let Some(sender) = state.state_sender {
                         sender.ecosystem_reset();
                     }
@@ -421,6 +493,8 @@ fn build_router<
                 |picoserve::extract::State(state): picoserve::extract::State<
                     AppState<'a, H, E, O, T>,
                 >| async move {
+                    state.bus_safety.inhibit();
+                    state.access_handle.emergency_stop();
                     state.reboot_requested.set(true);
                     picoserve::response::Response::ok("{\"status\":\"ok\"}")
                         .with_content_type("application/json")
@@ -433,6 +507,8 @@ fn build_router<
                 |picoserve::extract::State(state): picoserve::extract::State<
                     AppState<'a, H, E, O, T>,
                 >| async move {
+                    state.bus_safety.inhibit();
+                    state.access_handle.emergency_stop();
                     if let Some(sender) = state.state_sender {
                         sender.ecosystem_reset();
                     }
@@ -456,13 +532,8 @@ struct DoorDurationQuery {
 
 struct OtaFlashService<T: EcosystemType>(core::marker::PhantomData<fn() -> T>);
 
-impl<
-        'a,
-        H: HardwareInfoDriver,
-        E: EcosystemInfoDriver,
-        O: OtaFlashDriver,
-        T: EcosystemType,
-    > picoserve::routing::RequestHandlerService<AppState<'a, H, E, O, T>> for OtaFlashService<T>
+impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, T: EcosystemType>
+    picoserve::routing::RequestHandlerService<AppState<'a, H, E, O, T>> for OtaFlashService<T>
 {
     async fn call_request_handler_service<
         R: picoserve::io::Read,
@@ -474,6 +545,10 @@ impl<
         mut request: picoserve::request::Request<'_, R>,
         response_writer: W,
     ) -> Result<picoserve::ResponseSent, W::Error> {
+        // Force the physical outputs LOW before any upload validation or flash work.
+        // The interlock remains inhibited until reboot even if this update fails or is cancelled.
+        state.bus_safety.inhibit();
+        state.access_handle.emergency_stop();
         let content_len = match request
             .parts
             .headers()

@@ -20,6 +20,13 @@ pub use ota::{OtaDriverError, OtaFlashDriver, OtaStream};
 pub use reporter::{IntercomReporter, LockState};
 pub use reset::{ResetScope, ResetTriggerDriver, SystemResetDriver};
 
+/// Synchronously forces all bus relays LOW and prevents subsequent energization.
+///
+/// The inhibition remains latched until reboot, including after OTA errors.
+pub trait BusSafetyDriver {
+    fn inhibit(&self);
+}
+
 /// Synchronously selects one intercom bus line state.
 pub trait BusSwitchDriver {
     fn set_bus_state(&mut self, state: BusLineState);

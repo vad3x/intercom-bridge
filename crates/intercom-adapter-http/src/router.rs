@@ -32,6 +32,11 @@ pub enum Route {
     Logs,
     ActionRing,
     ActionUnlock,
+    ActionListen,
+    ActionTalkStart,
+    ActionTalkStop,
+    ActionHeartbeat,
+    ActionHangup,
     ActionResetMatter,
     ActionResetFactory,
     ActionReboot,
@@ -83,6 +88,11 @@ pub fn parse_route(request_line: &str) -> Route {
     match (method, path) {
         ("POST", "/api/action/ring") => Route::ActionRing,
         ("POST", "/api/action/unlock") => Route::ActionUnlock,
+        ("POST", "/api/action/listen") => Route::ActionListen,
+        ("POST", "/api/action/talk/start") => Route::ActionTalkStart,
+        ("POST", "/api/action/talk/stop") => Route::ActionTalkStop,
+        ("POST", "/api/action/heartbeat") => Route::ActionHeartbeat,
+        ("POST", "/api/action/hangup") => Route::ActionHangup,
         ("POST", "/api/action/door-duration") => {
             if let Some(q) = query {
                 for param in q.split('&') {
@@ -143,9 +153,11 @@ impl DiagnosticPayload for IntercomPayload<'_> {
     fn write_fields<W: core::fmt::Write>(&self, out: &mut W) -> core::fmt::Result {
         write!(
             out,
-            ",\"door_locked\":{},\"door_unlock_duration_sec\":{}",
+            ",\"door_locked\":{},\"door_unlock_duration_sec\":{},\"bus_state\":\"{}\",\"call_state\":\"{}\"",
             if self.0.door_locked { "true" } else { "false" },
-            self.0.door_unlock_duration_sec
+            self.0.door_unlock_duration_sec,
+            self.0.bus_state.as_str(),
+            self.0.call_state.as_str(),
         )
     }
 }

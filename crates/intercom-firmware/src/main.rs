@@ -231,10 +231,8 @@ async fn main(_spawner: Spawner) {
     // ========================================================================
 
     let ring = GpioRingDriver::new(GpioRingConfig::new(peripherals.GPIO2));
-    let bus = GpioBusDriver::new(GpioBusConfig::new(
-        peripherals.GPIO7,
-        peripherals.GPIO10,
-        peripherals.GPIO18,
+    let bus = intercom_core::service::BusSafetyInterlock::new(GpioBusDriver::new(
+        GpioBusConfig::new(peripherals.GPIO7, peripherals.GPIO10, peripherals.GPIO18),
     ));
     let audio_ctrl = NoopAudioControlDriver;
 
@@ -250,7 +248,7 @@ async fn main(_spawner: Spawner) {
 
     let app = App::with_duration(
         ring,
-        bus,
+        &bus,
         audio_ctrl,
         reporter,
         boot_button,
@@ -303,6 +301,7 @@ async fn main(_spawner: Spawner) {
         let mut http_server = HttpServer::new(
             stack,
             access_handle,
+            &bus,
             &diagnostics_service,
             &mut ota_driver,
             &FirmwareResetDriver,
