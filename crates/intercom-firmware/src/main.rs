@@ -58,8 +58,6 @@ use intercom_core::events::{SystemStateSender, SystemStateWatch};
 #[cfg(target_arch = "riscv32")]
 use intercom_core::ports::inbound::{AccessControllerHandle, CommandChannel};
 #[cfg(target_arch = "riscv32")]
-use intercom_core::ports::NoopAudioControlDriver;
-#[cfg(target_arch = "riscv32")]
 use intercom_core::service::DiagnosticsService;
 
 #[cfg(target_arch = "riscv32")]
@@ -158,6 +156,11 @@ async fn main(_spawner: Spawner) {
     let state_sender = SystemStateSender::new(&STATE_WATCH);
     let state_receiver = STATE_WATCH.receiver().unwrap();
 
+    static CALL_STATE_WATCH: intercom_core::events::CallStateWatch =
+        intercom_core::events::CallStateWatch::new();
+    static RX_AUDIO_CHANNEL: intercom_media::RxAudioChannel = intercom_media::RxAudioChannel::new();
+    static TX_AUDIO_CHANNEL: intercom_media::TxAudioChannel = intercom_media::TxAudioChannel::new();
+
     static COMMAND_CHANNEL: CommandChannel = CommandChannel::new();
     let access_handle = AccessControllerHandle::new(COMMAND_CHANNEL.sender());
     let command_receiver = COMMAND_CHANNEL.receiver();
@@ -177,6 +180,15 @@ async fn main(_spawner: Spawner) {
     let store = DummyKvBlobStore;
     #[cfg(feature = "dummy-persist")]
     let initial_duration_sec = intercom_core::config::DEFAULT_DOOR_UNLOCK_DURATION_SEC;
+
+    #[cfg(not(feature = "dummy-persist"))]
+    let (initial_rx_gain, initial_tx_gain) = reset::load_audio_gains(&mut store);
+    #[cfg(feature = "dummy-persist")]
+    let (initial_rx_gain, initial_tx_gain) = (
+        intercom_core::domain::policy::RxPgaGain::default(),
+        intercom_core::domain::policy::TxDacGain::default(),
+    );
+    intercom_core::domain::diagnostics::update_audio_gains(initial_rx_gain, initial_tx_gain);
 
     info!("Loaded door unlock duration: {}s", initial_duration_sec);
     intercom_core::domain::diagnostics::update_door_unlock_duration(initial_duration_sec);
@@ -234,14 +246,48 @@ async fn main(_spawner: Spawner) {
     let bus = intercom_core::service::BusSafetyInterlock::new(GpioBusDriver::new(
         GpioBusConfig::new(peripherals.GPIO7, peripherals.GPIO10, peripherals.GPIO18),
     ));
-    let audio_ctrl = NoopAudioControlDriver;
+    // Start MCLK/BCLK/WS before releasing CODEC_RST_N (GPIO11).
+    let i2s_pipeline = intercom_adapter_audio::I2sAudioPipeline::new(
+        peripherals.I2S0,
+        peripherals.DMA_CH0,
+        peripherals.GPIO22,
+        peripherals.GPIO23,
+        peripherals.GPIO15,
+        peripherals.GPIO20,
+        peripherals.GPIO21,
+    )
+    .expect("I2S0 init");
+    let i2c_config =
+        esp_hal::i2c::master::Config::default().with_frequency(esp_hal::time::Rate::from_khz(400));
+    let i2c0 = esp_hal::i2c::master::I2c::new(peripherals.I2C0, i2c_config)
+        .expect("I2C0 init")
+        .with_sda(peripherals.GPIO0)
+        .with_scl(peripherals.GPIO1);
+    let codec_rst = esp_hal::gpio::Output::new(
+        peripherals.GPIO11,
+        esp_hal::gpio::Level::Low,
+        esp_hal::gpio::OutputConfig::default(),
+    );
+    let mut audio_ctrl = intercom_adapter_audio::Aic3204AudioDriver::new(i2c0, codec_rst);
+    if let Err(error) = audio_ctrl.init(initial_rx_gain, initial_tx_gain).await {
+        warn!(
+            "TLV320AIC3204 init failed (bench without codec?): {:?}",
+            error
+        );
+    }
 
     static INDICATOR: StaticCell<GpioLedDriver> = StaticCell::new();
     let indicator: &'static GpioLedDriver =
         &*INDICATOR.init(GpioLedDriver::new(peripherals.GPIO19));
 
     let access_driver = MatterAccessControlDriver::new(&door_lock, &occupancy);
-    let reporter = (access_driver, indicator, FirmwarePersistenceReporter);
+    let call_broadcaster =
+        intercom_core::events::CallStateBroadcastReporter::new(&CALL_STATE_WATCH);
+    let reporter = (
+        access_driver,
+        indicator,
+        (FirmwarePersistenceReporter, call_broadcaster),
+    );
     let boot_button = GpioBootButtonDriver::new(
         GpioBootButtonConfig::new(peripherals.GPIO9).with_indicator(indicator),
     );
@@ -268,7 +314,7 @@ async fn main(_spawner: Spawner) {
     let mut ota_driver = FlashOtaDriver::new(config::OTA_PUBLIC_KEY);
 
     // ========================================================================
-    // Run App core services, Matter stack, LED indicator & HTTP server concurrently
+    // Run App, Matter, LED, HTTP, and I2S services concurrently
     // ========================================================================
 
     let app_future = app.run(state_sender, &command_receiver, access_handle);
@@ -314,6 +360,22 @@ async fn main(_spawner: Spawner) {
 
     info!("Matter Controller Running");
 
-    // All run forever; join4 waits for all
-    embassy_futures::join::join4(app_future, matter_future, led_future, http_future).await;
+    let i2s_future = async {
+        if let Err(error) = i2s_pipeline
+            .run(RX_AUDIO_CHANNEL.sender(), TX_AUDIO_CHANNEL.receiver())
+            .await
+        {
+            warn!("I2S DMA stream failed: {:?}", error);
+            custom_halt();
+        }
+    };
+
+    embassy_futures::join::join5(
+        app_future,
+        matter_future,
+        led_future,
+        http_future,
+        i2s_future,
+    )
+    .await;
 }

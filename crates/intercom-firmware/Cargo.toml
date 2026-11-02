@@ -19,6 +19,8 @@ dummy-persist = []
 
 [dependencies]
 intercom-core = { path = "../intercom-core" }
+intercom-media = { workspace = true }
+intercom-adapter-audio = { path = "../intercom-adapter-audio" }
 edf-ota = { workspace = true }
 edf-logger = { workspace = true }
 intercom-adapter-http = { path = "../intercom-adapter-http" }

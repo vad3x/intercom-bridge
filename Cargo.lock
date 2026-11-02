@@ -2494,6 +2494,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "intercom-adapter-audio"
+version = "0.1.0"
+dependencies = [
+ "embassy-futures",
+ "embassy-time",
+ "embedded-hal 1.0.0",
+ "esp-hal",
+ "intercom-core",
+ "intercom-media",
+ "log",
+ "portable-atomic",
+]
+
+[[package]]
 name = "intercom-adapter-gpio"
 version = "0.1.0"
 dependencies = [
@@ -2584,10 +2598,12 @@ dependencies = [
  "esp-println",
  "esp-rtos",
  "esp-wifi-sys-esp32c6",
+ "intercom-adapter-audio",
  "intercom-adapter-gpio",
  "intercom-adapter-http",
  "intercom-adapter-matter",
  "intercom-core",
+ "intercom-media",
  "log",
  "portable-atomic",
  "rs-matter",

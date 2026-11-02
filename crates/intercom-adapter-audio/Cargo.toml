@@ -1,0 +1,18 @@
+[package]
+name = "intercom-adapter-audio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "TLV320AIC3204 I2C codec driver and 16 kHz ESP32-C6 I2S GDMA audio pipeline"
+
+[dependencies]
+embedded-hal = { workspace = true }
+embassy-futures = { workspace = true }
+embassy-time = { workspace = true }
+intercom-core = { path = "../intercom-core" }
+intercom-media = { path = "../intercom-media" }
+log = { workspace = true }
+portable-atomic = { workspace = true }
+
+[target.'cfg(target_arch = "riscv32")'.dependencies]
+esp-hal = { workspace = true }
