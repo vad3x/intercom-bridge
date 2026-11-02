@@ -11,6 +11,22 @@ pub const SERIAL_PREFIX: &str = "IC";
 /// Intercom DHCP hostname prefix.
 pub const HOSTNAME_PREFIX: &str = "intercom-bridge";
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WirelessBootMode {
+    /// Uncommissioned boot: run concurrent BLE + Wi-Fi coexistence (`run_coex`).
+    BleWifiCoex,
+    /// Commissioned boot: run operational Wi-Fi only (`run_wifi_only`), reclaiming ~50 KiB BLE heap.
+    OperationalWifiOnly,
+}
+
+pub const fn select_wireless_boot_mode(has_active_fabric: bool) -> WirelessBootMode {
+    if has_active_fabric {
+        WirelessBootMode::OperationalWifiOnly
+    } else {
+        WirelessBootMode::BleWifiCoex
+    }
+}
+
 /// Derive the device and host pairing identity for an Intercom MAC address.
 pub fn derive_intercom_identity(mac: &[u8; 6]) -> Result<DeviceIdentity, IdentityError> {
     edf_matter::identity::derive_device_identity(&IdentityParams {
@@ -61,5 +77,25 @@ mod tests {
             comm_data.password.access(),
             &identity.passcode.to_le_bytes()
         );
+    }
+}
+
+#[cfg(test)]
+mod boot_mode_tests {
+    use super::*;
+
+    #[test]
+    fn commissioned_fabric_selects_wifi_only_and_uncommissioned_selects_ble_coex() {
+        // Arrange
+        let fabric_absent = false;
+        let fabric_present = true;
+
+        // Act
+        let uncommissioned = select_wireless_boot_mode(fabric_absent);
+        let commissioned = select_wireless_boot_mode(fabric_present);
+
+        // Assert
+        assert_eq!(uncommissioned, WirelessBootMode::BleWifiCoex);
+        assert_eq!(commissioned, WirelessBootMode::OperationalWifiOnly);
     }
 }

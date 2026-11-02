@@ -1,10 +1,9 @@
 //! Matter-over-WiFi node driver.
 //!
 //! `MatterController` is a builder+runner for the full rs-matter-embassy WiFi
-//! stack in **concurrent** (coex) commissioning mode. BLE and WiFi run
-//! simultaneously, sharing the ESP32-C6's single radio via the coexistence
-//! driver. Cluster handlers are registered via `.register()` and the stack
-//! is launched with `.run()`.
+//! stack in concurrent (coex) mode before commissioning and Wi-Fi-only mode
+//! after a fabric is present. Cluster handlers are registered via `.register()`
+//! and the stack is launched with `.run()`.
 //!
 //! ```ignore
 //! let matter = MatterController::new(MatterControllerConfig { /* ... */ })
@@ -354,33 +353,38 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
             self.state_sender.commissioning();
         }
 
-        // Run the Matter stack forever.
-        // Concurrent mode (`run_coex`): BLE and WiFi run simultaneously
-        // via the coexistence driver. Required because sequential mode
-        // (BLE then WiFi) breaks WiFi on ESP32-C6 — the radio doesn't
-        // properly transition from BLE-only to WiFi-only.
+        // Run the Matter stack forever. Keep BLE available for commissioning,
+        // and reclaim its heap after a fabric is present.
         let mut monitor = ConnectionMonitor {
             state_sender: self.state_sender,
             readiness: self.readiness,
             reset: self.reset,
             matter: stack.matter(),
         };
-        stack
-            .run_coex(
-                EmbassyWifi::new(
-                    EspWifiDriver::new(config.peripherals.wifi, config.peripherals.bt),
-                    weak_rand,
-                    true,
-                    stack,
-                )
-                .with_hostname(hostname),
-                &crypto,
-                (node, handler),
-                kv,
-                &mut monitor,
-            )
-            .await
-            .expect("Matter stack fatal error");
+        let wifi = EmbassyWifi::new(
+            EspWifiDriver::new(config.peripherals.wifi, config.peripherals.bt),
+            weak_rand,
+            true,
+            stack,
+        )
+        .with_hostname(hostname);
+
+        match commissioning::select_wireless_boot_mode(is_commissioned) {
+            commissioning::WirelessBootMode::OperationalWifiOnly => {
+                info!("Commissioned fabric present -> starting Wi-Fi-only operational stack");
+                stack
+                    .run_wifi_only(wifi, &crypto, (node, handler), kv, &mut monitor)
+                    .await
+                    .expect("Matter operational Wi-Fi stack fatal error");
+            }
+            commissioning::WirelessBootMode::BleWifiCoex => {
+                info!("Uncommissioned -> starting concurrent BLE + Wi-Fi commissioning");
+                stack
+                    .run_coex(wifi, &crypto, (node, handler), kv, &mut monitor)
+                    .await
+                    .expect("Matter coex stack fatal error");
+            }
+        }
     }
 }
 
