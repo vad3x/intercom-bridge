@@ -10,6 +10,13 @@ pub trait IntercomReporter {
     fn report_bus_state(&self, _state: BusLineState) {}
     fn report_call_state(&self, _state: CallState) {}
     fn report_session_preempted(&self, _owner: SessionOwner) {}
+    fn report_audio_gain(
+        &self,
+        _rx: crate::domain::policy::RxPgaGain,
+        _tx: crate::domain::policy::TxDacGain,
+    ) {
+    }
+    fn report_session_state(&self, _call_state: CallState, _active_owner: Option<SessionOwner>) {}
 }
 
 /// Domain-level lock state of the entrance door.
@@ -43,6 +50,16 @@ impl<T: IntercomReporter> IntercomReporter for &T {
     fn report_session_preempted(&self, owner: SessionOwner) {
         (*self).report_session_preempted(owner);
     }
+    fn report_audio_gain(
+        &self,
+        rx: crate::domain::policy::RxPgaGain,
+        tx: crate::domain::policy::TxDacGain,
+    ) {
+        (*self).report_audio_gain(rx, tx);
+    }
+    fn report_session_state(&self, call_state: CallState, active_owner: Option<SessionOwner>) {
+        (*self).report_session_state(call_state, active_owner);
+    }
 }
 
 impl<A: IntercomReporter, B: IntercomReporter> IntercomReporter for (A, B) {
@@ -74,6 +91,18 @@ impl<A: IntercomReporter, B: IntercomReporter> IntercomReporter for (A, B) {
     fn report_session_preempted(&self, owner: SessionOwner) {
         self.0.report_session_preempted(owner);
         self.1.report_session_preempted(owner);
+    }
+    fn report_audio_gain(
+        &self,
+        rx: crate::domain::policy::RxPgaGain,
+        tx: crate::domain::policy::TxDacGain,
+    ) {
+        self.0.report_audio_gain(rx, tx);
+        self.1.report_audio_gain(rx, tx);
+    }
+    fn report_session_state(&self, call_state: CallState, active_owner: Option<SessionOwner>) {
+        self.0.report_session_state(call_state, active_owner);
+        self.1.report_session_state(call_state, active_owner);
     }
 }
 
@@ -112,5 +141,19 @@ impl<A: IntercomReporter, B: IntercomReporter, C: IntercomReporter> IntercomRepo
         self.0.report_session_preempted(owner);
         self.1.report_session_preempted(owner);
         self.2.report_session_preempted(owner);
+    }
+    fn report_audio_gain(
+        &self,
+        rx: crate::domain::policy::RxPgaGain,
+        tx: crate::domain::policy::TxDacGain,
+    ) {
+        self.0.report_audio_gain(rx, tx);
+        self.1.report_audio_gain(rx, tx);
+        self.2.report_audio_gain(rx, tx);
+    }
+    fn report_session_state(&self, call_state: CallState, active_owner: Option<SessionOwner>) {
+        self.0.report_session_state(call_state, active_owner);
+        self.1.report_session_state(call_state, active_owner);
+        self.2.report_session_state(call_state, active_owner);
     }
 }

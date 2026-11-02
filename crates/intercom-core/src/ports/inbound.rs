@@ -18,6 +18,15 @@ impl<'a> IntercomControllerHandle<'a> {
         Self { sender }
     }
 
+    /// Queue validated microphone and speaker gain settings.
+    pub fn set_audio_gain(
+        &self,
+        rx: crate::domain::policy::RxPgaGain,
+        tx: crate::domain::policy::TxDacGain,
+    ) {
+        self.send(IntercomCommand::SetAudioGain { rx, tx });
+    }
+
     /// Request an entrance door strike.
     pub fn request_unlock(&self) {
         self.send(IntercomCommand::Unlock);

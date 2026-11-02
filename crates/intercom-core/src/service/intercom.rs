@@ -72,8 +72,17 @@ impl<B: BusSwitchDriver, A: AudioControlDriver, R: IntercomReporter> IntercomCon
     fn dispatch_command(&mut self, command: IntercomCommand, now_ms: u64) {
         // A deadline can expire while waiting even when the ready command wins select.
         self.dispatch_due_deadlines(now_ms);
+        let previous_owner = self.state.active_owner();
         let effects = self.state.handle_action(command, now_ms);
+        let owner_changed_without_phase_report = previous_owner != self.state.active_owner()
+            && effects.report_call_state.is_none()
+            && effects.preempted_owner.is_none();
         self.dispatch_effects(effects);
+        // Ending an unlock resume session changes ownership without changing the call phase.
+        if owner_changed_without_phase_report {
+            self.reporter
+                .report_session_state(self.state.call_state(), self.state.active_owner());
+        }
     }
 
     fn dispatch_due_deadlines(&mut self, now_ms: u64) -> bool {
@@ -127,8 +136,18 @@ impl<B: BusSwitchDriver, A: AudioControlDriver, R: IntercomReporter> IntercomCon
             self.reporter.report_unlock_duration(duration_sec);
         }
 
+        if let Some((rx, tx)) = effects.audio_gain {
+            self.audio.set_audio_gain(rx, tx);
+            self.reporter.report_audio_gain(rx, tx);
+        }
+
         if let Some(call_state) = effects.report_call_state {
             self.reporter.report_call_state(call_state);
+            self.reporter
+                .report_session_state(call_state, self.state.active_owner());
+        } else if effects.preempted_owner.is_some() {
+            self.reporter
+                .report_session_state(self.state.call_state(), self.state.active_owner());
         }
     }
 }
@@ -142,6 +161,102 @@ mod tests {
     use crate::ports::LockState;
     use std::cell::RefCell;
     use std::vec::Vec;
+
+    #[test]
+    fn session_watch_clears_owner_when_session_ends_during_unlock() {
+        // Arrange
+        use crate::events::{CallStateBroadcastReporter, CallStateWatch};
+        let trace = RefCell::new(Vec::new());
+        let watch = CallStateWatch::new();
+        let mut controller = IntercomController::new(
+            BusSwitchDriverMock(&trace),
+            AudioControlDriverMock(&trace),
+            CallStateBroadcastReporter::new(&watch),
+        );
+        let owner = SessionOwner::BenchTone;
+        controller.dispatch_command(IntercomAction::StartTalk(owner), 0);
+        controller.dispatch_command(IntercomAction::Unlock, 1);
+
+        // Act
+        controller.dispatch_command(IntercomAction::EndSession(owner), 2);
+
+        // Assert
+        assert_eq!(watch.try_get().unwrap().active_owner, None);
+        assert_eq!(controller.state.active_owner(), None);
+    }
+
+    #[test]
+    fn gain_command_reaches_driver_and_reporter_without_changing_session() {
+        // Arrange
+        use crate::domain::policy::{RxPgaGain, TxDacGain};
+        use crate::ports::inbound::IntercomControllerHandle;
+        let trace = RefCell::new(Vec::new());
+        let channel = CommandChannel::new();
+        let handle = IntercomControllerHandle::new(channel.sender());
+        let watch = crate::events::CallStateWatch::new();
+        let broadcast = crate::events::CallStateBroadcastReporter::new(&watch);
+        let reporter = IntercomReporterMock(&trace);
+        let mut controller = IntercomController::new(
+            BusSwitchDriverMock(&trace),
+            AudioControlDriverMock(&trace),
+            ((&reporter, broadcast), broadcast, broadcast),
+        );
+        let rx = RxPgaGain::clamped(52);
+        let tx = TxDacGain::clamped(-12);
+
+        // Act
+        handle.set_audio_gain(rx, tx);
+        controller.dispatch_command(channel.receiver().try_receive().unwrap(), 0);
+
+        // Assert
+        assert_eq!(
+            *trace.borrow(),
+            std::vec![TraceEvent::Gain(rx, tx), TraceEvent::GainReport(rx, tx)]
+        );
+        assert_eq!(controller.state.call_state(), CallState::Idle);
+    }
+
+    #[test]
+    fn session_watch_reports_owner_replacement_and_release() {
+        // Arrange
+        use crate::events::{CallStateBroadcastReporter, CallStateWatch, SessionSnapshot};
+        let trace = RefCell::new(Vec::new());
+        let watch = CallStateWatch::new();
+        let reporter = CallStateBroadcastReporter::new(&watch);
+        // Exercise reference, pair, and triple reporter forwarding.
+        let mut controller = IntercomController::new(
+            BusSwitchDriverMock(&trace),
+            AudioControlDriverMock(&trace),
+            ((&reporter, &reporter), &reporter, &reporter),
+        );
+
+        // Act
+        controller.dispatch_command(IntercomAction::StartTalk(SessionOwner::BenchTone), 0);
+
+        // Assert
+        assert_eq!(
+            watch.try_get(),
+            Some(SessionSnapshot {
+                call_state: CallState::Talking,
+                active_owner: Some(SessionOwner::BenchTone)
+            })
+        );
+
+        // Act
+        controller.dispatch_command(IntercomAction::StartTalk(SessionOwner::MatterCall), 1);
+
+        // Assert
+        assert_eq!(
+            watch.try_get().unwrap().active_owner,
+            Some(SessionOwner::MatterCall)
+        );
+
+        // Act
+        controller.dispatch_command(IntercomAction::EmergencyStop, 2);
+
+        // Assert
+        assert_eq!(watch.try_get(), Some(SessionSnapshot::default()));
+    }
 
     #[test]
     fn received_heartbeat_cannot_revive_an_expired_session() {
@@ -275,6 +390,14 @@ mod tests {
     #[derive(Debug, PartialEq, Eq)]
     enum TraceEvent {
         Audio(AudioDirection),
+        Gain(
+            crate::domain::policy::RxPgaGain,
+            crate::domain::policy::TxDacGain,
+        ),
+        GainReport(
+            crate::domain::policy::RxPgaGain,
+            crate::domain::policy::TxDacGain,
+        ),
         Bus(BusLineState),
         BusReport(BusLineState),
         Lock(LockState),
@@ -293,12 +416,28 @@ mod tests {
     }
 
     impl AudioControlDriver for AudioControlDriverMock<'_> {
+        fn set_audio_gain(
+            &mut self,
+            rx: crate::domain::policy::RxPgaGain,
+            tx: crate::domain::policy::TxDacGain,
+        ) {
+            self.0.borrow_mut().push(TraceEvent::Gain(rx, tx));
+        }
+
         fn set_audio_direction(&mut self, direction: AudioDirection) {
             self.0.borrow_mut().push(TraceEvent::Audio(direction));
         }
     }
 
     impl IntercomReporter for IntercomReporterMock<'_> {
+        fn report_audio_gain(
+            &self,
+            rx: crate::domain::policy::RxPgaGain,
+            tx: crate::domain::policy::TxDacGain,
+        ) {
+            self.0.borrow_mut().push(TraceEvent::GainReport(rx, tx));
+        }
+
         fn report_ring(&self, ringing: bool) {
             self.0.borrow_mut().push(TraceEvent::Ring(ringing));
         }

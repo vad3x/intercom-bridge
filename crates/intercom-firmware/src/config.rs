@@ -261,3 +261,6 @@ mod pcb_v2_tests {
         assert_eq!(actual_version, expected_version);
     }
 }
+
+pub const AUDIO_RX_GAIN_KEY: u16 = 0x1002;
+pub const AUDIO_TX_GAIN_KEY: u16 = 0x1003;

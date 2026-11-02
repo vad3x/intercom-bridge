@@ -35,6 +35,12 @@ pub trait BusSwitchDriver {
 /// Synchronously mutes audio or selects capture or playback.
 pub trait AudioControlDriver {
     fn set_audio_direction(&mut self, direction: AudioDirection);
+    fn set_audio_gain(
+        &mut self,
+        _rx: crate::domain::policy::RxPgaGain,
+        _tx: crate::domain::policy::TxDacGain,
+    ) {
+    }
 }
 
 /// Waits for a valid incoming visitor ring signal.

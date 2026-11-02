@@ -1,6 +1,6 @@
 //! Deterministic 1-hot half-duplex intercom bus and session state machine.
 
-use crate::domain::policy::{IntercomTimingPolicy, UnlockDuration};
+use crate::domain::policy::{IntercomTimingPolicy, RxPgaGain, TxDacGain, UnlockDuration};
 use crate::ports::reporter::LockState;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -65,6 +65,10 @@ impl IntercomStateMachine {
 
     pub fn handle_action(&mut self, action: IntercomAction, now_ms: u64) -> IntercomEffects {
         match action {
+            IntercomAction::SetAudioGain { rx, tx } => IntercomEffects {
+                audio_gain: Some((rx, tx)),
+                ..Default::default()
+            },
             IntercomAction::Ring => self.on_ring(now_ms),
             IntercomAction::SetUnlockDuration(sec) => {
                 let dur = UnlockDuration::clamped(sec);
@@ -251,6 +255,7 @@ pub enum IntercomAction {
     Ring,
     Unlock,
     SetUnlockDuration(u32),
+    SetAudioGain { rx: RxPgaGain, tx: TxDacGain },
     StartListen(SessionOwner),
     StartTalk(SessionOwner),
     StopTalk(SessionOwner),
@@ -262,6 +267,7 @@ pub enum IntercomAction {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct IntercomEffects {
     pub audio_direction: Option<AudioDirection>,
+    pub audio_gain: Option<(RxPgaGain, TxDacGain)>,
     pub bus_state: Option<BusLineState>,
     pub report_lock: Option<LockState>,
     pub report_ring: Option<bool>,
@@ -505,6 +511,7 @@ impl IntercomStateMachine {
             report_ring: Some(false),
             report_duration: None,
             report_call_state: Some(CallState::Idle),
+            audio_gain: None,
             preempted_owner: None,
         }
     }
@@ -648,6 +655,7 @@ mod tests {
                 report_ring: None,
                 report_duration: None,
                 report_call_state: Some(CallState::Unlocking),
+                audio_gain: None,
                 preempted_owner: None,
             }
         );
@@ -660,6 +668,7 @@ mod tests {
                 report_ring: None,
                 report_duration: None,
                 report_call_state: Some(CallState::Idle),
+                audio_gain: None,
                 preempted_owner: None,
             }
         );
@@ -689,6 +698,7 @@ mod tests {
                 report_ring: None,
                 report_duration: None,
                 report_call_state: Some(CallState::Settling),
+                audio_gain: None,
                 preempted_owner: None,
             }
         );
@@ -803,6 +813,7 @@ mod tests {
                 report_ring: Some(false),
                 report_duration: None,
                 report_call_state: Some(CallState::Idle),
+                audio_gain: None,
                 preempted_owner: None,
             }
         );

@@ -1,18 +1,42 @@
 //! Compatibility re-exports and lock-free intercom telemetry snapshots.
 
+use crate::domain::intercom::{BusLineState, CallState};
+use crate::domain::policy::{RxPgaGain, TxDacGain, DEFAULT_RX_PGA_HALF_DB, DEFAULT_TX_DAC_HALF_DB};
+use core::sync::atomic::{AtomicBool, AtomicI8, AtomicU32, AtomicU8, Ordering};
 pub use edf_core::domain::diagnostics::{SystemDiagnostics, WifiSsid};
 
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
+pub const DEFAULT_SILENCE_DBFS: i8 = -96;
 
-use crate::domain::intercom::{BusLineState, CallState};
-
-/// Intercom-specific telemetry domain payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Intercom-specific telemetry domain payload.
 pub struct IntercomState {
     pub door_locked: bool,
     pub door_unlock_duration_sec: u32,
     pub bus_state: BusLineState,
     pub call_state: CallState,
+    pub rx_rms_dbfs: i8,
+    pub rx_peak_dbfs: i8,
+    pub rx_gain_half_db: u8,
+    pub tx_gain_half_db: i8,
+    pub tone_active: bool,
+}
+
+pub fn update_rx_levels_dbfs(rms_dbfs: i8, peak_dbfs: i8) {
+    RX_RMS_DBFS.store(rms_dbfs, Ordering::Relaxed);
+    RX_PEAK_DBFS.store(peak_dbfs, Ordering::Relaxed);
+}
+
+pub fn update_audio_gains(rx: RxPgaGain, tx: TxDacGain) {
+    RX_GAIN_HALF_DB.store(rx.half_db(), Ordering::Relaxed);
+    TX_GAIN_HALF_DB.store(tx.half_db(), Ordering::Relaxed);
+}
+
+pub fn update_tone_active(active: bool) {
+    TONE_ACTIVE.store(active, Ordering::Relaxed);
+}
+
+pub fn is_tone_active() -> bool {
+    TONE_ACTIVE.load(Ordering::Relaxed)
 }
 
 /// Update the active door lock latch state reflected in telemetry snapshots.
@@ -42,6 +66,11 @@ pub fn current_intercom_state() -> IntercomState {
         door_unlock_duration_sec: DOOR_UNLOCK_DURATION.load(Ordering::Relaxed),
         bus_state: BusLineState::from_u8(BUS_STATE.load(Ordering::Relaxed)),
         call_state: CallState::from_u8(CALL_STATE.load(Ordering::Relaxed)),
+        rx_rms_dbfs: RX_RMS_DBFS.load(Ordering::Relaxed),
+        rx_peak_dbfs: RX_PEAK_DBFS.load(Ordering::Relaxed),
+        rx_gain_half_db: RX_GAIN_HALF_DB.load(Ordering::Relaxed),
+        tx_gain_half_db: TX_GAIN_HALF_DB.load(Ordering::Relaxed),
+        tone_active: TONE_ACTIVE.load(Ordering::Relaxed),
     }
 }
 
@@ -52,6 +81,11 @@ impl Default for IntercomState {
             door_unlock_duration_sec: crate::config::DEFAULT_DOOR_UNLOCK_DURATION_SEC,
             bus_state: BusLineState::Idle,
             call_state: CallState::Idle,
+            rx_rms_dbfs: DEFAULT_SILENCE_DBFS,
+            rx_peak_dbfs: DEFAULT_SILENCE_DBFS,
+            rx_gain_half_db: DEFAULT_RX_PGA_HALF_DB,
+            tx_gain_half_db: DEFAULT_TX_DAC_HALF_DB,
+            tone_active: false,
         }
     }
 }
@@ -61,6 +95,11 @@ static DOOR_UNLOCK_DURATION: AtomicU32 =
     AtomicU32::new(crate::config::DEFAULT_DOOR_UNLOCK_DURATION_SEC);
 static BUS_STATE: AtomicU8 = AtomicU8::new(BusLineState::Idle as u8);
 static CALL_STATE: AtomicU8 = AtomicU8::new(CallState::Idle as u8);
+static RX_RMS_DBFS: AtomicI8 = AtomicI8::new(DEFAULT_SILENCE_DBFS);
+static RX_PEAK_DBFS: AtomicI8 = AtomicI8::new(DEFAULT_SILENCE_DBFS);
+static RX_GAIN_HALF_DB: AtomicU8 = AtomicU8::new(DEFAULT_RX_PGA_HALF_DB);
+static TX_GAIN_HALF_DB: AtomicI8 = AtomicI8::new(DEFAULT_TX_DAC_HALF_DB);
+static TONE_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 #[cfg(test)]
 mod tests {

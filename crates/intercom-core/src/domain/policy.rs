@@ -1,4 +1,4 @@
-//! Validated domain timing value objects for half-duplex intercom bus control.
+//! Validated domain timing and audio gain value objects for half-duplex intercom bus control.
 
 use crate::config::{clamp_door_unlock_duration, DEFAULT_DOOR_UNLOCK_DURATION_SEC, RING_HOLD_MS};
 
@@ -130,6 +130,80 @@ impl Default for IntercomTimingPolicy {
 impl Default for UnlockDuration {
     fn default() -> Self {
         Self::default_duration()
+    }
+}
+
+pub const MIN_RX_PGA_HALF_DB: u8 = 0;
+pub const MAX_RX_PGA_HALF_DB: u8 = 95;
+pub const DEFAULT_RX_PGA_HALF_DB: u8 = 40; // +20.0 dB
+
+pub const MIN_TX_DAC_HALF_DB: i8 = -127;
+pub const MAX_TX_DAC_HALF_DB: i8 = 48;
+pub const DEFAULT_TX_DAC_HALF_DB: i8 = 0; // 0.0 dB
+
+/// Microphone PGA gain in half-dB steps from 0 through 95 (+47.5 dB).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RxPgaGain(u8);
+
+impl RxPgaGain {
+    pub const fn try_new(half_db: u8) -> Option<Self> {
+        if half_db <= MAX_RX_PGA_HALF_DB {
+            Some(Self(half_db))
+        } else {
+            None
+        }
+    }
+
+    pub const fn clamped(half_db: u8) -> Self {
+        if half_db > MAX_RX_PGA_HALF_DB {
+            Self(MAX_RX_PGA_HALF_DB)
+        } else {
+            Self(half_db)
+        }
+    }
+
+    pub const fn half_db(self) -> u8 {
+        self.0
+    }
+}
+
+impl Default for RxPgaGain {
+    fn default() -> Self {
+        Self(DEFAULT_RX_PGA_HALF_DB)
+    }
+}
+
+/// Speaker DAC gain in half-dB steps from -127 (-63.5 dB) through 48 (+24 dB).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TxDacGain(i8);
+
+impl TxDacGain {
+    pub const fn try_new(half_db: i8) -> Option<Self> {
+        if half_db >= MIN_TX_DAC_HALF_DB && half_db <= MAX_TX_DAC_HALF_DB {
+            Some(Self(half_db))
+        } else {
+            None
+        }
+    }
+
+    pub const fn clamped(half_db: i8) -> Self {
+        if half_db < MIN_TX_DAC_HALF_DB {
+            Self(MIN_TX_DAC_HALF_DB)
+        } else if half_db > MAX_TX_DAC_HALF_DB {
+            Self(MAX_TX_DAC_HALF_DB)
+        } else {
+            Self(half_db)
+        }
+    }
+
+    pub const fn half_db(self) -> i8 {
+        self.0
+    }
+}
+
+impl Default for TxDacGain {
+    fn default() -> Self {
+        Self(DEFAULT_TX_DAC_HALF_DB)
     }
 }
 
