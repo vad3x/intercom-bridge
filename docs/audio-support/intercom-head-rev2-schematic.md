@@ -21,15 +21,15 @@ The board is divided into two strictly isolated ground domains separated by a mi
 
 ## Block 1: `USB-C` & `LDO_5V` (System Power & Native USB Auto-Flash)
 
-*(Retained from `Intercom-HEAD` Rev 1.1)*
+*(Updated for Rev 2.0: U4 unified with ME6211C33M5G-N to share C82942 feeder with U11)*
 
 ```text
-USB_C (KH-TYPE-C-16P, C2765186)
+USB_C (KH-TYPE-C-16P, C709357)
   ├── VBUS (A4/B9, B4/A9) ──┬──► +5V
   │                         ├── C1 (2.2µF, C23630) ──► ESP_GND
-  │                         └──► U4 (AP2112K-3.3TRG1, C39734)
-  │                               ├── Pin 1 (VIN) & Pin 3 (EN) ◄── +5V
-  │                               ├── Pin 2 (GND) ───────────────► ESP_GND
+  │                         └──► U4 (ME6211C33M5G-N 3.3V, C82942)
+  │                               ├── Pin 1 (VIN) & Pin 3 (CE) ◄── +5V
+  │                               ├── Pin 2 (VSS/GND) ───────────► ESP_GND
   │                               ├── Pin 4 (NC)  ───────────────► X
   │                               └── Pin 5 (VOUT) ──┬───────────► +3V3
   │                                                  └── C2 (2.2µF, C23630) ──► ESP_GND
@@ -44,21 +44,21 @@ USB_C (KH-TYPE-C-16P, C2765186)
 
 ## Block 2: `CODEC_POWER` (Dedicated Low-Noise Audio LDO Tree)
 
-*(New in Rev 2.0 — uses JLCPCB Basic SOT-23-5 LDOs: `ME6211` pinout: `1=VIN, 2=GND, 3=EN, 4=NC, 5=VOUT`)*
+*(New in Rev 2.0 — uses low-noise SOT-23-5 LDOs: `ME6211` pinout: `1=VIN, 2=GND, 3=EN, 4=NC, 5=VOUT`)*
 
 ```text
 +5V ──┬── C9 (4.7µF, C19666) ──► ESP_GND
-      └──► U11 (ME6211C33M5G 3.3V, C82942) [Pin 1=VIN, Pin 3=EN, Pin 2=GND]
+      └──► U11 (ME6211C33M5G-N 3.3V, C82942) [Pin 1=VIN, Pin 3=EN, Pin 2=GND]
             └── Pin 5 (VOUT) ──┬──► +3V3_CODEC (to U10 Pin 26 LDOIN)
                                ├── C10 (4.7µF, C19666) ──► ESP_GND
                                │
                                ├──┬── C11 (4.7µF, C19666) ──► ESP_GND
-                               │  └──► U12 (ME6211C18M5G 1.8V, C38064) [Pin 1=VIN, Pin 3=EN, Pin 2=GND]
+                               │  └──► U12 (ME6211C18M5G-N 1.8V, C236671) [Pin 1=VIN, Pin 3=EN, Pin 2=GND]
                                │        └── Pin 5 (VOUT) ──┬──► +1V8_ANALOG (to U10 Pin 24 AVDD)
                                │                           └── C12 (4.7µF, C19666) ──► ESP_GND
                                │
                                └──┬── C13 (4.7µF, C19666) ──► ESP_GND
-                                  └──► U13 (ME6211C18M5G 1.8V, C38064) [Pin 1=VIN, Pin 3=EN, Pin 2=GND]
+                                  └──► U13 (ME6211C18M5G-N 1.8V, C236671) [Pin 1=VIN, Pin 3=EN, Pin 2=GND]
                                         └── Pin 5 (VOUT) ──┬──► +1V8_DIGITAL (to U10 Pin 29 DVDD)
                                                            └── C14 (4.7µF, C19666) ──► ESP_GND
 ```
@@ -71,13 +71,13 @@ USB_C (KH-TYPE-C-16P, C2765186)
 
 ```text
 [LED Block — Active Low]
-+3V3 ── R3 (2kΩ, C4190) ──►|── LED (NCD0805R1, C84256) ──► IO19 (GPIO19, WROOM Pad 17)
++3V3 ── R3 (2kΩ, C22975) ──►|── LED (NCD0805R1, C84256) ──► IO19 (GPIO19, WROOM Pad 17)
 
 [BOOT Block — HW-01 Cold-Boot Fix Applied (NO C3 capacitor!)]
 +3V3 ── R6 (10kΩ, C25804) ──┬──► IO_BOOT (GPIO9, WROOM Pad 15)
                             │
                           ┌─┴─┐
-                          │   │ BOOT (TS-1088-AR02016, C115358)
+                          │   │ BOOT (TS-1088-AR02016, C720477)
                           └─┬─┘
                             │
                          ESP_GND
@@ -88,7 +88,7 @@ USB_C (KH-TYPE-C-16P, C2765186)
                             ├── C5 (100nF, C14663) ──────► ESP_GND
                             ├── C4 (100nF, C14663) ──────► ESP_GND
                           ┌─┴─┐
-                          │   │ RESET (TS-1088-AR02016, C115358)
+                          │   │ RESET (TS-1088-AR02016, C720477)
                           └─┬─┘
                             │
                          ESP_GND
@@ -101,11 +101,11 @@ USB_C (KH-TYPE-C-16P, C2765186)
 ```text
                                 ┌──────────────────────────────────────────┐
                                 │           ESP32-C6-WROOM-1-N8            │
-                                │                (C5283181)                │
+                                │                (C5366877)                │
                                 │                                          │
                   ESP_GND ◄─────┤ 1  GND                            GND 28 ├─────► ESP_GND
                                 │                                  EPAD 29 ├─────► ESP_GND
-+3V3 ──┬── C6 (22µF, C45783) ───┤ 2  3V3                                   │
++3V3 ──┬── C6 (22µF, C59461) ───┤ 2  3V3                                   │
        └── C7 (100nF, C14663)   │                                          │
                        EN ─────►│ 3  EN                     GPIO2/FSPIQ 27 │◄───── IO_RING
                         X ──────┤ 4  GPIO4                        GPIO3 26 ├────── X
@@ -125,15 +125,15 @@ USB_C (KH-TYPE-C-16P, C2765186)
 
 ---
 
-## Block 5: `AUDIO-CODEC` (`U10` — `TLV320AIC3204IRHBR`, VQFN-32 `C245642`)
+## Block 5: `AUDIO-CODEC` (`U10` — `TLV320AIC3204IRHBR`, VQFN-32 `C24109`)
 
 ```text
 I2C Pull-Ups & Reset:
-  +3V3 ── R9  (2.2kΩ, C4197)  ──► CODEC_SDA (GPIO0)
-  +3V3 ── R10 (2.2kΩ, C4197)  ──► CODEC_SCL (GPIO1)
+  +3V3 ── R9  (2.2kΩ, C4190)  ──► CODEC_SDA (GPIO0)
+  +3V3 ── R10 (2.2kΩ, C4190)  ──► CODEC_SCL (GPIO1)
   CODEC_RST_N (GPIO11) ── R11 (10kΩ, C25804) ──► ESP_GND
 
-I2S Series Damping (33Ω, C25111):
+I2S Series Damping (33Ω, C23140):
   I2S_MCLK (GPIO22) ── R12 (33Ω) ──► U10 Pin 1  (MCLK)
   I2S_BCLK (GPIO23) ── R13 (33Ω) ──► U10 Pin 2  (BCLK)
   I2S_WCLK (GPIO15) ── R14 (33Ω) ──► U10 Pin 3  (WCLK)
@@ -142,7 +142,7 @@ I2S Series Damping (33Ω, C25111):
 
                          ┌─────────────────────────────────────────────┐
                          │         U10: TLV320AIC3204IRHBR             │
-                         │             (VQFN-32, C245642)              │
+                         │             (VQFN-32, C24109)               │
                          │                                             │
   I2S_MCLK ── R12 (33Ω) ►│ 1  MCLK                            IN1_L 13 │◄── CODEC_IN1_L (from RX path)
   I2S_BCLK ── R13 (33Ω) ►│ 2  BCLK                            IN1_R 14 ├─── X
@@ -177,14 +177,14 @@ I2S Series Damping (33Ω, C25111):
 ```text
 [INTERCOM-RING: BUS_X & BUS_1 ──► IO_RING (GPIO2)]
                                                     ║  ISOLATION
-  BUS_X (J1 Pin 3) ──► Pin 2 (~)  D1: MB6S  Pin 1 (+) ── R8 (6.8kΩ, C23220) ──► Pin 1 (Anode)   U8: HCPL-817(AT)  Pin 4 (Coll) ──► IO_RING (GPIO2, Pad 27)
-  BUS_1 (J1 Pin 4) ──► Pin 4 (~)  (C8014)   Pin 3 (-) ────────────────────────► Pin 2 (Cathode)     (C4998)        Pin 3 (Emit) ──► ESP_GND
+  BUS_X (J1 Pin 3) ──► Pin 2 (~)  D1: MB6S   Pin 1 (+) ── R8 (6.8kΩ, C23212) ──► Pin 1 (Anode)   U8: HCPL-817(AT)  Pin 4 (Coll) ──► IO_RING (GPIO2, Pad 27)
+  BUS_1 (J1 Pin 4) ──► Pin 4 (~)  (C2886734) Pin 3 (-) ────────────────────────► Pin 2 (Cathode)  (C48686289)      Pin 3 (Emit) ──► ESP_GND
                                                     ║  BARRIER
 
 [INTERCOM-DOOR: IO_DOOR (GPIO18) ──► Short BUS_2 & BUS_3]
                                                     ║  ISOLATION
-  IO_DOOR (GPIO18, Pad 16) ──┬── R7 (680Ω, C23214) ─► Pin 1 (Anode)   U7: AQY212SX  Pin 4 (Load) ──► BUS_2 (J1 Pin 1)
-                             ├── R21 (100kΩ, C25803)┐                 (C116744)     Pin 3 (Load) ──► BUS_3 (J1 Pin 2)
+  IO_DOOR (GPIO18, Pad 16) ──┬── R7 (680Ω, C23228) ─► Pin 1 (Anode)   U7: AQY212SX  Pin 4 (Load) ──► BUS_2 (J1 Pin 1)
+                             ├── R21 (100kΩ, C25803)┐                 (C719754)     Pin 3 (Load) ──► BUS_3 (J1 Pin 2)
                              └── ESP_GND ◄──────────┴─ Pin 2 (Cathode)
                                                     ║  BARRIER
 ```
@@ -200,25 +200,25 @@ I2S Series Damping (33Ω, C25111):
                                                     ║
   IO_LISTEN (GPIO7, Pad 7)                          ║  BUS_3 (J1 Pin 2)
     ├── R19 (100kΩ, C25803) ──► ESP_GND             ║    │
-    └── R17 (680Ω, C23214)  ──► Pin 1  U14: AQY212SX║    ▼
-                     ESP_GND ──► Pin 2  (C116744)   ║  Pin 4 (Load)
+    └── R17 (680Ω, C23228)  ──► Pin 1  U14: AQY212SX║    ▼
+                     ESP_GND ──► Pin 2  (C719754)   ║  Pin 4 (Load)
                                                     ║  Pin 3 (Load) ──► RX_LINE
                                                     ║                     │
-                                                    ║                   C_RX1 (1µF/100V, C96942)
+                                                    ║                   C_RX1 (1µF/100V, C13832)
                                                     ║                     │
-                                                    ║                   R_RX1 (47kΩ 1206, C17937)
+                                                    ║                   R_RX1 (47kΩ 0805, C17713)
                                                     ║                     │
   RX_SEC ◄───────────────────── Sec(Top)   T_RX     ║  Pri(Top) ◄─────────┴──┬── RX_PRI
     │                                     1:1 600Ω  ║                        │
     ├── R_RX3 (1kΩ, C21190) ──► ESP_GND  (C2900762) ║                      R_RX2 (1kΩ, C21190)
-    ├── D2 (1N5819WS, C2128): Anode=RX_SEC, Cathode=ESP_GND                  │
-    ├── D3 (1N5819WS, C2128): Anode=ESP_GND, Cathode=RX_SEC                  ▼
+    ├── D2 (1N5819WS, C191023): Anode=RX_SEC, Cathode=ESP_GND                │
+    ├── D3 (1N5819WS, C191023): Anode=ESP_GND, Cathode=RX_SEC                ▼
     │                                               ║  Pri(Bot) ──────────► BUS_COM (BUS_1)
   ESP_GND ◄──────────────────── Sec(Bot)            ║
     │
     └── From RX_SEC:
         RX_SEC ── C_RX2 (1µF, C15849) ── R_RX4 (1kΩ, C21190) ──┬──► CODEC_IN1_L (U10 Pin 13)
-                                                               └── C_RX3 (470pF, C1605) ──► ESP_GND
+                                                               └── C_RX3 (470pF, C1620) ──► ESP_GND
 ```
 
 ---
@@ -236,19 +236,19 @@ I2S Series Damping (33Ω, C25111):
     │                                               ║
   R_TX1 (100Ω, C22775)                              ║
     │                                               ║
-    └──► Pri(Top)     T_TX     Sec(Top) ────────────╫──► C_TX2 (22µF/50V, C96943)
+    └──► Pri(Top)     T_TX     Sec(Top) ────────────╫──► C_TX2 (22µF/50V, C70463)
                     1:1 600Ω                        ║      │
-         Pri(Bot)  (C2900762)  Sec(Bot) ──► BUS_COM ║    R_TX2 (4.7kΩ, C23163)
+         Pri(Bot)  (C2900762)  Sec(Bot) ──► BUS_COM ║    R_TX2 (4.7kΩ, C23162)
            │                                (BUS_1) ║      │
            ▼                                        ║      ├──────────────────────► TX_LINE
         ESP_GND                                     ║      │                          │
-                                                    ║    R_TALK (47Ω 2W, C61633)      │
+                                                    ║    R_TALK (47Ω 1W, C15261)      │
                                                     ║      │                          │
                                                     ║      ▼                          ▼
   IO_TALK (GPIO10, Pad 11)                          ║    BUS_COM (BUS_1)            Pin 3 (Load)
     ├── R20 (100kΩ, C25803) ──► ESP_GND             ║                               U15: AQY212SX
-    └── R18 (680Ω, C23214)  ──► Pin 1  U15: AQY212SX║                               Pin 4 (Load)
-                     ESP_GND ──► Pin 2  (C116744)   ║                                 │
+    └── R18 (680Ω, C23228)  ──► Pin 1  U15: AQY212SX║                               Pin 4 (Load)
+                     ESP_GND ──► Pin 2  (C719754)   ║                                 │
                                                     ║                                 ▼
                                                     ║                               BUS_2 (J1 Pin 1)
 ```
