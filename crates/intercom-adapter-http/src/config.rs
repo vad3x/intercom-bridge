@@ -120,14 +120,14 @@ pub const DEFAULT_ACCEPT_RETRY_DELAY: Duration = Duration::from_millis(100);
 // Static Buffer Sizes (Zero-Allocation Architecture)
 // ============================================================================
 
-/// Size of the TCP receive socket buffer (4 KiB).
-pub const TCP_RX_BUFFER_SIZE: usize = 4096;
+/// Per-worker TCP receive window (1 KiB); audio frames and OTA chunks are streamed.
+pub const TCP_RX_BUFFER_SIZE: usize = 1024;
 
-/// Size of the TCP transmit socket buffer (1 KiB).
-pub const TCP_TX_BUFFER_SIZE: usize = 1024;
+/// Per-worker TCP transmit window (512 B), enough for a complete audio frame.
+pub const TCP_TX_BUFFER_SIZE: usize = 512;
 
-/// Size of the picoserve request parsing buffer (2 KiB).
-pub const HTTP_BUFFER_SIZE: usize = 2048;
+/// Per-worker request-header buffer (1 KiB); request bodies are streamed.
+pub const HTTP_BUFFER_SIZE: usize = 1024;
 
 /// Size of the stack buffer used for JSON telemetry serialization (1.5 KiB).
 pub const JSON_BUFFER_SIZE: usize = 1536;

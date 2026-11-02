@@ -59,7 +59,7 @@ esp-metadata-generated = "=0.5.3"
 esp-wifi-sys-esp32c6 = "=0.3.0"
 heapless = "=0.9.3"
 serde-json-core = "=0.7.0"
-picoserve = { version = "=0.20.1", default-features = false }
+picoserve = { version = "=0.20.1", default-features = false, features = ["embassy", "ws"] }
 tinyrlibc = { version = "=0.5.1", default-features = false }
 
 [patch.crates-io]

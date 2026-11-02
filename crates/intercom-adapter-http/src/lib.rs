@@ -4,6 +4,7 @@
 //! static web dashboard assets and handling JSON telemetry and action requests.
 
 #![no_std]
+#![recursion_limit = "256"]
 
 extern crate alloc;
 
@@ -11,8 +12,12 @@ extern crate alloc;
 extern crate std;
 
 pub mod config;
+pub mod g711;
+mod ota_proxy;
 pub mod router;
 pub mod server;
+pub mod ws_audio;
+pub use ws_audio::HttpAudioMedia;
 
 pub use config::HttpServerConfig;
 pub use router::{format_status_json, parse_route, Route};
@@ -34,7 +39,9 @@ mod tests {
         let mut html = std::string::String::new();
 
         // Act
-        decoder.read_to_string(&mut html).expect("Decompression failed");
+        decoder
+            .read_to_string(&mut html)
+            .expect("Decompression failed");
 
         // Assert
         assert!(html.to_lowercase().contains("<!doctype html>"));

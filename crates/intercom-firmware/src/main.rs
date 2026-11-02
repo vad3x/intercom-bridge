@@ -63,7 +63,7 @@ use intercom_core::service::DiagnosticsService;
 #[cfg(target_arch = "riscv32")]
 use edf_ota::driver::FlashOtaDriver;
 #[cfg(target_arch = "riscv32")]
-use intercom_adapter_http::{HttpServer, HttpServerConfig};
+use intercom_adapter_http::{HttpAudioMedia, HttpServer, HttpServerConfig};
 
 #[cfg(target_arch = "riscv32")]
 use intercom_adapter_gpio::boot_button::{GpioBootButtonConfig, GpioBootButtonDriver};
@@ -159,6 +159,8 @@ async fn main(_spawner: Spawner) {
     static CALL_STATE_WATCH: intercom_core::events::CallStateWatch =
         intercom_core::events::CallStateWatch::new();
     static RX_AUDIO_CHANNEL: intercom_media::RxAudioChannel = intercom_media::RxAudioChannel::new();
+    static WS_AUDIO_ACTIVE: core::sync::atomic::AtomicBool =
+        core::sync::atomic::AtomicBool::new(false);
     static TX_AUDIO_CHANNEL: intercom_media::TxAudioChannel = intercom_media::TxAudioChannel::new();
 
     static COMMAND_CHANNEL: CommandChannel = CommandChannel::new();
@@ -354,7 +356,14 @@ async fn main(_spawner: Spawner) {
             Some(state_sender),
             utils::uptime_logger::get_buffered_logs,
             http_config,
-        );
+        )
+        .with_audio_media(HttpAudioMedia {
+            rx_audio: &RX_AUDIO_CHANNEL,
+            tx_audio: &TX_AUDIO_CHANNEL,
+            call_watch: &CALL_STATE_WATCH,
+            state_watch: &STATE_WATCH,
+            ws_active: &WS_AUDIO_ACTIVE,
+        });
         http_server.run().await;
     };
 

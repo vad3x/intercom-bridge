@@ -2,6 +2,8 @@
 //!
 //! Follows the Arrange -> Act -> Assert pattern strictly.
 
+#![recursion_limit = "256"]
+
 use edf_core::ports::ota::{OtaDriverError, OtaFlashDriver, OtaStream};
 use flate2::read::GzDecoder;
 use futures::executor::block_on;
@@ -152,7 +154,10 @@ impl OtaFlashDriver for MockOtaFlashDriver {
         let mut total = 0;
         while total < content_length {
             let to_read = core::cmp::min(buf.len(), content_length - total);
-            let n = stream.read(&mut buf[..to_read]).await.map_err(|_| OtaDriverError::TruncatedStream)?;
+            let n = stream
+                .read(&mut buf[..to_read])
+                .await
+                .map_err(|_| OtaDriverError::TruncatedStream)?;
             if n == 0 {
                 break;
             }
@@ -220,7 +225,9 @@ fn test_get_dashboard_returns_gzipped_html() {
 
     let mut decoder = GzDecoder::new(body);
     let mut html = String::new();
-    decoder.read_to_string(&mut html).expect("decompression failed");
+    decoder
+        .read_to_string(&mut html)
+        .expect("decompression failed");
     assert!(html.contains("<!DOCTYPE html>"));
     assert!(html.contains("Intercom Bridge"));
 }
@@ -316,7 +323,10 @@ fn test_get_logs_returns_text_plain_logs() {
     assert!(header_str.contains("Content-Type: text/plain; charset=utf-8"));
 
     let body_str = core::str::from_utf8(&response[header_end + 4..]).unwrap();
-    assert_eq!(body_str, "00:01:23.456 INFO  test - system running smoothly\n");
+    assert_eq!(
+        body_str,
+        "00:01:23.456 INFO  test - system running smoothly\n"
+    );
 }
 
 #[test]
@@ -337,7 +347,8 @@ fn test_post_action_ring_dispatches_command() {
         test_log_provider,
         HttpServerConfig::default(),
     );
-    let mut stream = MockStream::new(b"POST /api/action/ring HTTP/1.1\r\nHost: 192.168.1.142\r\n\r\n");
+    let mut stream =
+        MockStream::new(b"POST /api/action/ring HTTP/1.1\r\nHost: 192.168.1.142\r\n\r\n");
 
     // Act
     let result = block_on(server.handle_request(&mut stream));
@@ -366,7 +377,8 @@ fn test_post_action_unlock_dispatches_command() {
         test_log_provider,
         HttpServerConfig::default(),
     );
-    let mut stream = MockStream::new(b"POST /api/action/unlock HTTP/1.1\r\nHost: 192.168.1.142\r\n\r\n");
+    let mut stream =
+        MockStream::new(b"POST /api/action/unlock HTTP/1.1\r\nHost: 192.168.1.142\r\n\r\n");
 
     // Act
     let result = block_on(server.handle_request(&mut stream));
@@ -532,7 +544,8 @@ fn test_post_ota_flash_missing_content_length_returns_400() {
         test_log_provider,
         HttpServerConfig::default(),
     );
-    let mut stream = MockStream::new(b"POST /api/v1/ota/flash HTTP/1.1\r\nHost: 192.168.1.142\r\n\r\n");
+    let mut stream =
+        MockStream::new(b"POST /api/v1/ota/flash HTTP/1.1\r\nHost: 192.168.1.142\r\n\r\n");
 
     // Act
     let result = block_on(server.handle_request(&mut stream));
@@ -664,7 +677,8 @@ impl intercom_core::ports::SystemResetDriver for RecordingResetDriver {
             intercom_core::ports::ResetScope::Ecosystem => 1,
             intercom_core::ports::ResetScope::Factory => 2,
         };
-        self.erased_scope.store(val, std::sync::atomic::Ordering::SeqCst);
+        self.erased_scope
+            .store(val, std::sync::atomic::Ordering::SeqCst);
     }
     fn reboot(&self) -> ! {
         assert_eq!(
@@ -781,7 +795,8 @@ impl intercom_core::ports::SystemResetDriver for RecordingFactoryResetDriver {
             intercom_core::ports::ResetScope::Ecosystem => 1,
             intercom_core::ports::ResetScope::Factory => 2,
         };
-        self.erased_scope.store(val, std::sync::atomic::Ordering::SeqCst);
+        self.erased_scope
+            .store(val, std::sync::atomic::Ordering::SeqCst);
     }
     fn reboot(&self) -> ! {
         assert_eq!(
@@ -1278,5 +1293,475 @@ fn maintenance_reset_driver_entry_points_observe_idle_and_inhibited_relays() {
             assert!(reset.reboot_entered.get());
             assert_eq!(physical_state.get(), BusLineState::Idle);
         }
+    }
+}
+
+#[test]
+fn audio_gain_route_validates_boundaries_before_dispatch() {
+    use intercom_core::domain::policy::{RxPgaGain, TxDacGain};
+    // Arrange
+    for (query, valid) in [
+        ("rx_half_db=0&tx_half_db=-127", true),
+        ("rx_half_db=95&tx_half_db=48", true),
+        ("rx_half_db=40&tx_half_db=0", true),
+        ("rx_half_db=96&tx_half_db=0", false),
+        ("rx_half_db=40&tx_half_db=49", false),
+        ("rx_half_db=40&tx_half_db=-128", false),
+        ("rx_half_db=-1&tx_half_db=0", false),
+        ("rx_half_db=256&tx_half_db=0", false),
+        ("rx_half_db=40", false),
+    ] {
+        let channel = CommandChannel::new();
+        let hardware = MockHardwareInfo;
+        let watch = SystemStateWatch::new();
+        let diagnostics = DiagnosticsService::new(&hardware, &watch);
+        let mut ota = MockOtaFlashDriver::new(false);
+        let mut server = HttpServer::new_unbound(
+            AccessControllerHandle::new(channel.sender()),
+            &BusSafetyDriverMock,
+            &diagnostics,
+            &mut ota,
+            test_log_provider,
+            HttpServerConfig::default(),
+        );
+        let request =
+            format!("POST /api/action/audio/gain?{query} HTTP/1.1\r\nHost: device\r\n\r\n");
+        let mut stream = MockStream::new(request.as_bytes());
+        // Act
+        let result = block_on(server.handle_request(&mut stream));
+        // Assert
+        assert!(result.is_ok());
+        let code = if valid { "200" } else { "400" };
+        assert!(
+            stream
+                .written_str()
+                .starts_with(&format!("HTTP/1.1 {code} ")),
+            "{query}: {}",
+            stream.written_str()
+        );
+        if valid {
+            let (rx, tx) = match query {
+                "rx_half_db=0&tx_half_db=-127" => (0, -127),
+                "rx_half_db=95&tx_half_db=48" => (95, 48),
+                _ => (40, 0),
+            };
+            assert_eq!(
+                channel.try_receive(),
+                Ok(AccessCommand::SetAudioGain {
+                    rx: RxPgaGain::try_new(rx).unwrap(),
+                    tx: TxDacGain::try_new(tx).unwrap(),
+                })
+            );
+        }
+        assert!(channel.try_receive().is_err());
+    }
+}
+
+#[test]
+fn bench_tone_route_dispatches_bench_owner_and_rejects_invalid_query() {
+    use intercom_core::domain::intercom::SessionOwner;
+    // Arrange
+    for (query, expected) in [
+        (
+            "enable=true",
+            Some(AccessCommand::StartTalk(SessionOwner::BenchTone)),
+        ),
+        (
+            "enable=false",
+            Some(AccessCommand::EndSession(SessionOwner::BenchTone)),
+        ),
+        ("enable=invalid", None),
+        ("", None),
+    ] {
+        let channel = CommandChannel::new();
+        let hardware = MockHardwareInfo;
+        let watch = SystemStateWatch::new();
+        let diagnostics = DiagnosticsService::new(&hardware, &watch);
+        let mut ota = MockOtaFlashDriver::new(false);
+        let mut server = HttpServer::new_unbound(
+            AccessControllerHandle::new(channel.sender()),
+            &BusSafetyDriverMock,
+            &diagnostics,
+            &mut ota,
+            test_log_provider,
+            HttpServerConfig::default(),
+        );
+        let request =
+            format!("POST /api/debug/audio/tone?{query} HTTP/1.1\r\nHost: device\r\n\r\n");
+        let mut stream = MockStream::new(request.as_bytes());
+        // Act
+        let result = block_on(server.handle_request(&mut stream));
+        // Assert
+        assert!(result.is_ok());
+        let code = if expected.is_some() { "200" } else { "400" };
+        assert!(stream
+            .written_str()
+            .starts_with(&format!("HTTP/1.1 {code} ")));
+        assert_eq!(channel.try_receive().ok(), expected);
+        assert!(channel.try_receive().is_err());
+    }
+}
+
+const WS_AUDIO_REQUEST: &[u8] = b"GET /api/ws/audio HTTP/1.1\r\nHost: device\r\nConnection: upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n";
+
+fn masked_ws_frame(opcode: u8, payload: &[u8]) -> Vec<u8> {
+    let mut bytes = vec![0x80 | opcode];
+    if payload.len() < 126 {
+        bytes.push(0x80 | payload.len() as u8);
+    } else {
+        bytes.push(0x80 | 126);
+        bytes.extend_from_slice(&(payload.len() as u16).to_be_bytes());
+    }
+    let mask = [1, 2, 3, 4];
+    bytes.extend_from_slice(&mask);
+    bytes.extend(payload.iter().enumerate().map(|(i, v)| v ^ mask[i % 4]));
+    bytes
+}
+
+#[test]
+fn websocket_dispatches_controls_and_audio_and_releases_session_on_disconnect() {
+    use core::sync::atomic::{AtomicBool, Ordering};
+    use intercom_adapter_http::HttpAudioMedia;
+    use intercom_core::domain::intercom::SessionOwner;
+    use intercom_core::events::CallStateWatch;
+    // Arrange
+    let channel = CommandChannel::new();
+    let hardware = MockHardwareInfo;
+    let watch = SystemStateWatch::new();
+    let calls = CallStateWatch::new();
+    let diagnostics = DiagnosticsService::new(&hardware, &watch);
+    let mut ota = MockOtaFlashDriver::new(false);
+    let rx_audio = intercom_media::RxAudioChannel::new();
+    let tx_audio = intercom_media::TxAudioChannel::new();
+    let active = AtomicBool::new(false);
+    let mut server = HttpServer::new_unbound(
+        AccessControllerHandle::new(channel.sender()),
+        &BusSafetyDriverMock,
+        &diagnostics,
+        &mut ota,
+        test_log_provider,
+        HttpServerConfig::default(),
+    )
+    .with_audio_media(HttpAudioMedia {
+        rx_audio: &rx_audio,
+        tx_audio: &tx_audio,
+        call_watch: &calls,
+        state_watch: &watch,
+        ws_active: &active,
+    });
+    let mut request = WS_AUDIO_REQUEST.to_vec();
+    for ctrl in [1, 2, 0] {
+        request.extend(masked_ws_frame(2, &[ctrl]));
+    }
+    request.extend(masked_ws_frame(2, &[0x80; 320]));
+    request.extend(masked_ws_frame(8, &[]));
+    let mut stream = MockStream::new(&request);
+    // Act
+    let result = block_on(server.handle_request(&mut stream));
+    // Assert
+    assert!(result.is_ok());
+    assert!(stream.written_bytes().starts_with(b"HTTP/1.1 101 "));
+    assert_eq!(
+        channel.try_receive(),
+        Ok(AccessCommand::StartListen(SessionOwner::HttpDebug))
+    );
+    assert_eq!(
+        channel.try_receive(),
+        Ok(AccessCommand::StartTalk(SessionOwner::HttpDebug))
+    );
+    assert_eq!(
+        channel.try_receive(),
+        Ok(AccessCommand::StopTalk(SessionOwner::HttpDebug))
+    );
+    assert_eq!(
+        channel.try_receive(),
+        Ok(AccessCommand::SessionHeartbeat(SessionOwner::HttpDebug))
+    );
+    assert_eq!(
+        channel.try_receive(),
+        Ok(AccessCommand::SessionHeartbeat(SessionOwner::HttpDebug))
+    );
+    assert_eq!(
+        channel.try_receive(),
+        Ok(AccessCommand::EndSession(SessionOwner::HttpDebug))
+    );
+    assert_eq!(tx_audio.try_receive().unwrap().samples, [32124; 320]);
+    assert!(!active.load(Ordering::Acquire));
+}
+
+#[test]
+fn websocket_rejects_busy_matter_and_updating_without_acquiring_or_dispatching() {
+    use core::sync::atomic::{AtomicBool, Ordering};
+    use intercom_adapter_http::HttpAudioMedia;
+    use intercom_core::domain::intercom::SessionOwner;
+    use intercom_core::events::{CallStateWatch, SessionSnapshot};
+    // Arrange
+    for reason in ["unbound", "busy", "matter", "updating"] {
+        let channel = CommandChannel::new();
+        let hardware = MockHardwareInfo;
+        let watch = SystemStateWatch::new();
+        let calls = CallStateWatch::new();
+        if reason == "matter" {
+            calls.sender().send(SessionSnapshot {
+                active_owner: Some(SessionOwner::MatterCall),
+                ..Default::default()
+            });
+        }
+        if reason == "updating" {
+            watch.sender().send(SystemState::Updating);
+        }
+        let diagnostics = DiagnosticsService::new(&hardware, &watch);
+        let mut ota = MockOtaFlashDriver::new(false);
+        let rx_audio = intercom_media::RxAudioChannel::new();
+        let tx_audio = intercom_media::TxAudioChannel::new();
+        let active = AtomicBool::new(reason == "busy");
+        let mut server = HttpServer::new_unbound(
+            AccessControllerHandle::new(channel.sender()),
+            &BusSafetyDriverMock,
+            &diagnostics,
+            &mut ota,
+            test_log_provider,
+            HttpServerConfig::default(),
+        );
+        if reason != "unbound" {
+            server = server.with_audio_media(HttpAudioMedia {
+                rx_audio: &rx_audio,
+                tx_audio: &tx_audio,
+                call_watch: &calls,
+                state_watch: &watch,
+                ws_active: &active,
+            });
+        }
+        let mut stream = MockStream::new(WS_AUDIO_REQUEST);
+        // Act
+        let result = block_on(server.handle_request(&mut stream));
+        // Assert
+        assert!(result.is_ok());
+        assert!(
+            stream.written_bytes().starts_with(b"HTTP/1.1 409 "),
+            "{reason}"
+        );
+        assert_eq!(active.load(Ordering::Acquire), reason == "busy");
+        assert!(channel.try_receive().is_err());
+    }
+}
+
+struct AudioFaultStream<'a> {
+    inner: MockStream,
+    watch: &'a SystemStateWatch,
+    calls: &'a intercom_core::events::CallStateWatch,
+    fault: &'static str,
+    triggered: bool,
+}
+impl OtaStream for AudioFaultStream<'_> {
+    async fn read(&mut self, buf: &mut [u8]) -> Result<usize, ()> {
+        if self.inner.read_pos < self.inner.read_data.len() {
+            return self.inner.read(buf).await;
+        }
+        if self.fault == "read_error" {
+            return Err(());
+        }
+        if self.fault == "partial_frame" && !self.triggered {
+            self.triggered = true;
+            self.watch.sender().send(SystemState::Updating);
+        }
+        futures::future::pending().await
+    }
+    async fn write_all(&mut self, buf: &[u8]) -> Result<(), ()> {
+        if self.fault == "upgrade_error" {
+            return Err(());
+        }
+        if self.fault == "pong_error" && buf.first() == Some(&0x8a) {
+            return Err(());
+        }
+        if buf.first() == Some(&0x82) {
+            if self.fault == "audio_error" {
+                return Err(());
+            }
+            if !self.triggered
+                && ["blocked_write_ota", "blocked_write_matter"].contains(&self.fault)
+            {
+                self.triggered = true;
+                if self.fault == "blocked_write_ota" {
+                    self.watch.sender().send(SystemState::Updating);
+                } else {
+                    self.calls
+                        .sender()
+                        .send(intercom_core::events::SessionSnapshot {
+                            active_owner: Some(
+                                intercom_core::domain::intercom::SessionOwner::MatterCall,
+                            ),
+                            ..Default::default()
+                        });
+                }
+                return futures::future::pending().await;
+            }
+        }
+        self.inner.write_all(buf).await
+    }
+    async fn flush(&mut self) -> Result<(), ()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn websocket_preemption_interrupts_partial_frames_and_blocked_downlink_writes() {
+    use core::sync::atomic::{AtomicBool, Ordering};
+    use futures::Future;
+    use intercom_adapter_http::HttpAudioMedia;
+    use intercom_core::domain::intercom::SessionOwner;
+    use intercom_core::events::CallStateWatch;
+    // Arrange
+    for fault in ["partial_frame", "blocked_write_ota", "blocked_write_matter"] {
+        let channel = CommandChannel::new();
+        let hardware = MockHardwareInfo;
+        let watch = SystemStateWatch::new();
+        let calls = CallStateWatch::new();
+        let diagnostics = DiagnosticsService::new(&hardware, &watch);
+        let mut ota = MockOtaFlashDriver::new(false);
+        let rx_audio = intercom_media::RxAudioChannel::new();
+        let tx_audio = intercom_media::TxAudioChannel::new();
+        let active = AtomicBool::new(false);
+        let mut server = HttpServer::new_unbound(
+            AccessControllerHandle::new(channel.sender()),
+            &BusSafetyDriverMock,
+            &diagnostics,
+            &mut ota,
+            test_log_provider,
+            HttpServerConfig::default(),
+        )
+        .with_audio_media(HttpAudioMedia {
+            rx_audio: &rx_audio,
+            tx_audio: &tx_audio,
+            call_watch: &calls,
+            state_watch: &watch,
+            ws_active: &active,
+        });
+        let mut input = WS_AUDIO_REQUEST.to_vec();
+        if fault == "partial_frame" {
+            input.extend([0x82, 0xfe]);
+        } else {
+            rx_audio
+                .try_send(intercom_media::PcmFrame::SILENCE)
+                .unwrap();
+        }
+        let mut stream = AudioFaultStream {
+            inner: MockStream::new(&input),
+            watch: &watch,
+            calls: &calls,
+            fault,
+            triggered: false,
+        };
+        let mut future = Box::pin(server.handle_request(&mut stream));
+        let waker = futures::task::noop_waker();
+        let mut cx = std::task::Context::from_waker(&waker);
+        // Act
+        let mut result = future.as_mut().poll(&mut cx);
+        for _ in 0..2 {
+            if result.is_pending() {
+                result = future.as_mut().poll(&mut cx);
+            }
+        }
+        drop(future);
+        // Assert
+        assert!(
+            result.is_ready(),
+            "{fault} must interrupt the outstanding I/O"
+        );
+        assert!(
+            stream
+                .inner
+                .written_bytes()
+                .windows(4)
+                .any(|w| w == [0x88, 11, 0x03, 0xf5]),
+            "{fault}: missing 1013 close"
+        );
+        assert!(!active.load(Ordering::Acquire));
+        assert_eq!(
+            channel.try_receive(),
+            Ok(AccessCommand::StartListen(SessionOwner::HttpDebug))
+        );
+        assert_eq!(
+            channel.try_receive(),
+            Ok(AccessCommand::EndSession(SessionOwner::HttpDebug))
+        );
+    }
+}
+
+#[test]
+fn websocket_releases_reservation_and_session_on_io_errors_and_cancellation() {
+    use core::sync::atomic::{AtomicBool, Ordering};
+    use futures::Future;
+    use intercom_adapter_http::HttpAudioMedia;
+    use intercom_core::domain::intercom::SessionOwner;
+    use intercom_core::events::CallStateWatch;
+    // Arrange
+    for fault in [
+        "upgrade_error",
+        "read_error",
+        "pong_error",
+        "audio_error",
+        "cancelled",
+    ] {
+        let channel = CommandChannel::new();
+        let hardware = MockHardwareInfo;
+        let watch = SystemStateWatch::new();
+        let calls = CallStateWatch::new();
+        let diagnostics = DiagnosticsService::new(&hardware, &watch);
+        let mut ota = MockOtaFlashDriver::new(false);
+        let rx_audio = intercom_media::RxAudioChannel::new();
+        let tx_audio = intercom_media::TxAudioChannel::new();
+        let active = AtomicBool::new(false);
+        let mut server = HttpServer::new_unbound(
+            AccessControllerHandle::new(channel.sender()),
+            &BusSafetyDriverMock,
+            &diagnostics,
+            &mut ota,
+            test_log_provider,
+            HttpServerConfig::default(),
+        )
+        .with_audio_media(HttpAudioMedia {
+            rx_audio: &rx_audio,
+            tx_audio: &tx_audio,
+            call_watch: &calls,
+            state_watch: &watch,
+            ws_active: &active,
+        });
+        let mut input = WS_AUDIO_REQUEST.to_vec();
+        if fault == "pong_error" {
+            input.extend(masked_ws_frame(9, b"ping"));
+        }
+        if fault == "audio_error" {
+            rx_audio
+                .try_send(intercom_media::PcmFrame::SILENCE)
+                .unwrap();
+        }
+        let mut stream = AudioFaultStream {
+            inner: MockStream::new(&input),
+            watch: &watch,
+            calls: &calls,
+            fault,
+            triggered: false,
+        };
+        let mut future = Box::pin(server.handle_request(&mut stream));
+        let waker = futures::task::noop_waker();
+        let mut cx = std::task::Context::from_waker(&waker);
+        // Act
+        let result = future.as_mut().poll(&mut cx);
+        drop(future);
+        // Assert
+        assert_eq!(result.is_pending(), fault == "cancelled", "{fault}");
+        assert!(!active.load(Ordering::Acquire), "{fault}");
+        if fault != "upgrade_error" {
+            assert_eq!(
+                channel.try_receive(),
+                Ok(AccessCommand::StartListen(SessionOwner::HttpDebug))
+            );
+            assert_eq!(
+                channel.try_receive(),
+                Ok(AccessCommand::EndSession(SessionOwner::HttpDebug))
+            );
+        }
+        assert!(channel.try_receive().is_err(), "{fault}");
     }
 }

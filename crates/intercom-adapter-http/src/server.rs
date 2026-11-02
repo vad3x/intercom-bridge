@@ -40,6 +40,7 @@ pub(crate) struct AppState<
     pub(crate) access_handle: AccessControllerHandle<'a>,
     pub(crate) bus_safety: &'a dyn BusSafetyDriver,
     pub(crate) diagnostics: &'a DiagnosticsService<'a, H, E, T>,
+    pub(crate) ota_busy: Option<&'a core::cell::Cell<bool>>,
     pub(crate) ota_driver: &'a core::cell::RefCell<&'a mut O>,
     pub(crate) state_sender: Option<SystemStateSender<'a>>,
     pub(crate) tarpit_delay: Duration,
@@ -47,6 +48,7 @@ pub(crate) struct AppState<
     pub(crate) had_error: &'a core::cell::Cell<bool>,
     pub(crate) reboot_requested: &'a core::cell::Cell<bool>,
     pub(crate) reset_requested: &'a core::cell::Cell<Option<ResetScope>>,
+    pub(crate) audio_media: Option<crate::HttpAudioMedia<'a>>,
     pub(crate) log_provider: fn(&mut [u8]) -> usize,
 }
 
@@ -69,7 +71,7 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, T: Ec
 
 /// Asynchronous HTTP Server with injected core services.
 ///
-/// Binds a single-connection TCP socket on the configured port (default 8080).
+/// Binds two concurrent TCP sockets on the configured port (default 8080).
 /// Dispatches incoming requests via `picoserve` to the pre-compressed dashboard HTML,
 /// system diagnostics snapshots, live logs, access controller actions,
 /// and streaming OTA firmware updates.
@@ -90,6 +92,7 @@ pub struct HttpServer<
     state_sender: Option<SystemStateSender<'a>>,
     log_provider: fn(&mut [u8]) -> usize,
     config: HttpServerConfig,
+    audio_media: Option<crate::HttpAudioMedia<'a>>,
 }
 
 impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, T: EcosystemType>
@@ -113,6 +116,7 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, T: Ec
             ota_driver,
             reset_driver: None,
             state_sender: None,
+            audio_media: None,
             log_provider,
             config,
         }
@@ -148,9 +152,16 @@ impl<
             ota_driver,
             reset_driver: Some(reset_driver),
             state_sender,
+            audio_media: None,
             log_provider,
             config,
         }
+    }
+
+    /// Attach the static audio channels and lifecycle watches.
+    pub fn with_audio_media(mut self, media: crate::HttpAudioMedia<'a>) -> Self {
+        self.audio_media = Some(media);
+        self
     }
 
     /// Attach a reset driver to the server (for reboot on OTA completion).
@@ -166,6 +177,7 @@ impl<
             ota_driver: self.ota_driver,
             reset_driver: Some(reset_driver),
             state_sender: self.state_sender,
+            audio_media: self.audio_media,
             log_provider: self.log_provider,
             config: self.config,
         }
@@ -197,7 +209,9 @@ impl<
             bus_safety: self.bus_safety,
             diagnostics: self.diagnostics,
             ota_driver: &ota_driver_cell,
+            ota_busy: None,
             state_sender: self.state_sender,
+            audio_media: self.audio_media,
             tarpit_delay: self.config.tarpit_delay,
             read_request_timeout: self.config.read_request_timeout,
             had_error: &had_error,
@@ -232,80 +246,96 @@ impl<
         }
     }
 
-    /// Run the sequential HTTP server accept loop forever.
+    /// Run two independent accept workers so WebSocket audio leaves REST responsive.
     pub async fn run(&mut self) -> ! {
         let stack = self
             .stack
             .expect("HttpServer requires a network stack to run");
-        let mut rx_buffer = [0u8; TCP_RX_BUFFER_SIZE];
-        let mut tx_buffer = [0u8; TCP_TX_BUFFER_SIZE];
-        let mut http_buffer = [0u8; HTTP_BUFFER_SIZE];
-
+        let config = self.config;
+        let reset_driver = self.reset_driver;
+        let access_handle = self.access_handle;
+        let bus_safety = self.bus_safety;
+        let diagnostics = self.diagnostics;
+        let state_sender = self.state_sender;
+        let audio_media = self.audio_media;
+        let log_provider = self.log_provider;
+        let proxy = crate::ota_proxy::OtaProxy::new();
         let picoserve_config = picoserve::Config::new(picoserve::Timeouts {
-            start_read_request: self.config.start_read_timeout,
-            persistent_start_read_request: self.config.persistent_start_read_timeout,
-            read_request: self.config.read_request_timeout,
-            write: self.config.write_timeout,
+            start_read_request: config.start_read_timeout,
+            persistent_start_read_request: config.persistent_start_read_timeout,
+            read_request: config.read_request_timeout,
+            write: config.write_timeout,
         })
         .close_connection_after_response();
-
-        let ota_driver_cell = core::cell::RefCell::new(&mut *self.ota_driver);
-        let had_error = core::cell::Cell::new(false);
-        let reboot_requested = core::cell::Cell::new(false);
-        let reset_requested = core::cell::Cell::new(None);
-        let app_state = AppState {
-            access_handle: self.access_handle,
-            bus_safety: self.bus_safety,
-            diagnostics: self.diagnostics,
-            ota_driver: &ota_driver_cell,
-            state_sender: self.state_sender,
-            tarpit_delay: self.config.tarpit_delay,
-            read_request_timeout: self.config.read_request_timeout,
-            had_error: &had_error,
-            reboot_requested: &reboot_requested,
-            reset_requested: &reset_requested,
-            log_provider: self.log_provider,
+        let accept_worker = |worker| {
+            let proxy = &proxy;
+            let picoserve_config = &picoserve_config;
+            async move {
+                let mut rx_buffer = [0u8; TCP_RX_BUFFER_SIZE];
+                let mut tx_buffer = [0u8; TCP_TX_BUFFER_SIZE];
+                let mut http_buffer = [0u8; HTTP_BUFFER_SIZE];
+                let mut ota_client = proxy.client(worker);
+                let ota_driver_cell = core::cell::RefCell::new(&mut ota_client);
+                let had_error = core::cell::Cell::new(false);
+                let reboot_requested = core::cell::Cell::new(false);
+                let reset_requested = core::cell::Cell::new(None);
+                let app_state = AppState {
+                    access_handle,
+                    bus_safety,
+                    diagnostics,
+                    ota_driver: &ota_driver_cell,
+                    ota_busy: Some(proxy.busy()),
+                    state_sender,
+                    audio_media,
+                    tarpit_delay: config.tarpit_delay,
+                    read_request_timeout: config.read_request_timeout,
+                    had_error: &had_error,
+                    reboot_requested: &reboot_requested,
+                    reset_requested: &reset_requested,
+                    log_provider,
+                };
+                let router = build_router(app_state);
+                loop {
+                    let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
+                    socket.set_timeout(Some(config.socket_timeout));
+                    if let Err(e) = socket.accept(config.port).await {
+                        warn!("HTTP socket accept error: {:?}", e);
+                        Timer::after(config.accept_retry_delay).await;
+                        continue;
+                    }
+                    had_error.set(false);
+                    let _ = picoserve::Server::new(&router, picoserve_config, &mut http_buffer)
+                        .serve(socket)
+                        .await;
+                    if let Some(scope) = reset_requested.get() {
+                        Timer::after(config.reboot_delay).await;
+                        if let Some(reset) = reset_driver {
+                            reset.erase_credentials(scope);
+                            reset.reboot();
+                        }
+                    }
+                    if reboot_requested.get() {
+                        Timer::after(config.reboot_delay).await;
+                        if let Some(reset) = reset_driver {
+                            reset.reboot();
+                        }
+                    }
+                }
+            }
         };
-
-        let router = build_router(app_state);
-
-        info!("HTTP Server listening on TCP port {}", self.config.port);
-
-        loop {
-            let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
-            socket.set_timeout(Some(self.config.socket_timeout));
-
-            if let Err(e) = socket.accept(self.config.port).await {
-                warn!("HTTP socket accept error: {:?}", e);
-                Timer::after(self.config.accept_retry_delay).await;
-                continue;
-            }
-
-            had_error.set(false);
-            let _ = picoserve::Server::new(&router, &picoserve_config, &mut http_buffer)
-                .serve(socket)
-                .await;
-
-            if let Some(scope) = reset_requested.get() {
-                info!(
-                    "Reset requested ({:?}); erasing credentials and rebooting in {:?}...",
-                    scope, self.config.reboot_delay
-                );
-                Timer::after(self.config.reboot_delay).await;
-                if let Some(reset) = self.reset_driver {
-                    reset.erase_credentials(scope);
-                    reset.reboot();
-                }
-            }
-
-            if reboot_requested.get() {
-                info!("Reboot requested; rebooting in {:?}...", self.config.reboot_delay);
-                Timer::after(self.config.reboot_delay).await;
-                if let Some(reset) = self.reset_driver {
-                    reset.reboot();
-                }
-            }
-        }
+        info!(
+            "HTTP Server listening on TCP port {} (two workers)",
+            config.port
+        );
+        // Only this third future owns the large streaming/signature-validation
+        // state. Both HTTP sockets forward bounded chunks to it without a heap.
+        embassy_futures::join::join3(
+            accept_worker(0),
+            accept_worker(1),
+            proxy.run(&mut *self.ota_driver),
+        )
+        .await;
+        unreachable!("HTTP and OTA workers never return")
     }
 }
 
@@ -410,6 +440,49 @@ fn build_router<
                 },
             ),
         )
+        .route(
+            "/api/action/audio/gain",
+            picoserve::routing::post(
+                |picoserve::extract::State(state): picoserve::extract::State<
+                    AppState<'a, H, E, O, T>,
+                >,
+                 picoserve::extract::Query(q): picoserve::extract::Query<AudioGainQuery>| async move {
+                    match (
+                        intercom_core::domain::policy::RxPgaGain::try_new(q.rx_half_db),
+                        intercom_core::domain::policy::TxDacGain::try_new(q.tx_half_db),
+                    ) {
+                        (Some(rx), Some(tx)) => {
+                            state.access_handle.set_audio_gain(rx, tx);
+                            picoserve::response::Response::ok("{\"status\":\"ok\"}")
+                                .with_content_type("application/json")
+                        }
+                        _ => picoserve::response::Response::new(
+                            picoserve::response::StatusCode::BAD_REQUEST,
+                            "{\"error\":\"invalid_audio_gain\"}",
+                        )
+                        .with_content_type("application/json"),
+                    }
+                },
+            ),
+        )
+        .route(
+            "/api/debug/audio/tone",
+            picoserve::routing::post(
+                |picoserve::extract::State(state): picoserve::extract::State<
+                    AppState<'a, H, E, O, T>,
+                >,
+                 picoserve::extract::Query(q): picoserve::extract::Query<BenchToneQuery>| async move {
+                    if q.enable {
+                        state.access_handle.start_talk(SessionOwner::BenchTone);
+                    } else {
+                        state.access_handle.end_session(SessionOwner::BenchTone);
+                    }
+                    picoserve::response::Response::ok("{\"status\":\"ok\"}")
+                        .with_content_type("application/json")
+                },
+            ),
+        )
+        .route("/api/ws/audio", picoserve::routing::get_service(WsAudioService))
         .route(
             "/api/action/listen",
             picoserve::routing::post(
@@ -526,8 +599,71 @@ fn build_router<
 }
 
 #[derive(serde::Deserialize)]
+struct AudioGainQuery {
+    rx_half_db: u8,
+    tx_half_db: i8,
+}
+
+#[derive(serde::Deserialize)]
+struct BenchToneQuery {
+    enable: bool,
+}
+
+#[derive(serde::Deserialize)]
 struct DoorDurationQuery {
     seconds: u32,
+}
+
+struct WsAudioService;
+
+impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, T: EcosystemType>
+    picoserve::routing::RequestHandlerService<AppState<'a, H, E, O, T>> for WsAudioService
+{
+    async fn call_request_handler_service<
+        R: picoserve::io::Read,
+        W: picoserve::response::ResponseWriter<Error = R::Error>,
+    >(
+        &self,
+        state: &AppState<'a, H, E, O, T>,
+        _path_parameters: (),
+        mut request: picoserve::request::Request<'_, R>,
+        response_writer: W,
+    ) -> Result<picoserve::ResponseSent, W::Error> {
+        use picoserve::extract::FromRequest;
+        let ws = match picoserve::response::ws::WebSocketUpgrade::from_request(
+            state,
+            request.parts,
+            request.body_connection.body(),
+        )
+        .await
+        {
+            Ok(ws) => ws,
+            Err(rejection) => {
+                return rejection
+                    .write_to(request.body_connection.finalize().await?, response_writer)
+                    .await
+            }
+        };
+        match state.audio_media {
+            Some(media) if media.can_accept_ws() => {
+                ws.on_upgrade(crate::ws_audio::WsAudioSession::new(
+                    state.access_handle,
+                    media,
+                ))
+                .write_to(request.body_connection.finalize().await?, response_writer)
+                .await
+            }
+            _ => {
+                picoserve::response::Response::new(
+                    picoserve::response::StatusCode::CONFLICT,
+                    "{\"error\":\"audio_busy\"}",
+                )
+                .with_content_type("application/json")
+                .write_to(request.body_connection.finalize().await?, response_writer)
+                .await
+            }
+        }
+    }
 }
 
 struct OtaFlashService<T: EcosystemType>(core::marker::PhantomData<fn() -> T>);
@@ -568,6 +704,16 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, T: Ec
                 .await;
             }
         };
+
+        if state.ota_busy.is_some_and(core::cell::Cell::get) {
+            return picoserve::response::Response::new(
+                picoserve::response::StatusCode::CONFLICT,
+                "{\"error\":\"ota_busy\"}",
+            )
+            .with_content_type("application/json")
+            .write_to(request.body_connection.finalize().await?, response_writer)
+            .await;
+        }
 
         if let Some(sender) = state.state_sender {
             sender.updating();
@@ -652,7 +798,11 @@ impl<'a, 's, S: OtaStream> picoserve::io::ErrorType for StreamReadHalf<'a, 's, S
 
 impl<'a, 's, S: OtaStream> picoserve::io::Read for StreamReadHalf<'a, 's, S> {
     async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
-        self.0.borrow_mut().read(buf).await.map_err(|_| StreamIoError)
+        self.0
+            .borrow_mut()
+            .read(buf)
+            .await
+            .map_err(|_| StreamIoError)
     }
 }
 
@@ -664,7 +814,11 @@ impl<'a, 's, S: OtaStream> picoserve::io::ErrorType for StreamWriteHalf<'a, 's, 
 
 impl<'a, 's, S: OtaStream> picoserve::io::BaseWrite for StreamWriteHalf<'a, 's, S> {
     async fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
-        self.0.borrow_mut().write_all(buf).await.map_err(|_| StreamIoError)?;
+        self.0
+            .borrow_mut()
+            .write_all(buf)
+            .await
+            .map_err(|_| StreamIoError)?;
         Ok(buf.len())
     }
 
@@ -681,7 +835,11 @@ impl<'a, 's, S: OtaStream> picoserve::io::Write for StreamWriteHalf<'a, 's, S> {
         let mut buffer = [0u8; STREAM_WRITE_BUFFER_SIZE];
         let mut buffer = picoserve::mem::BorrowedBuffer::new(&mut buffer);
         let output = f(buffer.unfilled());
-        self.0.borrow_mut().write_all(buffer.filled()).await.map_err(|_| StreamIoError)?;
+        self.0
+            .borrow_mut()
+            .write_all(buffer.filled())
+            .await
+            .map_err(|_| StreamIoError)?;
         Ok(output)
     }
 }
@@ -700,8 +858,14 @@ impl<'s, S: OtaStream> SocketStream<'s, S> {
 
 impl<'s, S: OtaStream> picoserve::io::Socket<picoserve::EmbassyRuntime> for SocketStream<'s, S> {
     type Error = StreamIoError;
-    type ReadHalf<'a> = StreamReadHalf<'a, 's, S> where 's: 'a;
-    type WriteHalf<'a> = StreamWriteHalf<'a, 's, S> where 's: 'a;
+    type ReadHalf<'a>
+        = StreamReadHalf<'a, 's, S>
+    where
+        's: 'a;
+    type WriteHalf<'a>
+        = StreamWriteHalf<'a, 's, S>
+    where
+        's: 'a;
 
     fn split(&mut self) -> (Self::ReadHalf<'_>, Self::WriteHalf<'_>) {
         (StreamReadHalf(&self.cell), StreamWriteHalf(&self.cell))
@@ -721,7 +885,11 @@ impl<'s, S: OtaStream> picoserve::io::Socket<picoserve::EmbassyRuntime> for Sock
         _timeouts: &picoserve::Timeouts,
         _timer: &Timer,
     ) -> Result<(), picoserve::Error<Self::Error>> {
-        self.cell.borrow_mut().flush().await.map_err(|_| picoserve::Error::Write(StreamIoError))?;
+        self.cell
+            .borrow_mut()
+            .flush()
+            .await
+            .map_err(|_| picoserve::Error::Write(StreamIoError))?;
         Ok(())
     }
 }

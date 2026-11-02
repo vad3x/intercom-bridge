@@ -270,13 +270,28 @@ fn test_format_status_json_success() {
     assert_eq!(val["slot_valid"], true);
     assert_eq!(val["free_heap_bytes"], 151552);
     assert_eq!(val["total_heap_bytes"], 215040);
-    assert_eq!(val["available_ecosystems"], serde_json::json!(["Matter", "HomeAssistant"]));
+    assert_eq!(
+        val["available_ecosystems"],
+        serde_json::json!(["Matter", "HomeAssistant"])
+    );
     assert_eq!(val["active_ecosystem"]["type"], "Matter");
     assert_eq!(val["active_ecosystem"]["paired"], true);
-    assert_eq!(val["active_ecosystem"]["properties"]["door_lock_subscribed"], true);
-    assert_eq!(val["active_ecosystem"]["properties"]["door_lock_endpoint"], 1);
-    assert_eq!(val["active_ecosystem"]["properties"]["ring_sensor_subscribed"], false);
-    assert_eq!(val["active_ecosystem"]["properties"]["ring_sensor_endpoint"], 2);
+    assert_eq!(
+        val["active_ecosystem"]["properties"]["door_lock_subscribed"],
+        true
+    );
+    assert_eq!(
+        val["active_ecosystem"]["properties"]["door_lock_endpoint"],
+        1
+    );
+    assert_eq!(
+        val["active_ecosystem"]["properties"]["ring_sensor_subscribed"],
+        false
+    );
+    assert_eq!(
+        val["active_ecosystem"]["properties"]["ring_sensor_endpoint"],
+        2
+    );
     assert_eq!(val["active_ecosystem"]["fabrics"], serde_json::json!([]));
     assert_eq!(
         val["active_ecosystem"]["endpoints"],
@@ -293,7 +308,8 @@ fn test_format_status_json_success() {
 #[test]
 fn test_format_status_json_with_multiple_fabrics() {
     // Arrange
-    const AVAILABLE: &[intercom_core::domain::EcosystemId] = &[intercom_core::domain::EcosystemId::new("Matter")];
+    const AVAILABLE: &[intercom_core::domain::EcosystemId] =
+        &[intercom_core::domain::EcosystemId::new("Matter")];
     let active = intercom_core::domain::EcosystemStatus::new(
         intercom_core::domain::EcosystemId::new("Matter"),
         true,
@@ -391,7 +407,7 @@ fn test_format_status_json_with_none_options() {
         git_commit: "deadbeef",
         build_date: "2026-10-16",
     };
-    let mut buf = [0u8; 512];
+    let mut buf = [0u8; 1024];
 
     // Act
     let written = format_status_json(&diag, &mut buf).expect("serialization should succeed");
@@ -529,4 +545,25 @@ fn status_json_includes_all_bus_and_call_states() {
         assert_eq!(json["bus_state"], bus_name);
         assert_eq!(json["call_state"], call_name);
     }
+}
+
+#[test]
+fn status_reports_live_audio_levels_and_calibration() {
+    // Arrange
+    let mut diag = test_diagnostics();
+    diag.domain.rx_rms_dbfs = -68;
+    diag.domain.rx_peak_dbfs = -62;
+    diag.domain.rx_gain_half_db = 95;
+    diag.domain.tx_gain_half_db = -127;
+    diag.domain.tone_active = true;
+    let mut out = [0; 1536];
+    // Act
+    let len = format_status_json(&diag, &mut out).unwrap();
+    let json: Value = serde_json::from_slice(&out[..len]).unwrap();
+    // Assert
+    assert_eq!(json["rx_rms_dbfs"], -68);
+    assert_eq!(json["rx_peak_dbfs"], -62);
+    assert_eq!(json["rx_gain_half_db"], 95);
+    assert_eq!(json["tx_gain_half_db"], -127);
+    assert_eq!(json["tone_active"], true);
 }

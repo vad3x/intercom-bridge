@@ -153,11 +153,16 @@ impl DiagnosticPayload for IntercomPayload<'_> {
     fn write_fields<W: core::fmt::Write>(&self, out: &mut W) -> core::fmt::Result {
         write!(
             out,
-            ",\"door_locked\":{},\"door_unlock_duration_sec\":{},\"bus_state\":\"{}\",\"call_state\":\"{}\"",
+            ",\"door_locked\":{},\"door_unlock_duration_sec\":{},\"bus_state\":\"{}\",\"call_state\":\"{}\",\"rx_rms_dbfs\":{},\"rx_peak_dbfs\":{},\"rx_gain_half_db\":{},\"tx_gain_half_db\":{},\"tone_active\":{}",
             if self.0.door_locked { "true" } else { "false" },
             self.0.door_unlock_duration_sec,
             self.0.bus_state.as_str(),
             self.0.call_state.as_str(),
+            self.0.rx_rms_dbfs,
+            self.0.rx_peak_dbfs,
+            self.0.rx_gain_half_db,
+            self.0.tx_gain_half_db,
+            self.0.tone_active,
         )
     }
 }
@@ -165,5 +170,3 @@ impl DiagnosticPayload for IntercomPayload<'_> {
 // ============================================================================
 // Private Helpers & Writers
 // ============================================================================
-
-

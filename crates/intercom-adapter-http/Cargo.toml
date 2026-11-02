@@ -7,8 +7,11 @@ edition = "2021"
 edf-core = { workspace = true }
 edf-http-diagnostics = { workspace = true }
 edf-http-ota = { workspace = true }
+embassy-sync = { workspace = true }
+embassy-futures = { workspace = true }
 embassy-net = { workspace = true, features = ["tcp", "proto-ipv4", "medium-ethernet"] }
 embassy-time = { workspace = true }
+intercom-media = { workspace = true }
 intercom-core = { path = "../intercom-core" }
 log = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

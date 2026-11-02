@@ -79,7 +79,8 @@ mod tests {
         let count = get_buffered_logs(&mut bytes);
         let retained = core::str::from_utf8(&bytes[..count]).unwrap();
 
-        assert_eq!(count, bytes.len());
+        // The two HTTP workers leave a bounded 2 KiB diagnostic history.
+        assert_eq!(count, 2 * 1024);
         assert!(!retained.contains("retained-record-000"));
         assert!(retained.contains("retained-record-149"));
         let earlier_record = retained.find("retained-record-147").unwrap();
