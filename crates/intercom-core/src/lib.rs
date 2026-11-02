@@ -14,9 +14,13 @@ pub mod ports;
 pub mod service;
 
 pub use app::App;
+pub use domain::intercom::{
+    AudioDirection, BusLineState, CallState, IntercomAction, IntercomEffects, IntercomStateMachine,
+    SessionOwner,
+};
 pub use domain::{
     EcosystemId, EcosystemStatus, EcosystemType, EcosystemValue, IntercomState, SystemDiagnostics,
     WifiSsid, MAX_ECOSYSTEM_PROPERTIES,
 };
 pub use events::{SystemState, SystemStateReceiver, SystemStateSender, SystemStateWatch};
-pub use service::DiagnosticsService;
+pub use service::{DiagnosticsService, IntercomController};

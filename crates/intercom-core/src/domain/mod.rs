@@ -2,14 +2,12 @@
 //!
 //! Pure, synchronous business logic decoupled from async runtimes and I/O.
 
-pub mod access;
 pub mod diagnostics;
 pub mod ecosystem;
 pub mod intercom;
 pub mod policy;
 pub mod reset;
 
-pub use access::{AccessEffects, AccessStateMachine};
 pub use diagnostics::{IntercomState, SystemDiagnostics, WifiSsid};
 pub use ecosystem::{
     EcosystemId, EcosystemStatus, EcosystemType, EcosystemValue, EndpointInfo, FabricInfo,
