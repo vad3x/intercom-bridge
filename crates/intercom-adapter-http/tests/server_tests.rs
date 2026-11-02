@@ -2,13 +2,13 @@
 //!
 //! Follows the Arrange -> Act -> Assert pattern strictly.
 
+use edf_core::ports::ota::{OtaDriverError, OtaFlashDriver, OtaStream};
 use flate2::read::GzDecoder;
 use futures::executor::block_on;
 use intercom_adapter_http::{HttpServer, HttpServerConfig, DASHBOARD_HTML_GZ};
 use intercom_core::events::{SystemState, SystemStateWatch};
 use intercom_core::ports::diagnostics::HardwareInfoDriver;
 use intercom_core::ports::inbound::{AccessCommand, AccessControllerHandle, CommandChannel};
-use edf_core::ports::ota::{OtaDriverError, OtaFlashDriver, OtaStream};
 use intercom_core::service::DiagnosticsService;
 use serde_json::Value;
 use std::io::Read;
@@ -191,6 +191,7 @@ fn test_get_dashboard_returns_gzipped_html() {
     let mut ota_driver = MockOtaFlashDriver::new(false);
     let mut server = HttpServer::new_unbound(
         access_handle,
+        &BusSafetyDriverMock,
         &diagnostics,
         &mut ota_driver,
         test_log_provider,
@@ -236,6 +237,7 @@ fn test_get_status_returns_valid_telemetry_json() {
     let mut ota_driver = MockOtaFlashDriver::new(false);
     let mut server = HttpServer::new_unbound(
         access_handle,
+        &BusSafetyDriverMock,
         &diagnostics,
         &mut ota_driver,
         test_log_provider,
@@ -291,6 +293,7 @@ fn test_get_logs_returns_text_plain_logs() {
     let mut ota_driver = MockOtaFlashDriver::new(false);
     let mut server = HttpServer::new_unbound(
         access_handle,
+        &BusSafetyDriverMock,
         &diagnostics,
         &mut ota_driver,
         test_log_provider,
@@ -328,6 +331,7 @@ fn test_post_action_ring_dispatches_command() {
     let mut ota_driver = MockOtaFlashDriver::new(false);
     let mut server = HttpServer::new_unbound(
         access_handle,
+        &BusSafetyDriverMock,
         &diagnostics,
         &mut ota_driver,
         test_log_provider,
@@ -356,6 +360,7 @@ fn test_post_action_unlock_dispatches_command() {
     let mut ota_driver = MockOtaFlashDriver::new(false);
     let mut server = HttpServer::new_unbound(
         access_handle,
+        &BusSafetyDriverMock,
         &diagnostics,
         &mut ota_driver,
         test_log_provider,
@@ -384,6 +389,7 @@ fn test_post_action_door_duration_valid() {
     let mut ota_driver = MockOtaFlashDriver::new(false);
     let mut server = HttpServer::new_unbound(
         access_handle,
+        &BusSafetyDriverMock,
         &diagnostics,
         &mut ota_driver,
         test_log_provider,
@@ -417,6 +423,7 @@ fn test_post_action_door_duration_invalid_range() {
     let mut ota_driver = MockOtaFlashDriver::new(false);
     let mut server = HttpServer::new_unbound(
         access_handle,
+        &BusSafetyDriverMock,
         &diagnostics,
         &mut ota_driver,
         test_log_provider,
@@ -447,6 +454,7 @@ fn test_post_ota_flash_success() {
     let mut ota_driver = MockOtaFlashDriver::new(false);
     let mut server = HttpServer::new_unbound(
         access_handle,
+        &BusSafetyDriverMock,
         &diagnostics,
         &mut ota_driver,
         test_log_provider,
@@ -483,6 +491,7 @@ fn test_post_ota_flash_driver_error_returns_400() {
     let mut ota_driver = MockOtaFlashDriver::new(true); // Should fail
     let mut server = HttpServer::new_unbound(
         access_handle,
+        &BusSafetyDriverMock,
         &diagnostics,
         &mut ota_driver,
         test_log_provider,
@@ -517,6 +526,7 @@ fn test_post_ota_flash_missing_content_length_returns_400() {
     let mut ota_driver = MockOtaFlashDriver::new(false);
     let mut server = HttpServer::new_unbound(
         access_handle,
+        &BusSafetyDriverMock,
         &diagnostics,
         &mut ota_driver,
         test_log_provider,
@@ -544,6 +554,7 @@ fn test_get_invalid_route_returns_404_not_found() {
     let mut ota_driver = MockOtaFlashDriver::new(false);
     let mut server = HttpServer::new_unbound(
         access_handle,
+        &BusSafetyDriverMock,
         &diagnostics,
         &mut ota_driver,
         test_log_provider,
@@ -582,6 +593,7 @@ fn test_post_ota_flash_triggers_reboot() {
     let reset_driver = MockResetDriver;
     let mut server = HttpServer::new_unbound(
         access_handle,
+        &BusSafetyDriverMock,
         &diagnostics,
         &mut ota_driver,
         test_log_provider,
@@ -617,6 +629,7 @@ fn test_post_ota_flash_sets_updating_state() {
     let mut ota_driver = MockOtaFlashDriver::new(false);
     let mut server = HttpServer::new_unbound(
         access_handle,
+        &BusSafetyDriverMock,
         &diagnostics,
         &mut ota_driver,
         test_log_provider,
@@ -679,6 +692,7 @@ fn test_post_action_reset_matter_erases_ecosystem_and_reboots() {
     };
     let mut server = HttpServer::new_unbound(
         access_handle,
+        &BusSafetyDriverMock,
         &diagnostics,
         &mut ota_driver,
         test_log_provider,
@@ -708,6 +722,7 @@ fn test_post_action_reset_matter_sets_ecosystem_reset_state() {
     let mut ota_driver = MockOtaFlashDriver::new(false);
     let mut server = HttpServer::new_unbound(
         access_handle,
+        &BusSafetyDriverMock,
         &diagnostics,
         &mut ota_driver,
         test_log_provider,
@@ -742,6 +757,7 @@ fn test_post_action_reboot_invokes_reboot() {
     let reset_driver = MockResetDriver;
     let mut server = HttpServer::new_unbound(
         access_handle,
+        &BusSafetyDriverMock,
         &diagnostics,
         &mut ota_driver,
         test_log_provider,
@@ -791,6 +807,7 @@ fn test_post_action_reset_factory_erases_and_reboots() {
     };
     let mut server = HttpServer::new_unbound(
         access_handle,
+        &BusSafetyDriverMock,
         &diagnostics,
         &mut ota_driver,
         test_log_provider,
@@ -804,4 +821,462 @@ fn test_post_action_reset_factory_erases_and_reboots() {
     let _ = block_on(server.handle_request(&mut stream));
 }
 
+#[test]
+fn bus_debug_routes_dispatch_http_owner_commands() {
+    use intercom_core::domain::intercom::SessionOwner;
+    // Arrange
+    let cases = [
+        (
+            "listen",
+            AccessCommand::StartListen(SessionOwner::HttpDebug),
+        ),
+        (
+            "talk/start",
+            AccessCommand::StartTalk(SessionOwner::HttpDebug),
+        ),
+        (
+            "talk/stop",
+            AccessCommand::StopTalk(SessionOwner::HttpDebug),
+        ),
+        (
+            "heartbeat",
+            AccessCommand::SessionHeartbeat(SessionOwner::HttpDebug),
+        ),
+        ("hangup", AccessCommand::EndSession(SessionOwner::HttpDebug)),
+    ];
+    for (path, expected) in cases {
+        let channel = CommandChannel::new();
+        let hardware = MockHardwareInfo;
+        let watch = SystemStateWatch::new();
+        let diagnostics = DiagnosticsService::new(&hardware, &watch);
+        let mut ota = MockOtaFlashDriver::new(false);
+        let mut server = HttpServer::new_unbound(
+            AccessControllerHandle::new(channel.sender()),
+            &BusSafetyDriverMock,
+            &diagnostics,
+            &mut ota,
+            test_log_provider,
+            HttpServerConfig::default(),
+        );
+        let request = format!("POST /api/action/{path} HTTP/1.1\r\nHost: device\r\n\r\n");
+        let mut stream = MockStream::new(request.as_bytes());
 
+        // Act
+        let result = block_on(server.handle_request(&mut stream));
+
+        // Assert
+        assert!(result.is_ok());
+        assert!(stream.written_str().starts_with("HTTP/1.1 200 "));
+        assert!(stream.written_str().contains("application/json"));
+        assert_eq!(channel.try_receive(), Ok(expected));
+        assert!(channel.try_receive().is_err());
+    }
+}
+
+#[test]
+fn maintenance_routes_request_emergency_stop() {
+    // Arrange
+    for path in ["reboot", "reset/matter", "reset/factory"] {
+        let channel = CommandChannel::new();
+        let hardware = MockHardwareInfo;
+        let watch = SystemStateWatch::new();
+        let diagnostics = DiagnosticsService::new(&hardware, &watch);
+        let mut ota = MockOtaFlashDriver::new(false);
+        let mut server = HttpServer::new_unbound(
+            AccessControllerHandle::new(channel.sender()),
+            &BusSafetyDriverMock,
+            &diagnostics,
+            &mut ota,
+            test_log_provider,
+            HttpServerConfig::default(),
+        );
+        let request = format!("POST /api/action/{path} HTTP/1.1\r\nHost: device\r\n\r\n");
+        let mut stream = MockStream::new(request.as_bytes());
+
+        // Act
+        let result = block_on(server.handle_request(&mut stream));
+
+        // Assert
+        assert!(result.is_ok());
+        assert_eq!(channel.try_receive(), Ok(AccessCommand::EmergencyStop));
+    }
+}
+
+// Existing protocol tests do not model physical outputs. Safety tests below use
+// the production interlock around an observable bus driver instead.
+struct BusSafetyDriverMock;
+
+impl intercom_core::ports::BusSafetyDriver for BusSafetyDriverMock {
+    fn inhibit(&self) {}
+}
+
+struct BusSwitchDriverMock<'a>(&'a std::cell::Cell<intercom_core::domain::intercom::BusLineState>);
+
+impl intercom_core::ports::BusSwitchDriver for BusSwitchDriverMock<'_> {
+    fn set_bus_state(&mut self, state: intercom_core::domain::intercom::BusLineState) {
+        self.0.set(state);
+    }
+}
+
+struct OtaSafetyDriverMock<'a> {
+    interlock: &'a intercom_core::service::BusSafetyInterlock<BusSwitchDriverMock<'a>>,
+    physical_state: &'a std::cell::Cell<intercom_core::domain::intercom::BusLineState>,
+    channel: &'a CommandChannel,
+    queue_was_full: bool,
+    fail: bool,
+    entered: bool,
+}
+
+impl OtaFlashDriver for OtaSafetyDriverMock<'_> {
+    async fn handle_flash_stream<S: OtaStream>(
+        &mut self,
+        stream: &mut S,
+        content_length: usize,
+    ) -> Result<(), OtaDriverError> {
+        use intercom_core::domain::intercom::BusLineState;
+        use intercom_core::ports::BusSwitchDriver;
+        assert_eq!(
+            self.physical_state.get(),
+            BusLineState::Idle,
+            "relay must be physically LOW before entering flash driver"
+        );
+        if self.queue_was_full {
+            assert_eq!(
+                self.channel.len(),
+                intercom_core::ports::inbound::CMD_QUEUE_CAP,
+                "shutdown must not depend on consuming queued commands"
+            );
+        } else {
+            assert_eq!(self.channel.try_receive(), Ok(AccessCommand::EmergencyStop));
+        }
+        for requested in [
+            BusLineState::Listen,
+            BusLineState::Talk,
+            BusLineState::DoorUnlock,
+        ] {
+            let mut bus = self.interlock;
+            bus.set_bus_state(requested);
+            assert_eq!(
+                self.physical_state.get(),
+                BusLineState::Idle,
+                "relay must not re-energize during flash work"
+            );
+        }
+        self.entered = true;
+        let mut body = [0; 4];
+        assert_eq!(stream.read(&mut body).await.unwrap(), content_length);
+        if self.fail {
+            Err(OtaDriverError::VerificationFailed)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[test]
+fn ota_inhibits_relays_before_flash_with_empty_or_saturated_command_queue() {
+    use intercom_core::domain::intercom::{BusLineState, SessionOwner};
+    use intercom_core::ports::BusSwitchDriver;
+    // Arrange
+    for queue_was_full in [false, true] {
+        for fail in [false, true] {
+            let channel = CommandChannel::new();
+            let handle = AccessControllerHandle::new(channel.sender());
+            if queue_was_full {
+                for _ in 0..intercom_core::ports::inbound::CMD_QUEUE_CAP {
+                    handle.start_talk(SessionOwner::HttpDebug);
+                }
+            }
+            let physical_state = std::cell::Cell::new(BusLineState::DoorUnlock);
+            let interlock = intercom_core::service::BusSafetyInterlock::new(BusSwitchDriverMock(
+                &physical_state,
+            ));
+            let hardware = MockHardwareInfo;
+            let watch = SystemStateWatch::new();
+            let diagnostics = DiagnosticsService::new(&hardware, &watch);
+            let mut ota = OtaSafetyDriverMock {
+                interlock: &interlock,
+                physical_state: &physical_state,
+                channel: &channel,
+                queue_was_full,
+                fail,
+                entered: false,
+            };
+            let mut server = HttpServer::new_unbound(
+                handle,
+                &interlock,
+                &diagnostics,
+                &mut ota,
+                test_log_provider,
+                HttpServerConfig::default(),
+            );
+            let mut stream = MockStream::new(
+                b"POST /api/v1/ota/flash HTTP/1.1\r\nContent-Length: 4\r\n\r\nDATA",
+            );
+
+            // Act
+            let result = block_on(server.handle_request(&mut stream));
+            drop(server);
+            (&interlock).set_bus_state(BusLineState::Talk);
+
+            // Assert
+            assert_eq!(result.is_err(), fail);
+            assert!(ota.entered);
+            assert_eq!(
+                physical_state.get(),
+                BusLineState::Idle,
+                "failed OTA stays inhibited until reboot"
+            );
+        }
+    }
+}
+
+#[test]
+fn reset_and_reboot_inhibit_relays_before_queueing_emergency_stop() {
+    use intercom_core::domain::intercom::BusLineState;
+    use intercom_core::ports::BusSafetyDriver;
+    // Arrange
+    struct OrderedSafetyDriverMock<'a> {
+        interlock: &'a intercom_core::service::BusSafetyInterlock<BusSwitchDriverMock<'a>>,
+        channel: &'a CommandChannel,
+    }
+    impl BusSafetyDriver for OrderedSafetyDriverMock<'_> {
+        fn inhibit(&self) {
+            assert!(
+                self.channel.is_empty(),
+                "inhibit must precede queued emergency stop"
+            );
+            self.interlock.inhibit();
+        }
+    }
+    for path in ["reboot", "reset/matter", "reset/factory"] {
+        let channel = CommandChannel::new();
+        let physical_state = std::cell::Cell::new(BusLineState::Listen);
+        let interlock =
+            intercom_core::service::BusSafetyInterlock::new(BusSwitchDriverMock(&physical_state));
+        let safety = OrderedSafetyDriverMock {
+            interlock: &interlock,
+            channel: &channel,
+        };
+        let hardware = MockHardwareInfo;
+        let watch = SystemStateWatch::new();
+        let diagnostics = DiagnosticsService::new(&hardware, &watch);
+        let mut ota = MockOtaFlashDriver::new(false);
+        let mut server = HttpServer::new_unbound(
+            AccessControllerHandle::new(channel.sender()),
+            &safety,
+            &diagnostics,
+            &mut ota,
+            test_log_provider,
+            HttpServerConfig::default(),
+        );
+        let request = format!("POST /api/action/{path} HTTP/1.1\r\nHost: device\r\n\r\n");
+        let mut stream = MockStream::new(request.as_bytes());
+
+        // Act
+        let result = block_on(server.handle_request(&mut stream));
+
+        // Assert
+        assert!(result.is_ok());
+        assert_eq!(physical_state.get(), BusLineState::Idle);
+        assert_eq!(channel.try_receive(), Ok(AccessCommand::EmergencyStop));
+    }
+}
+
+#[test]
+fn malformed_ota_inhibits_relays_without_starting_flash() {
+    use intercom_core::domain::intercom::BusLineState;
+    // Arrange
+    let channel = CommandChannel::new();
+    let physical_state = std::cell::Cell::new(BusLineState::Talk);
+    let interlock =
+        intercom_core::service::BusSafetyInterlock::new(BusSwitchDriverMock(&physical_state));
+    let hardware = MockHardwareInfo;
+    let watch = SystemStateWatch::new();
+    let diagnostics = DiagnosticsService::new(&hardware, &watch);
+    let mut ota = MockOtaFlashDriver::new(false);
+    let mut server = HttpServer::new_unbound(
+        AccessControllerHandle::new(channel.sender()),
+        &interlock,
+        &diagnostics,
+        &mut ota,
+        test_log_provider,
+        HttpServerConfig::default(),
+    );
+    let mut stream = MockStream::new(b"POST /api/v1/ota/flash HTTP/1.1\r\nHost: device\r\n\r\n");
+
+    // Act
+    let result = block_on(server.handle_request(&mut stream));
+    drop(server);
+
+    // Assert
+    assert!(result.is_err());
+    assert_eq!(ota.call_count, 0);
+    assert_eq!(physical_state.get(), BusLineState::Idle);
+    assert_eq!(channel.try_receive(), Ok(AccessCommand::EmergencyStop));
+}
+
+struct PendingOtaDriverMock<'a>(&'a std::cell::Cell<bool>);
+
+impl OtaFlashDriver for PendingOtaDriverMock<'_> {
+    async fn handle_flash_stream<S: OtaStream>(
+        &mut self,
+        _stream: &mut S,
+        _content_length: usize,
+    ) -> Result<(), OtaDriverError> {
+        self.0.set(true);
+        futures::future::pending().await
+    }
+}
+
+#[test]
+fn cancelled_ota_keeps_relays_inhibited_until_reboot() {
+    use futures::Future;
+    use intercom_core::domain::intercom::BusLineState;
+    use intercom_core::ports::BusSwitchDriver;
+    // Arrange
+    let channel = CommandChannel::new();
+    let physical_state = std::cell::Cell::new(BusLineState::Listen);
+    let interlock =
+        intercom_core::service::BusSafetyInterlock::new(BusSwitchDriverMock(&physical_state));
+    let hardware = MockHardwareInfo;
+    let watch = SystemStateWatch::new();
+    let diagnostics = DiagnosticsService::new(&hardware, &watch);
+    let entered = std::cell::Cell::new(false);
+    let mut ota = PendingOtaDriverMock(&entered);
+    let mut server = HttpServer::new_unbound(
+        AccessControllerHandle::new(channel.sender()),
+        &interlock,
+        &diagnostics,
+        &mut ota,
+        test_log_provider,
+        HttpServerConfig::default(),
+    );
+    let mut stream =
+        MockStream::new(b"POST /api/v1/ota/flash HTTP/1.1\r\nContent-Length: 4\r\n\r\nDATA");
+    let mut request = Box::pin(server.handle_request(&mut stream));
+    let waker = futures::task::noop_waker();
+    let mut context = std::task::Context::from_waker(&waker);
+
+    // Act
+    let result = request.as_mut().poll(&mut context);
+    drop(request);
+    (&interlock).set_bus_state(BusLineState::DoorUnlock);
+
+    // Assert
+    assert!(result.is_pending());
+    assert!(
+        entered.get(),
+        "request reached the flash driver before cancellation"
+    );
+    assert_eq!(physical_state.get(), BusLineState::Idle);
+    assert_eq!(channel.try_receive(), Ok(AccessCommand::EmergencyStop));
+}
+
+struct RelayObservingResetDriverMock<'a> {
+    interlock: &'a intercom_core::service::BusSafetyInterlock<BusSwitchDriverMock<'a>>,
+    physical_state: &'a std::cell::Cell<intercom_core::domain::intercom::BusLineState>,
+    erased_scope: std::cell::Cell<Option<intercom_core::ports::ResetScope>>,
+    reboot_entered: std::cell::Cell<bool>,
+}
+
+impl RelayObservingResetDriverMock<'_> {
+    fn assert_relays_are_idle_and_inhibited(&self, entry_point: &str) {
+        use intercom_core::domain::intercom::BusLineState;
+        use intercom_core::ports::BusSwitchDriver;
+        assert_eq!(
+            self.physical_state.get(),
+            BusLineState::Idle,
+            "physical relays must be LOW on entry to {entry_point}"
+        );
+        for requested in [
+            BusLineState::Listen,
+            BusLineState::Talk,
+            BusLineState::DoorUnlock,
+        ] {
+            let mut bus = self.interlock;
+            bus.set_bus_state(requested);
+            assert_eq!(
+                self.physical_state.get(),
+                BusLineState::Idle,
+                "physical relays must stay inhibited inside {entry_point}"
+            );
+        }
+    }
+}
+
+impl intercom_core::ports::SystemResetDriver for RelayObservingResetDriverMock<'_> {
+    fn erase_credentials(&self, scope: intercom_core::ports::ResetScope) {
+        self.assert_relays_are_idle_and_inhibited("erase_credentials");
+        self.erased_scope.set(Some(scope));
+    }
+
+    fn reboot(&self) -> ! {
+        self.assert_relays_are_idle_and_inhibited("reboot");
+        self.reboot_entered.set(true);
+        panic!("RELAY_OBSERVING_REBOOT_REACHED");
+    }
+}
+
+#[test]
+fn maintenance_reset_driver_entry_points_observe_idle_and_inhibited_relays() {
+    use intercom_core::domain::intercom::{BusLineState, SessionOwner};
+    use intercom_core::ports::ResetScope;
+    // Arrange
+    for (path, expected_scope) in [
+        ("reboot", None),
+        ("reset/matter", Some(ResetScope::Ecosystem)),
+        ("reset/factory", Some(ResetScope::Factory)),
+    ] {
+        for saturated in [false, true] {
+            let channel = CommandChannel::new();
+            let handle = AccessControllerHandle::new(channel.sender());
+            if saturated {
+                for _ in 0..intercom_core::ports::inbound::CMD_QUEUE_CAP {
+                    handle.start_talk(SessionOwner::HttpDebug);
+                }
+            }
+            let physical_state = std::cell::Cell::new(BusLineState::DoorUnlock);
+            let interlock = intercom_core::service::BusSafetyInterlock::new(BusSwitchDriverMock(
+                &physical_state,
+            ));
+            let reset = RelayObservingResetDriverMock {
+                interlock: &interlock,
+                physical_state: &physical_state,
+                erased_scope: std::cell::Cell::new(None),
+                reboot_entered: std::cell::Cell::new(false),
+            };
+            let hardware = MockHardwareInfo;
+            let watch = SystemStateWatch::new();
+            let diagnostics = DiagnosticsService::new(&hardware, &watch);
+            let mut ota = MockOtaFlashDriver::new(false);
+            let mut server = HttpServer::new_unbound(
+                handle,
+                &interlock,
+                &diagnostics,
+                &mut ota,
+                test_log_provider,
+                HttpServerConfig::default(),
+            )
+            .with_reset_driver(&reset);
+            let request = format!("POST /api/action/{path} HTTP/1.1\r\nHost: device\r\n\r\n");
+            let mut stream = MockStream::new(request.as_bytes());
+
+            // Act
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                block_on(server.handle_request(&mut stream))
+            }));
+
+            // Assert
+            let panic = outcome.expect_err("the reset driver must reach its diverging reboot");
+            assert_eq!(
+                panic.downcast_ref::<&str>().copied(),
+                Some("RELAY_OBSERVING_REBOOT_REACHED"),
+                "{path} must reach reboot after passing the physical safety assertions"
+            );
+            assert_eq!(reset.erased_scope.get(), expected_scope);
+            assert!(reset.reboot_entered.get());
+            assert_eq!(physical_state.get(), BusLineState::Idle);
+        }
+    }
+}

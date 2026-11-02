@@ -168,6 +168,7 @@ fn test_diagnostics() -> SystemDiagnostics<IntercomState, intercom_core::domain:
         domain: IntercomState {
             door_locked: true,
             door_unlock_duration_sec: intercom_core::config::DEFAULT_DOOR_UNLOCK_DURATION_SEC,
+            ..IntercomState::default()
         },
         uptime_sec: 14250,
         wifi_ssid: intercom_core::domain::diagnostics::WifiSsid::new("MyHomeNetwork"),
@@ -231,6 +232,7 @@ fn test_format_status_json_success() {
         domain: IntercomState {
             door_locked: true,
             door_unlock_duration_sec: 5,
+            ..IntercomState::default()
         },
         uptime_sec: 14250,
         wifi_ssid: intercom_core::domain::diagnostics::WifiSsid::new("MyHomeNetwork"),
@@ -296,7 +298,10 @@ fn test_format_status_json_with_multiple_fabrics() {
         intercom_core::domain::EcosystemId::new("Matter"),
         true,
     )
-    .with_property("door_lock_subscribed", intercom_core::domain::EcosystemValue::Bool(true))
+    .with_property(
+        "door_lock_subscribed",
+        intercom_core::domain::EcosystemValue::Bool(true),
+    )
     .with_fabric(intercom_core::domain::FabricInfo {
         fab_idx: 1,
         vendor_id: 4996,
@@ -318,6 +323,7 @@ fn test_format_status_json_with_multiple_fabrics() {
         domain: IntercomState {
             door_locked: true,
             door_unlock_duration_sec: 5,
+            ..IntercomState::default()
         },
         uptime_sec: 100,
         wifi_ssid: None,
@@ -368,6 +374,7 @@ fn test_format_status_json_with_none_options() {
         domain: IntercomState {
             door_locked: false,
             door_unlock_duration_sec: 5,
+            ..IntercomState::default()
         },
         uptime_sec: 42,
         wifi_ssid: None,
@@ -420,6 +427,7 @@ fn test_format_status_json_buffer_overflow_protection() {
         domain: IntercomState {
             door_locked: true,
             door_unlock_duration_sec: 5,
+            ..IntercomState::default()
         },
         uptime_sec: 14250,
         wifi_ssid: intercom_core::domain::diagnostics::WifiSsid::new("MyHomeNetwork"),
@@ -451,4 +459,74 @@ fn test_http_constants_format() {
     assert!(HTTP_200_JSON_OK.starts_with(b"HTTP/1.1 200 OK\r\n"));
     assert!(HTTP_404_NOT_FOUND.starts_with(b"HTTP/1.1 404 Not Found\r\n"));
     assert!(HTTP_400_BAD_REQUEST.starts_with(b"HTTP/1.1 400 Bad Request\r\n"));
+}
+
+#[test]
+fn parses_bus_debug_action_routes() {
+    // Arrange
+    let requests = [
+        "POST /api/action/listen HTTP/1.1",
+        "POST /api/action/talk/start HTTP/1.1",
+        "POST /api/action/talk/stop HTTP/1.1",
+        "POST /api/action/heartbeat HTTP/1.1",
+        "POST /api/action/hangup HTTP/1.1",
+    ];
+
+    // Act
+    let parsed = requests.map(parse_route);
+
+    // Assert
+    assert_eq!(
+        parsed,
+        [
+            Route::ActionListen,
+            Route::ActionTalkStart,
+            Route::ActionTalkStop,
+            Route::ActionHeartbeat,
+            Route::ActionHangup
+        ]
+    );
+    for request in requests {
+        assert_eq!(
+            parse_route(&request.replacen("POST", "GET", 1)),
+            Route::NotFound
+        );
+    }
+}
+
+#[test]
+fn status_json_includes_all_bus_and_call_states() {
+    use intercom_core::domain::intercom::{BusLineState, CallState};
+    // Arrange
+    let states = [
+        (BusLineState::Idle, CallState::Idle, "idle", "idle"),
+        (
+            BusLineState::Listen,
+            CallState::Listening,
+            "listen",
+            "listening",
+        ),
+        (BusLineState::Talk, CallState::Talking, "talk", "talking"),
+        (BusLineState::Idle, CallState::Settling, "idle", "settling"),
+        (
+            BusLineState::DoorUnlock,
+            CallState::Unlocking,
+            "door_unlock",
+            "unlocking",
+        ),
+    ];
+    for (bus, call, bus_name, call_name) in states {
+        let mut diag = test_diagnostics();
+        diag.domain.bus_state = bus;
+        diag.domain.call_state = call;
+        let mut buf = [0u8; 2048];
+
+        // Act
+        let len = format_status_json(&diag, &mut buf).expect("json fits buffer");
+        let json: Value = serde_json::from_slice(&buf[..len]).unwrap();
+
+        // Assert
+        assert_eq!(json["bus_state"], bus_name);
+        assert_eq!(json["call_state"], call_name);
+    }
 }

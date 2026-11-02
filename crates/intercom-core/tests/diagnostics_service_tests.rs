@@ -161,6 +161,7 @@ fn diagnostics_service_snapshot_with_default_ecosystem() {
             domain: IntercomState {
                 door_locked: true,
                 door_unlock_duration_sec: 5,
+                ..IntercomState::default()
             },
             uptime_sec: 12345,
             wifi_ssid: WifiSsid::new("HomeNet-IoT"),
@@ -210,6 +211,7 @@ fn diagnostics_service_snapshot_with_explicit_ecosystem_and_properties() {
             domain: IntercomState {
                 door_locked: true,
                 door_unlock_duration_sec: 5,
+                ..IntercomState::default()
             },
             uptime_sec: 12345,
             wifi_ssid: WifiSsid::new("HomeNet-IoT"),

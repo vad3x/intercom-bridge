@@ -1,7 +1,4 @@
 //! Outbound port traits for Smart Intercom core.
-//!
-//! In Hexagonal Architecture, ports define abstract capability contracts
-//! required by the core domain application. Edge adapters implement these traits.
 
 pub mod diagnostics;
 pub mod ecosystem;
@@ -10,32 +7,45 @@ pub mod ota;
 pub mod reporter;
 pub mod reset;
 
+use crate::domain::intercom::{AudioDirection, BusLineState};
+
 pub use diagnostics::HardwareInfoDriver;
 pub use ecosystem::EcosystemInfoDriver;
+pub use edf_core::ports::ota as ota_edf;
 pub use inbound::{
     AccessCommand, AccessControllerHandle, CommandChannel, CommandReceiver, CommandSender,
+    IntercomCommand, IntercomControllerHandle,
 };
 pub use ota::{OtaDriverError, OtaFlashDriver, OtaStream};
-pub use edf_core::ports::ota as ota_edf;
 pub use reporter::{IntercomReporter, LockState};
 pub use reset::{ResetScope, ResetTriggerDriver, SystemResetDriver};
 
-/// Door unlock port.
+/// Synchronously forces all bus relays LOW and prevents subsequent energization.
 ///
-/// Implementors control the physical entrance door unlock mechanism
-/// (e.g. electric strike, magnetic lock, motorized latch).
-pub trait DoorDriver {
-    /// Trigger an unlock pulse. Returns when the actuation completes.
-    async fn trigger_unlock(&mut self);
-
-    /// Set the physical unlock pulse duration in milliseconds.
-    fn set_unlock_duration_ms(&mut self, _duration_ms: u32) {}
+/// The inhibition remains latched until reboot, including after OTA errors.
+pub trait BusSafetyDriver {
+    fn inhibit(&self);
 }
 
-/// Ring detection port.
-///
-/// Implementors detect incoming visitor call signals from the intercom system.
+/// Synchronously selects one intercom bus line state.
+pub trait BusSwitchDriver {
+    fn set_bus_state(&mut self, state: BusLineState);
+}
+
+/// Synchronously mutes audio or selects capture or playback.
+pub trait AudioControlDriver {
+    fn set_audio_direction(&mut self, direction: AudioDirection);
+}
+
+/// Waits for a valid incoming visitor ring signal.
 pub trait RingDriver {
-    /// Block until a valid, debounced ring event occurs.
     async fn wait_for_ring(&mut self);
+}
+
+/// Audio control placeholder for adapters without an audio pipeline.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NoopAudioControlDriver;
+
+impl AudioControlDriver for NoopAudioControlDriver {
+    fn set_audio_direction(&mut self, _direction: AudioDirection) {}
 }

@@ -3,7 +3,7 @@
 //! Door lock control and ring detection via Apple Home (HomeKit)
 //! using the Matter protocol over WiFi with BLE commissioning.
 //!
-//! Hardware: DFRobot Beetle ESP32-C6
+//! Hardware: PCB v2.0 with ESP32-C6
 //! Protocol: Matter over WiFi (BLE for commissioning)
 #![cfg_attr(target_arch = "riscv32", no_std)]
 #![cfg_attr(target_arch = "riscv32", no_main)]
@@ -56,9 +56,9 @@ use intercom_core::app::App;
 #[cfg(target_arch = "riscv32")]
 use intercom_core::events::{SystemStateSender, SystemStateWatch};
 #[cfg(target_arch = "riscv32")]
-use intercom_core::ports::DoorDriver;
-#[cfg(target_arch = "riscv32")]
 use intercom_core::ports::inbound::{AccessControllerHandle, CommandChannel};
+#[cfg(target_arch = "riscv32")]
+use intercom_core::ports::NoopAudioControlDriver;
 #[cfg(target_arch = "riscv32")]
 use intercom_core::service::DiagnosticsService;
 
@@ -70,7 +70,7 @@ use intercom_adapter_http::{HttpServer, HttpServerConfig};
 #[cfg(target_arch = "riscv32")]
 use intercom_adapter_gpio::boot_button::{GpioBootButtonConfig, GpioBootButtonDriver};
 #[cfg(target_arch = "riscv32")]
-use intercom_adapter_gpio::door::{GpioDoorConfig, GpioDoorDriver};
+use intercom_adapter_gpio::bus::{GpioBusConfig, GpioBusDriver};
 #[cfg(target_arch = "riscv32")]
 use intercom_adapter_gpio::led::GpioLedDriver;
 #[cfg(target_arch = "riscv32")]
@@ -114,6 +114,7 @@ esp_bootloader_esp_idf::esp_app_desc!(
 #[cfg(target_arch = "riscv32")]
 #[unsafe(no_mangle)]
 pub fn custom_halt() -> ! {
+    crate::reset::force_bus_relays_low();
     esp_hal::system::software_reset();
 }
 
@@ -230,8 +231,10 @@ async fn main(_spawner: Spawner) {
     // ========================================================================
 
     let ring = GpioRingDriver::new(GpioRingConfig::new(peripherals.GPIO2));
-    let mut door = GpioDoorDriver::new(GpioDoorConfig::new(peripherals.GPIO18));
-    door.set_unlock_duration_ms(initial_duration_sec * 1000);
+    let bus = intercom_core::service::BusSafetyInterlock::new(GpioBusDriver::new(
+        GpioBusConfig::new(peripherals.GPIO7, peripherals.GPIO10, peripherals.GPIO18),
+    ));
+    let audio_ctrl = NoopAudioControlDriver;
 
     static INDICATOR: StaticCell<GpioLedDriver> = StaticCell::new();
     let indicator: &'static GpioLedDriver =
@@ -245,7 +248,8 @@ async fn main(_spawner: Spawner) {
 
     let app = App::with_duration(
         ring,
-        door,
+        &bus,
+        audio_ctrl,
         reporter,
         boot_button,
         FirmwareResetDriver,
@@ -297,6 +301,7 @@ async fn main(_spawner: Spawner) {
         let mut http_server = HttpServer::new(
             stack,
             access_handle,
+            &bus,
             &diagnostics_service,
             &mut ota_driver,
             &FirmwareResetDriver,

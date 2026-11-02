@@ -1,79 +1,93 @@
-//! Smart Intercom - Inbound Driving Ports
-//!
-//! Defines commands and the `AccessControllerHandle` primary port.
-//! Inbound edge adapters (smart home protocols, hardware input signals) use this handle to drive the core.
+//! Inbound driving ports for the Smart Intercom core domain.
 
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::{Channel, Receiver, Sender};
 use log::warn;
 
-/// Capacity of the command queue (one active, one queued).
-pub const CMD_QUEUE_CAP: usize = 2;
+use crate::domain::intercom::{IntercomAction, SessionOwner};
 
-/// Inbound commands that drive the access control domain.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AccessCommand {
-    /// Request to trigger an entrance door unlock.
-    Unlock,
-    /// Hardware trigger indicating the intercom buzzer/chime is ringing.
-    Ring,
-    /// Request to update the door unlock duration in seconds.
-    SetUnlockDuration(u32),
-}
-
-/// Channel for queuing access commands.
-pub type CommandChannel = Channel<CriticalSectionRawMutex, AccessCommand, CMD_QUEUE_CAP>;
-/// Sender endpoint for dispatching access commands.
-pub type CommandSender<'a> = Sender<'a, CriticalSectionRawMutex, AccessCommand, CMD_QUEUE_CAP>;
-/// Receiver endpoint for consuming access commands.
-pub type CommandReceiver<'a> = Receiver<'a, CriticalSectionRawMutex, AccessCommand, CMD_QUEUE_CAP>;
-
-/// Inbound Command Handle — the primary driving port for the access controller.
-///
-/// Implements value semantics (`Copy`), owns no heap memory, and provides
-/// clean synchronous dispatch methods for edge adapters.
+/// Non-blocking inbound handle for intercom bus, strike, and session commands.
 #[derive(Clone, Copy)]
-pub struct AccessControllerHandle<'a> {
+pub struct IntercomControllerHandle<'a> {
     sender: CommandSender<'a>,
 }
 
-impl<'a> AccessControllerHandle<'a> {
-    /// Create a new handle from a command channel sender.
+impl<'a> IntercomControllerHandle<'a> {
+    /// Create a handle from the bounded command channel sender.
     pub const fn new(sender: CommandSender<'a>) -> Self {
         Self { sender }
     }
 
-    /// External request to unlock the door (from smart home protocols, remote apps, or keypads).
+    /// Request an entrance door strike.
     pub fn request_unlock(&self) {
-        if self.sender.try_send(AccessCommand::Unlock).is_err() {
-            warn!("Unlock command dropped: command queue full");
-        }
+        self.send(IntercomCommand::Unlock);
     }
 
-    /// Hardware trigger from the intercom ring/buzzer line.
+    /// Forward an incoming visitor ring.
     pub fn trigger_ring(&self) {
-        if self.sender.try_send(AccessCommand::Ring).is_err() {
-            warn!("Ring trigger dropped: command queue full");
-        }
+        self.send(IntercomCommand::Ring);
     }
 
-    /// Update the door unlock duration in seconds.
+    /// Queue a strike duration update, returning an error when the queue is full.
     pub fn set_unlock_duration(&self, duration_sec: u32) -> Result<(), ()> {
         self.sender
-            .try_send(AccessCommand::SetUnlockDuration(duration_sec))
+            .try_send(IntercomCommand::SetUnlockDuration(duration_sec))
             .map_err(|_| ())
     }
 
-    /// Dispatches an access command directly to the command queue.
-    pub fn send(&self, cmd: AccessCommand) {
-        match cmd {
-            AccessCommand::Unlock => self.request_unlock(),
-            AccessCommand::Ring => self.trigger_ring(),
-            AccessCommand::SetUnlockDuration(sec) => {
-                if self.set_unlock_duration(sec).is_err() {
-                    warn!("Set unlock duration command dropped: command queue full");
-                }
-            }
+    /// Request capture for the given session owner.
+    pub fn start_listen(&self, owner: SessionOwner) {
+        self.send(IntercomCommand::StartListen(owner));
+    }
+
+    /// Request playback for the given session owner.
+    pub fn start_talk(&self, owner: SessionOwner) {
+        self.send(IntercomCommand::StartTalk(owner));
+    }
+
+    /// Return the owning talk session to listening.
+    pub fn stop_talk(&self, owner: SessionOwner) {
+        self.send(IntercomCommand::StopTalk(owner));
+    }
+
+    /// Refresh the owning session heartbeat.
+    pub fn session_heartbeat(&self, owner: SessionOwner) {
+        self.send(IntercomCommand::SessionHeartbeat(owner));
+    }
+
+    /// Release the given owner’s session.
+    pub fn end_session(&self, owner: SessionOwner) {
+        self.send(IntercomCommand::EndSession(owner));
+    }
+
+    /// Request that the bus and audio return to their safe idle state.
+    pub fn emergency_stop(&self) {
+        self.send(IntercomCommand::EmergencyStop);
+    }
+
+    /// Queue a command without waiting, logging when the queue is full.
+    pub fn send(&self, cmd: IntercomCommand) {
+        if self.sender.try_send(cmd).is_err() {
+            warn!("Intercom command {:?} dropped: command queue full", cmd);
         }
     }
 }
+
+/// Capacity of the bounded intercom command queue.
+pub const CMD_QUEUE_CAP: usize = 8;
+
+/// Control-plane action consumed by the intercom state machine.
+pub type IntercomCommand = IntercomAction;
+/// Compatibility command name for existing access adapters.
+pub type AccessCommand = IntercomAction;
+
+/// Bounded MPSC channel connecting inbound adapters to the controller.
+pub type CommandChannel = Channel<CriticalSectionRawMutex, IntercomCommand, CMD_QUEUE_CAP>;
+/// Sender endpoint for queuing intercom commands.
+pub type CommandSender<'a> = Sender<'a, CriticalSectionRawMutex, IntercomCommand, CMD_QUEUE_CAP>;
+/// Receiver endpoint consumed by the intercom controller.
+pub type CommandReceiver<'a> =
+    Receiver<'a, CriticalSectionRawMutex, IntercomCommand, CMD_QUEUE_CAP>;
+
+/// Compatibility name for existing access adapters.
+pub type AccessControllerHandle<'a> = IntercomControllerHandle<'a>;

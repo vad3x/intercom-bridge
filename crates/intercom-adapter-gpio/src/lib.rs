@@ -7,14 +7,14 @@
 #![allow(async_fn_in_trait)]
 
 pub mod boot_button;
+pub mod bus;
 pub mod config;
-pub mod door;
 pub mod flash;
 pub mod led;
 pub mod ring;
 
 pub use boot_button::{GpioBootButtonConfig, GpioBootButtonDriver};
-pub use door::{GpioDoorConfig, GpioDoorDriver};
+pub use bus::{GpioBusConfig, GpioBusDriver};
 pub use flash::{EspFlash, EspFlashError};
 pub use led::GpioLedDriver;
 pub use ring::{GpioRingConfig, GpioRingDriver};
