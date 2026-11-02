@@ -253,3 +253,65 @@ test('an older startup idle response cannot undo a newer active observation', as
   // Assert
   expect(store.debugSessionActive()).toBe(true);
 });
+
+const audioActions = [
+  [
+    'setAudioGain',
+    'updateAudioGain',
+    [40, -12],
+    '/api/action/audio/gain?rx_half_db=40&tx_half_db=-12',
+    'Audio gain update failed',
+  ],
+  [
+    'setBenchTone',
+    'toggleBenchTone',
+    [true],
+    '/api/debug/audio/tone?enable=true',
+    'Bench tone update failed',
+  ],
+] as const;
+
+test.each(audioActions)(
+  '%s posts audio calibration and refreshes store status',
+  async (name, storeName, args, path) => {
+    // Arrange
+    const store = createIntercomStore();
+    const action = Reflect.get(store, storeName);
+    expect(Reflect.get(api, name)).toBeFunction();
+    expect(action).toBeFunction();
+    fetchSpy = spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(
+        Response.json({
+          door_locked: true,
+          rx_gain_half_db: 40,
+          tx_gain_half_db: -12,
+          tone_active: true,
+        }),
+      );
+
+    // Act
+    await Reflect.apply(action, store, args);
+
+    // Assert
+    expect(fetchSpy).toHaveBeenNthCalledWith(1, path, { method: 'POST' });
+    expect(fetchSpy).toHaveBeenNthCalledWith(2, '/api/status');
+    expect(store.status()?.tone_active).toBe(true);
+  },
+);
+
+test.each(audioActions)(
+  '%s propagates audio action failures',
+  async (name, _storeName, args, _path, message) => {
+    // Arrange
+    const action = Reflect.get(api, name);
+    expect(action).toBeFunction();
+    fetchSpy = spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 409 }));
+
+    // Act
+    const request = Reflect.apply(action, api, args);
+
+    // Assert
+    await expect(request).rejects.toThrow(`${message}: HTTP 409`);
+  },
+);

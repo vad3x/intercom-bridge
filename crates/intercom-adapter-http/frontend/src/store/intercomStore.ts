@@ -6,6 +6,8 @@ import {
   reboot,
   resetMatterKvs,
   sendBusHeartbeat,
+  setAudioGain,
+  setBenchTone,
   setDoorUnlockDuration,
   startBusListen,
   startBusTalk,
@@ -158,6 +160,16 @@ export function createIntercomStore() {
     }
   };
 
+  const updateAudioGain = async (rxHalfDb: number, txHalfDb: number) => {
+    await setAudioGain(rxHalfDb, txHalfDb);
+    await poll();
+  };
+
+  const toggleBenchTone = async (enable: boolean) => {
+    await setBenchTone(enable);
+    await poll();
+  };
+
   const rebootDevice = async () => {
     await reboot();
   };
@@ -180,6 +192,8 @@ export function createIntercomStore() {
     rebootDevice,
     factoryResetDevice,
     updateDoorUnlockDuration,
+    updateAudioGain,
+    toggleBenchTone,
     startListen,
     startTalk,
     stopTalk,

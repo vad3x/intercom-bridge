@@ -97,3 +97,22 @@ export async function factoryReset(): Promise<void> {
     (status) => `Factory reset failed: HTTP ${status}`,
   );
 }
+
+export async function setAudioGain(rxHalfDb: number, txHalfDb: number): Promise<void> {
+  const res = await fetch(
+    `/api/action/audio/gain?rx_half_db=${encodeURIComponent(rxHalfDb)}&tx_half_db=${encodeURIComponent(txHalfDb)}`,
+    { method: 'POST' },
+  );
+  if (!res.ok) {
+    throw new Error(`Audio gain update failed: HTTP ${res.status}`);
+  }
+}
+
+export async function setBenchTone(enable: boolean): Promise<void> {
+  const res = await fetch(`/api/debug/audio/tone?enable=${enable ? 'true' : 'false'}`, {
+    method: 'POST',
+  });
+  if (!res.ok) {
+    throw new Error(`Bench tone update failed: HTTP ${res.status}`);
+  }
+}

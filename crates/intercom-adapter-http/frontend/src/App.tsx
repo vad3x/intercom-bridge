@@ -10,6 +10,7 @@ import { createSignal, onCleanup, onMount } from 'solid-js';
 import { fetchLogs } from './api';
 import { BusDebugCard } from './components/BusDebugCard';
 import { IntercomControls } from './components/IntercomControls';
+import { LiveAudioCard } from './components/LiveAudioCard';
 import { createIntercomStore } from './store/intercomStore';
 
 export function App() {
@@ -166,6 +167,16 @@ export function App() {
             onStartTalk={store.startTalk}
             onStopTalk={store.stopTalk}
             onHangup={store.hangupSession}
+          />
+          <LiveAudioCard
+            rxRmsDbfs={store.status()?.rx_rms_dbfs}
+            rxPeakDbfs={store.status()?.rx_peak_dbfs}
+            rxGainHalfDb={store.status()?.rx_gain_half_db}
+            txGainHalfDb={store.status()?.tx_gain_half_db}
+            toneActive={store.status()?.tone_active}
+            onGainChange={store.updateAudioGain}
+            onToggleTone={store.toggleBenchTone}
+            onNotify={showToast}
           />
         </>
       }
