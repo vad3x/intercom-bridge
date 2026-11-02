@@ -10,7 +10,7 @@ use core::ops::Range;
 // ============================================================================
 
 /// Hardware version string.
-pub const HW_VER_STR: &str = "1.1";
+pub const HW_VER_STR: &str = "2.0";
 
 /// Numeric hardware version derived from `HW_VER_STR`.
 pub const HW_VER: u16 = parse_version(HW_VER_STR) as u16;
@@ -244,5 +244,20 @@ mod tests {
         assert!(partitions_adjacent);
         assert!(non_overlapping);
         assert!(fits_in_flash);
+    }
+}
+
+#[cfg(test)]
+mod pcb_v2_tests {
+    #[test]
+    fn firmware_identifies_pcb_v2() {
+        // Arrange
+        let expected_version = "2.0";
+
+        // Act
+        let actual_version = super::HW_VER_STR;
+
+        // Assert
+        assert_eq!(actual_version, expected_version);
     }
 }

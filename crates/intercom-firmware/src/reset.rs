@@ -134,6 +134,29 @@ impl IntercomReporter for FirmwarePersistenceReporter {
         intercom_core::domain::diagnostics::update_door_unlock_duration(duration_sec);
         persist_door_duration(duration_sec);
     }
+
+    fn report_bus_state(&self, state: intercom_core::domain::intercom::BusLineState) {
+        intercom_core::domain::diagnostics::update_bus_state(state);
+    }
+
+    fn report_call_state(&self, state: intercom_core::domain::intercom::CallState) {
+        intercom_core::domain::diagnostics::update_call_state(state);
+    }
+}
+
+/// Immediately clear IO_LISTEN (GPIO7), IO_TALK (GPIO10), and IO_DOOR (GPIO18).
+///
+/// Writes ESP32-C6 GPIO.out_w1tc directly so panic/reset paths need no HAL ownership.
+#[inline(always)]
+pub fn force_bus_relays_low() {
+    #[cfg(target_arch = "riscv32")]
+    // SAFETY: ESP32-C6 GPIO.out_w1tc is an aligned write-only clear register at
+    // this address. Writing this mask only clears the three PCB v2 relay outputs.
+    unsafe {
+        const GPIO_OUT_W1TC_REG: *mut u32 = 0x6009_100C as *mut u32;
+        const BUS_RELAYS_GPIO_MASK: u32 = (1 << 7) | (1 << 10) | (1 << 18);
+        core::ptr::write_volatile(GPIO_OUT_W1TC_REG, BUS_RELAYS_GPIO_MASK);
+    }
 }
 
 /// Outbound reset driver implementing persistent credential erasure and hardware reboot.
@@ -141,6 +164,7 @@ pub struct FirmwareResetDriver;
 
 impl SystemResetDriver for FirmwareResetDriver {
     fn erase_credentials(&self, scope: ResetScope) {
+        force_bus_relays_low();
         #[cfg(target_arch = "riscv32")]
         {
             #[cfg(not(feature = "dummy-persist"))]
@@ -164,6 +188,7 @@ impl SystemResetDriver for FirmwareResetDriver {
     }
 
     fn reboot(&self) -> ! {
+        force_bus_relays_low();
         #[cfg(target_arch = "riscv32")]
         {
             esp_hal::system::software_reset();
@@ -224,4 +249,33 @@ pub fn erase_flash_range(range: &core::ops::Range<u32>, label: &str) {
     }
 
     info!("{} erased successfully", label);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FirmwarePersistenceReporter;
+    use intercom_core::domain::{
+        diagnostics,
+        intercom::{BusLineState, CallState},
+    };
+    use intercom_core::ports::IntercomReporter;
+
+    #[test]
+    fn persistence_reporter_forwards_bus_and_call_states_to_telemetry() {
+        // Arrange
+        let reporter = FirmwarePersistenceReporter;
+        diagnostics::update_bus_state(BusLineState::Idle);
+        diagnostics::update_call_state(CallState::Idle);
+
+        // Act
+        reporter.report_bus_state(BusLineState::Talk);
+        reporter.report_call_state(CallState::Talking);
+        let snapshot = diagnostics::current_intercom_state();
+        diagnostics::update_bus_state(BusLineState::Idle);
+        diagnostics::update_call_state(CallState::Idle);
+
+        // Assert
+        assert_eq!(snapshot.bus_state, BusLineState::Talk);
+        assert_eq!(snapshot.call_state, CallState::Talking);
+    }
 }
