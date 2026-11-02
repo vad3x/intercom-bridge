@@ -476,9 +476,11 @@ fn controller_mutes_audio_before_opening_relay_and_unmutes_after_closing() {
         alloc::vec![
             TraceEvent::Bus(BusLineState::Listen),
             TraceEvent::Audio(AudioDirection::CaptureRx),
+            TraceEvent::BusReport(BusLineState::Listen),
             TraceEvent::Call(CallState::Listening),
             TraceEvent::Audio(AudioDirection::Muted),
             TraceEvent::Bus(BusLineState::Idle),
+            TraceEvent::BusReport(BusLineState::Idle),
             TraceEvent::Call(CallState::Settling),
         ]
     );
@@ -511,6 +513,7 @@ fn controller_selects_talk_bus_before_enabling_playback_after_settling_deadline(
         alloc::vec![
             TraceEvent::Bus(BusLineState::Talk),
             TraceEvent::Audio(AudioDirection::PlaybackTx),
+            TraceEvent::BusReport(BusLineState::Talk),
             TraceEvent::Call(CallState::Talking),
         ]
     );
@@ -578,6 +581,7 @@ fn controller_relocks_on_deadline_without_another_command() {
         *trace.borrow(),
         alloc::vec![
             TraceEvent::Bus(BusLineState::Idle),
+            TraceEvent::BusReport(BusLineState::Idle),
             TraceEvent::Lock(LockState::Locked),
             TraceEvent::Call(CallState::Idle),
         ]
@@ -850,6 +854,7 @@ impl IntercomReporter for ReporterMock {
 enum TraceEvent {
     Audio(AudioDirection),
     Bus(BusLineState),
+    BusReport(BusLineState),
     Lock(LockState),
     Call(CallState),
 }
@@ -886,6 +891,10 @@ impl IntercomReporter for IntercomReporterMock<'_> {
     }
 
     fn report_unlock_duration(&self, _duration_sec: u32) {}
+
+    fn report_bus_state(&self, state: BusLineState) {
+        self.trace.borrow_mut().push(TraceEvent::BusReport(state));
+    }
 
     fn report_call_state(&self, state: CallState) {
         self.trace.borrow_mut().push(TraceEvent::Call(state));

@@ -65,7 +65,7 @@ impl<B: BusSwitchDriver, A: AudioControlDriver, R: IntercomReporter> IntercomCon
     }
 
     fn dispatch_effects(&mut self, effects: IntercomEffects) {
-        // Mute before opening a relay; restore audio only after selecting the new bus state.
+        // Apply hardware effects before reporting: mute, switch the bus, then restore audio.
         if effects.audio_direction == Some(AudioDirection::Muted) {
             self.audio.set_audio_direction(AudioDirection::Muted);
         }
@@ -73,13 +73,16 @@ impl<B: BusSwitchDriver, A: AudioControlDriver, R: IntercomReporter> IntercomCon
         if let Some(bus_state) = effects.bus_state {
             info!("bus line -> {:?}", bus_state);
             self.bus.set_bus_state(bus_state);
-            self.reporter.report_bus_state(bus_state);
         }
 
         if let Some(dir) = effects.audio_direction {
             if dir != AudioDirection::Muted {
                 self.audio.set_audio_direction(dir);
             }
+        }
+
+        if let Some(bus_state) = effects.bus_state {
+            self.reporter.report_bus_state(bus_state);
         }
 
         if let Some(preempted) = effects.preempted_owner {
