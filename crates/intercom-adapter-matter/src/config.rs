@@ -22,9 +22,6 @@ pub const AUDIO_DOORBELL_ENDPOINT_ID: u16 = 1;
 /// Matter endpoint ID for the Door Lock (`0x000A`) endpoint.
 pub const DOOR_LOCK_ENDPOINT_ID: u16 = 2;
 
-/// Temporary compatibility alias removed in Task 3 when `occupancy.rs` is deleted.
-pub const OCCUPANCY_SENSOR_ENDPOINT_ID: u16 = AUDIO_DOORBELL_ENDPOINT_ID;
-
 // ============================================================================
 // Subscription Interval Policies (Matter Spec 8.5.1)
 // ============================================================================
