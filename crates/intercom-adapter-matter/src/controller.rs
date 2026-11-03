@@ -27,7 +27,10 @@ use log::{info, warn};
 use rs_matter::dm::clusters::basic_info::BasicInfoConfig;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::identify;
-use rs_matter::dm::{Async, AsyncHandler, ChainedHandler, Dataver, EmptyHandler, Endpoint, Node};
+use rs_matter::dm::{
+    Async, AsyncHandler, ChainedHandler, Dataver, EmptyHandler, Endpoint, MatchContext, Matcher,
+    Node,
+};
 use rs_matter::persist::KvBlobStore;
 use rs_matter::BasicCommData;
 
@@ -109,6 +112,50 @@ mod endpoint_grouping;
 use endpoint_grouping::{group_endpoint_clusters, ClusterRegistrationMeta};
 
 // ============================================================================
+// Matcher — non-generic matcher for routing operations to a cluster handler
+// ============================================================================
+
+/// A non-generic matcher for routing operations to a specific (endpoint_id, cluster_id) in a handler chain.
+///
+/// Kept strictly non-generic to prevent compiler symbol explosion when chaining handlers.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+pub struct ClusterMatcher {
+    pub endpoint_id: u16,
+    pub cluster_id: u32,
+    pub enabled: bool,
+}
+
+impl ClusterMatcher {
+    pub const fn new(endpoint_id: u16, cluster_id: u32) -> Self {
+        Self {
+            endpoint_id,
+            cluster_id,
+            enabled: true,
+        }
+    }
+
+    pub const fn conditional(endpoint_id: u16, cluster_id: u32, enabled: bool) -> Self {
+        Self {
+            endpoint_id,
+            cluster_id,
+            enabled,
+        }
+    }
+}
+
+impl Matcher for ClusterMatcher {
+    fn matches(&self, ctx: impl MatchContext) -> bool {
+        if !self.enabled {
+            return false;
+        }
+        let (Some(endpt_id), Some(cluster_id)) = (ctx.endpt(), ctx.cluster()) else {
+            return true;
+        };
+        endpt_id == self.endpoint_id && cluster_id == self.cluster_id
+    }
+}
+
+// ============================================================================
 // MatterController — builder + WiFi Matter stack runner
 // ============================================================================
 
@@ -179,15 +226,21 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
         let id_dataver_seed = DESC_DATAVER_COUNTER.fetch_add(1, portable_atomic::Ordering::Relaxed);
 
         let new_handler = ChainedHandler::new_with_matcher(
-            move |e, c| {
-                is_first_on_endpoint && e == endpoint_id && c == desc::DescHandler::CLUSTER.id
-            },
+            ClusterMatcher::conditional(
+                endpoint_id,
+                desc::DescHandler::CLUSTER.id,
+                is_first_on_endpoint,
+            ),
             Async(desc::DescHandler::new(Dataver::new(dataver_seed)).adapt()),
             ChainedHandler::new_with_matcher(
-                move |e, c| is_first_on_endpoint && e == endpoint_id && c == identify::CLUSTER.id,
+                ClusterMatcher::conditional(
+                    endpoint_id,
+                    identify::CLUSTER.id,
+                    is_first_on_endpoint,
+                ),
                 Async(identify::IdentifyHandler::new(Dataver::new(id_dataver_seed)).adapt()),
                 ChainedHandler::new_with_matcher(
-                    move |e, c| e == endpoint_id && c == C::CLUSTER_DEF.id,
+                    ClusterMatcher::new(endpoint_id, C::CLUSTER_DEF.id),
                     cluster,
                     self.handler,
                 ),

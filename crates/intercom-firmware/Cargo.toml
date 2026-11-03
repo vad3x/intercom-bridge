@@ -20,7 +20,7 @@ dummy-persist = []
 [dependencies]
 intercom-core = { path = "../intercom-core" }
 intercom-media = { workspace = true }
-intercom-adapter-webrtc = { path = "../intercom-adapter-webrtc", features = ["matter-port"] }
+intercom-adapter-webrtc = { path = "../intercom-adapter-webrtc" }
 intercom-adapter-audio = { path = "../intercom-adapter-audio" }
 edf-ota = { workspace = true }
 edf-logger = { workspace = true }
@@ -36,6 +36,7 @@ portable-atomic = { workspace = true, features = ["critical-section"] }
 static_cell = { workspace = true }
 
 [target.'cfg(target_arch = "riscv32")'.dependencies]
+intercom-adapter-webrtc = { path = "../intercom-adapter-webrtc", features = ["matter-port"] }
 intercom-adapter-gpio = { path = "../intercom-adapter-gpio" }
 intercom-adapter-matter = { path = "../intercom-adapter-matter" }
 esp-backtrace = { workspace = true, features = ["panic-handler", "println", "custom-halt", "esp32c6"] }
