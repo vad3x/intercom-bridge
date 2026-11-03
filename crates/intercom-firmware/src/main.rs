@@ -460,7 +460,10 @@ async fn main(_spawner: Spawner) {
             .await
         {
             warn!("I2S DMA stream failed: {:?}", error);
+            #[cfg(not(feature = "devkit"))]
             custom_halt();
+            #[cfg(feature = "devkit")]
+            core::future::pending::<()>().await;
         }
     };
 
