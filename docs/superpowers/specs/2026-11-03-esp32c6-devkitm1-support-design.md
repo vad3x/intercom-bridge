@@ -26,15 +26,26 @@ When running on an **ESP32-C6-DevKitM-1**:
 
 ## 2. Architecture & Design
 
-### 2.1 Feature Flag: `devkit`
-A Cargo feature flag `devkit` in `intercom-firmware/Cargo.toml` will gate all devboard-specific configuration. When omitted (default), the firmware compiles identically for the production PCB (8 MB flash, dual OTA, GPIO 19 LED).
+### 2.1 Modular Feature Flags & `devkit` Preset Group
+Cargo features will be organized modularly so capabilities can be composed independently or grouped together under the convenient `devkit` preset:
 
 ```toml
 [features]
 default = []
-devkit = ["dep:esp-hal-smartled"]
+
+# Umbrella preset for ESP32-C6-DevKitM-1 bench testing
+devkit = ["flash-4mb", "led-smartled", "ota-disabled"]
+
+# Granular capability flags:
+flash-4mb    = []                      # Relocates KVS ranges into 4 MB boundaries (0x3d0000 / 0x3d2000)
+led-smartled = ["dep:esp-hal-smartled"]# Uses WS2812B RGB LED on GPIO 8 via RMT
+ota-disabled = []                      # Stubs OTA writer & skips bootloader rollback check
 dummy-persist = []
 ```
+
+This modular separation allows:
+1. `cargo build --features devkit`: One-shot preset for the ESP32-C6-DevKitM-1.
+2. Independent mixing: E.g., `--features flash-4mb,ota-disabled` for a 4 MB board that uses a standard GPIO LED instead of WS2812, or `--features led-smartled` for an 8 MB board with an addressable LED.
 
 ### 2.2 4 MB Partition Table (`partitions-4mb.csv`)
 A dedicated partition table file `partitions-4mb.csv` will be created in the repository root:
@@ -54,17 +65,17 @@ matter_kvs,   data, nvs,     0x3d2000, 0x6000,
 - Total flash footprint: `0x3d8000` (3.84 MiB), leaving the remainder below the 4.0 MiB boundary (`0x400000`).
 
 ### 2.3 Flash Memory Layout Selection (`config.rs`)
-Partition offsets in `crates/intercom-firmware/src/config.rs` will be conditionally compiled based on `feature = "devkit"`:
+Partition offsets in `crates/intercom-firmware/src/config.rs` will be conditionally compiled based on `feature = "flash-4mb"`:
 
 ```rust
-#[cfg(feature = "devkit")]
+#[cfg(feature = "flash-4mb")]
 pub const SYSTEM_KVS_OFFSET: u32 = 0x3d0000;
-#[cfg(not(feature = "devkit"))]
+#[cfg(not(feature = "flash-4mb"))]
 pub const SYSTEM_KVS_OFFSET: u32 = 0x6c0000;
 
-#[cfg(feature = "devkit")]
+#[cfg(feature = "flash-4mb")]
 pub const MATTER_KVS_OFFSET: u32 = 0x3d2000;
-#[cfg(not(feature = "devkit"))]
+#[cfg(not(feature = "flash-4mb"))]
 pub const MATTER_KVS_OFFSET: u32 = 0x6c2000;
 
 #[cfg(feature = "devkit")]
@@ -73,14 +84,14 @@ pub const HW_VER_STR: &str = "2.0-devkit";
 pub const HW_VER_STR: &str = "2.0";
 ```
 
-### 2.4 OTA Behavior in DevKit Mode
-In devboard mode, dual-bank OTA is disabled:
+### 2.4 OTA Behavior in DevKit Mode (`ota-disabled`)
+When `feature = "ota-disabled"` is active:
 - **`DisabledOtaDriver`**: A lightweight driver implementing `edf_core::ports::ota::OtaFlashDriver` that rejects incoming flash requests with `Err(OtaDriverError::FlashWriteFailed)`.
-- **Bootloader Verification**: In `crates/intercom-firmware/src/main.rs`, skipping `edf_ota::bootloader::mark_running_slot_valid()` when `feature = "devkit"` is enabled, avoiding flash writes to a non-existent `otadata` partition.
+- **Bootloader Verification**: In `crates/intercom-firmware/src/main.rs`, skipping `edf_ota::bootloader::mark_running_slot_valid()`, avoiding flash writes to a non-existent `otadata` partition.
 - **REST / Web API**: Any upload attempt to `/api/ota/flash` cleanly returns an HTTP 400 error rather than attempting flash operations.
 
-### 2.5 DevKit WS2812 RGB LED Driver (`RmtSmartLeds`)
-Under `feature = "devkit"` on `riscv32`:
+### 2.5 DevKit WS2812 RGB LED Driver (`led-smartled`)
+Under `feature = "led-smartled"` on `riscv32`:
 - Uses `esp-hal-smartled = "0.18.0"` with `esp-hal/unstable` on ESP32-C6.
 - Allocates `peripherals.RMT` channel 0 and `peripherals.GPIO8`.
 - Creates `DevKitLedDriver` which implements:
