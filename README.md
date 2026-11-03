@@ -103,7 +103,7 @@ The resulting binary is located at `target/riscv32imac-unknown-none-elf/debug/in
 
 ### 3. Flash & Monitor
 
-Build, flash to the connected ESP32-C6, and open the serial monitor in one command:
+Build, flash to the connected ESP32-C6 (8 MB production board), and open the serial monitor in one command:
 
 ```bash
 mise exec -- cargo run
@@ -113,6 +113,20 @@ Or flash directly to a specific serial port:
 
 ```bash
 ./flash.sh /dev/cu.usbmodem14201
+```
+
+#### Flashing to ESP32-C6-DevKitM-1 (4 MB Bench Testing)
+
+For hardware-free bench testing on an ESP32-C6-DevKitM-1 (4 MB flash with onboard WS2812 RGB LED on GPIO 8):
+
+```bash
+# Build optimized release firmware for DevKit:
+mise exec -- cargo build-devkit
+
+# Flash to DevKit via USB using the 4 MB partition table:
+espflash flash target/riscv32imac-unknown-none-elf/release/intercom-bridge \
+    --partition-table partitions-4mb.csv \
+    --monitor
 ```
 
 ### 4. Non-Intrusive Serial Monitor

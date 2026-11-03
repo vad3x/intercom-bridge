@@ -59,6 +59,22 @@ mise exec -- cargo run
 espflash flash target/riscv32imac-unknown-none-elf/debug/intercom-bridge --port /dev/cu.usbmodem14201 --partition-table partitions.csv --erase-parts otadata
 ```
 
+### Flashing to ESP32-C6-DevKitM-1 (4 MB Bench Testing)
+
+The ESP32-C6-DevKitM-1 development board uses an ESP32-C6-MINI-1 module (4 MB SPI flash) and an addressable WS2812B RGB LED on GPIO 8. Dual-bank OTA is disabled to fit within 4 MB flash, KVS ranges are relocated, and the RGB LED is driven via the RMT peripheral:
+
+```bash
+# Build release firmware for DevKit:
+mise exec -- cargo build-devkit
+# Or:
+mise exec -- cargo build -p intercom-firmware --release --features devkit
+
+# Flash to connected DevKit board via USB using the 4 MB partition table:
+espflash flash target/riscv32imac-unknown-none-elf/release/intercom-bridge \
+    --partition-table partitions-4mb.csv \
+    --monitor
+```
+
 ### Viewing Commissioning QR & Pairing Codes
 
 Display the Matter commissioning QR code and manual pairing codes from the connected ESP32-C6 device:
