@@ -180,21 +180,34 @@ The server maintains **at most 1 active TCP session** at any time:
     mise exec -- cargo test -p intercom-core -p intercom-adapter-http -p intercom-firmware --lib --target x86_64-apple-darwin
     ```
 
-### Stage 2: Firmware Compilation
-- Build optimized release firmware for ESP32-C6:
+### Stage 2: Firmware Compilation (Production & DevKit Profiles)
+- Build optimized release firmware for production (8 MB):
   ```bash
   mise exec -- cargo build -p intercom-firmware --release
   ```
+- Build release firmware for bench DevKit (4 MB):
+  ```bash
+  mise exec -- cargo build-devkit
+  # Equivalent to: cargo build -p intercom-firmware --release --features devkit
+  ```
 - Verify binary size fits within partition boundaries.
 
-### Stage 3: Network & Discovery Verification
-- Flash or push firmware via OTA (`scripts/ota.py`).
-- Inspect mDNS operational advertisement:
-  - Verify TXT record contains `T=4` (or `T=6`).
-- Verify TCP connectivity:
-  - `nc -zv <intercom-ip> 5540` succeeds.
+### Stage 3: Automated Flashing to Connected DevBoard
+- Flash directly to the connected ESP32-C6-DevKitM-1 (`/dev/cu.usbmodem14201`) using the 4 MB partition table:
+  ```bash
+  espflash flash target/riscv32imac-unknown-none-elf/release/intercom-bridge \
+      --port /dev/cu.usbmodem14201 \
+      --partition-table partitions-4mb.csv
+  ```
 
-### Stage 4: Live Home Assistant End-to-End Validation
+### Stage 4: Automated On-Device Bench Test
+- Execute an automated test script (`scripts/test_matter_tcp.py` or equivalent test runner) targeting the flashed DevKit:
+  1. **Serial / Boot Validation**: Parse serial log or `/api/status` to confirm device boots, associates with Wi-Fi, acquires IP, and initializes Matter stack.
+  2. **mDNS Advertisement Check**: Query `_matter._tcp.local.` to verify the operational TXT record advertises `T=4` (or `T=6`).
+  3. **TCP Port 5540 Connectivity Probe**: Open a TCP socket to `<intercom-ip>:5540`, verifying that the 3-way TCP handshake succeeds (`SYN-ACK`, no `ECONNREFUSED`).
+  4. **Framing & Teardown Roundtrip**: Send a framed Matter message (4-byte LE length prefix) and verify proper deframing, lack of buffer overrun, and clean teardown upon disconnect.
+
+### Stage 5: Live Home Assistant End-to-End Validation
 - Navigate to Home Assistant Matter Server UI (`/core_matter_server`) -> Node 48 -> Endpoint 1.
 - Click "Listen" in `webrtc-stream-view`.
 - **Pass Criteria**:
