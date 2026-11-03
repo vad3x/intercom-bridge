@@ -24,13 +24,54 @@ While useful for initial boot diagnostics, uptime makes it difficult to correlat
 
 ---
 
-## 2. Architecture & Design
+## 2. Architecture & Design (Hexagonal Ports & Adapters)
 
-### 2.1 Endpoint 0 Cluster Descriptor (`intercom-adapter-matter`)
+In accordance with Hexagonal Architecture (Ports & Adapters):
+- **Core Domain (`intercom-core`)** defines an outbound port trait `ClockSyncDriver` for synchronizing wall-clock time. The core has zero dependencies on Matter or logger frameworks.
+- **Matter Adapter (`intercom-adapter-matter`)** acts as an edge adapter receiving time synchronization events from the Matter fabric (Cluster `0x0038`) and delegating them to the `ClockSyncDriver` port. It has zero knowledge of `edf-logger` or firmware internals.
+- **Foundation Logger (`edf-logger`)** remains a reusable, no-allocation logging adapter supporting flexible timestamp formatting (`Uptime` and `DateTime`).
+- **Composition Root (`intercom-firmware`)** provides the concrete `ClockSyncDriver` implementation (updating `CLOCK_OFFSET_MS`), wires it to the Matter controller/task, and configures the logger sink.
+
+```mermaid
+flowchart TD
+    subgraph Edge Adapters
+        MatterCluster["Matter TimeSync Cluster (0x0038)"] -->|"reports time"| MatterSyncTask["Matter TimeSync Adapter"]
+    end
+
+    subgraph Core Domain [intercom-core]
+        ClockPort["ClockSyncDriver (Port Trait)"]
+    end
+
+    subgraph Composition Root [intercom-firmware]
+        FirmwareClock["FirmwareClockSyncDriver"] -.->|"implements"| ClockPort
+        FirmwareClock -->|"updates atomic offset"| AtomicOffset["CLOCK_OFFSET_MS"]
+        Logger["uptime_logger"] -->|"reads offset"| AtomicOffset
+    end
+
+    subgraph Foundation [edf-logger]
+        Logger -->|"formats via"| LogTimestamp["LogTimestamp (Uptime / DateTime)"]
+    end
+
+    MatterSyncTask -->|"invokes"| ClockPort
+```
+
+### 2.1 Domain Port Contract (`intercom-core`)
+
+Define the outbound port in `crates/intercom-core/src/ports/clock.rs`:
+
+```rust
+/// Outbound port trait for propagating synchronized real-world wall-clock time.
+pub trait ClockSyncDriver: Send + Sync {
+    /// Informs the system clock driver of a newly synchronized Unix epoch timestamp.
+    fn set_epoch_time(&self, unix_ms: u64);
+}
+```
+
+### 2.2 Endpoint 0 Cluster Descriptor & Matter Adapter (`intercom-adapter-matter`)
 
 In `rs-matter`, the root endpoint handler chain (`root_handler_chained`) already includes `TimeSyncHandler`, which handles the mandatory `UTCTime`, `Granularity`, `TimeSource`, and `SetUTCTime` commands against `Matter::state.rtc`.
 
-However, the Root Node descriptor on Endpoint 0 must explicitly advertise the cluster so Matter fabric administrators (e.g. Apple Home, Home Assistant) discover it:
+The Root Node descriptor on Endpoint 0 explicitly advertises the cluster so Matter fabric administrators (e.g. Apple Home, Home Assistant) discover it:
 
 ```rust
 // crates/intercom-adapter-matter/src/controller.rs
@@ -38,7 +79,16 @@ However, the Root Node descriptor on Endpoint 0 must explicitly advertise the cl
 endpoints.push(root_endpoint!(wifi, time_sync()));
 ```
 
-### 2.2 Shared `edf-logger` Timestamp Abstraction (`embedded-device-foundation`)
+The Matter adapter monitors `state.rtc.utc_time()` (or hooks into `TimeSyncHandler` changes) and invokes `ClockSyncDriver::set_epoch_time` whenever reliable time is established or adjusted:
+
+```rust
+if let UtcTime::Reliable(matter_epoch_us) = matter.with_state(|s| s.rtc.utc_time()) {
+    let unix_ms = (matter_epoch_us / 1000) + (rs_matter::utils::epoch::MATTER_EPOCH_SECS * 1000);
+    clock_driver.set_epoch_time(unix_ms);
+}
+```
+
+### 2.3 Shared `edf-logger` Timestamp Abstraction (`embedded-device-foundation`)
 
 Update `edf-logger` to support structured timestamps while preserving its zero-allocation and ring-buffer retention guarantees:
 
@@ -151,19 +201,31 @@ fn log_timestamp() -> edf_logger::LogTimestamp {
 }
 ```
 
-### 2.4 Time Synchronization Background Task (`intercom-firmware`)
+### 2.4 Composition Root Wiring & Adapter Implementation (`intercom-firmware`)
 
-A lightweight task monitors Matter's `state.rtc` without blocking any critical paths:
-1. When `readiness.matter` is attached, the task polls `matter.with_state(|s| s.rtc.utc_time())`.
-2. When `UtcTime::Reliable(matter_epoch_us)` is reported:
-   - Converts Matter epoch microseconds to Unix epoch milliseconds:
-     $$\text{unix\_ms} = \left(\frac{\text{matter\_us}}{1000}\right) + (946,684,800 \times 1000)$$
-   - Computes offset:
-     $$\text{offset\_ms} = \text{unix\_ms} - \text{Instant::now().as\_millis()}$$
-   - If this is the initial transition, emits:
-     `INFO - Real-time clock synchronized via Matter to YYYY-MM-DD HH:MM:SS UTC`
-   - Atomically updates `CLOCK_OFFSET_MS`.
-3. Periodically re-checks (e.g. every 60 seconds) to apply any adjustment if the controller sends an updated `SetUTCTime`.
+The composition root provides the concrete adapter implementing the outbound port `ClockSyncDriver`:
+
+```rust
+// crates/intercom-firmware/src/time_sync.rs or utils/uptime_logger.rs
+pub struct FirmwareClockSyncDriver;
+
+impl intercom_core::ports::ClockSyncDriver for FirmwareClockSyncDriver {
+    fn set_epoch_time(&self, unix_ms: u64) {
+        let uptime_ms = embassy_time::Instant::now().as_millis();
+        let offset_ms = (unix_ms as i64) - (uptime_ms as i64);
+
+        let initial_sync = !is_clock_synchronized();
+        update_clock_offset_ms(offset_ms);
+
+        if initial_sync {
+            let dt = edf_logger::LogTimestamp::from_epoch_millis(unix_ms);
+            log::info!("Real-time clock synchronized via Matter to {} UTC", dt);
+        }
+    }
+}
+```
+
+The Matter controller or sync runner receives `&FirmwareClockSyncDriver` as `&dyn ClockSyncDriver` and invokes it whenever Matter time synchronization updates. Periodically (e.g. every 60 seconds), the sync runner checks `matter.with_state(|s| s.rtc.utc_time())` and pushes any updated time to the port.
 
 ---
 
