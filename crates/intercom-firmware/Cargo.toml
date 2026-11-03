@@ -26,6 +26,7 @@ intercom-core = { path = "../intercom-core" }
 intercom-media = { workspace = true }
 intercom-adapter-webrtc = { path = "../intercom-adapter-webrtc" }
 intercom-adapter-audio = { path = "../intercom-adapter-audio" }
+edf-core = { workspace = true }
 edf-ota = { workspace = true }
 edf-logger = { workspace = true }
 intercom-adapter-http = { path = "../intercom-adapter-http" }
@@ -55,3 +56,4 @@ esp-wifi-sys-esp32c6 = { workspace = true }
 
 [dev-dependencies]
 critical-section = { workspace = true, features = ["std"] }
+futures = { workspace = true }

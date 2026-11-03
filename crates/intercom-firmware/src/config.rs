@@ -140,6 +140,7 @@ pub const HTTP_ACCEPT_RETRY_DELAY: Duration = Duration::from_millis(100);
 /// Ed25519 public key used to verify incoming OTA firmware images.
 /// Loaded at compile time from the gitignored `ota_public_key.bin` file.
 /// If missing, generate using: `python3 scripts/generate_keys.py`
+#[allow(dead_code)]
 pub const OTA_PUBLIC_KEY: [u8; 32] = *include_bytes!("../ota_public_key.bin");
 
 // ============================================================================

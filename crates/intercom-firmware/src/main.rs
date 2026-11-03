@@ -66,7 +66,11 @@ use intercom_core::ports::inbound::{AccessControllerHandle, CommandChannel};
 use intercom_core::service::DiagnosticsService;
 
 #[cfg(target_arch = "riscv32")]
+#[cfg(not(feature = "ota-disabled"))]
 use edf_ota::driver::FlashOtaDriver;
+#[cfg(target_arch = "riscv32")]
+#[cfg(feature = "ota-disabled")]
+use intercom_firmware::disabled_ota::DisabledOtaDriver;
 #[cfg(target_arch = "riscv32")]
 use intercom_adapter_http::{HttpAudioMedia, HttpServer, HttpServerConfig};
 #[cfg(target_arch = "riscv32")]
@@ -365,7 +369,10 @@ async fn main(_spawner: Spawner) {
         config::AVAILABLE_ECOSYSTEMS,
         &STATE_WATCH,
     );
+    #[cfg(not(feature = "ota-disabled"))]
     let mut ota_driver = FlashOtaDriver::new(config::OTA_PUBLIC_KEY);
+    #[cfg(feature = "ota-disabled")]
+    let mut ota_driver = DisabledOtaDriver;
     // ========================================================================
     // Run App, Matter, LED, HTTP, and I2S services concurrently
     // ========================================================================
@@ -376,13 +383,20 @@ async fn main(_spawner: Spawner) {
     let http_future = async {
         let stack = rs_matter_embassy::enet::wait_global_stack().await;
 
-        // Mark the running slot valid now that hardware, Wi-Fi, and network stack are operational.
-        // If an OTA update failed to boot or crashes before reaching this point, the ESP-IDF
-        // 2nd-stage bootloader will automatically roll back to the previously functioning slot.
-        if let Err(e) = edf_ota::bootloader::mark_running_slot_valid() {
-            warn!("Failed to mark running slot valid: {:?}", e);
-        } else {
-            info!("Running firmware slot confirmed valid (rollback watchdog cancelled)");
+        #[cfg(not(feature = "ota-disabled"))]
+        {
+            // Mark the running slot valid now that hardware, Wi-Fi, and network stack are operational.
+            // If an OTA update failed to boot or crashes before reaching this point, the ESP-IDF
+            // 2nd-stage bootloader will automatically roll back to the previously functioning slot.
+            if let Err(e) = edf_ota::bootloader::mark_running_slot_valid() {
+                warn!("Failed to mark running slot valid: {:?}", e);
+            } else {
+                info!("Running firmware slot confirmed valid (rollback watchdog cancelled)");
+            }
+        }
+        #[cfg(feature = "ota-disabled")]
+        {
+            info!("OTA rollback watchdog check skipped (OTA updates disabled on this profile)");
         }
 
         let http_config = HttpServerConfig {
