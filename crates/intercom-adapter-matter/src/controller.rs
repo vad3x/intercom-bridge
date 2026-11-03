@@ -15,7 +15,6 @@
 
 extern crate alloc;
 
-use alloc::vec;
 use alloc::vec::Vec;
 
 use core::pin::pin;
@@ -28,9 +27,7 @@ use log::{info, warn};
 use rs_matter::dm::clusters::basic_info::BasicInfoConfig;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::identify;
-use rs_matter::dm::{
-    Async, AsyncHandler, ChainedHandler, Cluster, Dataver, DeviceType, EmptyHandler, Endpoint, Node,
-};
+use rs_matter::dm::{Async, AsyncHandler, ChainedHandler, Dataver, EmptyHandler, Endpoint, Node};
 use rs_matter::persist::KvBlobStore;
 use rs_matter::BasicCommData;
 
@@ -106,16 +103,10 @@ pub struct DeviceInfo {
     pub device_name: &'static str,
 }
 
-// ============================================================================
-// Endpoint metadata — collected during register() calls
-// ============================================================================
+#[path = "endpoint_grouping.rs"]
+mod endpoint_grouping;
 
-/// Metadata for one registered endpoint, used to build the `Node` descriptor.
-struct EndpointMeta {
-    id: u16,
-    device_type: DeviceType,
-    cluster: Cluster<'static>,
-}
+use endpoint_grouping::{group_endpoint_clusters, ClusterRegistrationMeta};
 
 // ============================================================================
 // MatterController — builder + WiFi Matter stack runner
@@ -127,7 +118,7 @@ static DESC_DATAVER_COUNTER: portable_atomic::AtomicU32 = portable_atomic::Atomi
 
 pub struct MatterController<S: KvBlobStore, R: SystemResetDriver, H = EmptyHandler> {
     handler: H,
-    endpoint_metas: Vec<EndpointMeta>,
+    endpoint_metas: Vec<ClusterRegistrationMeta>,
     config: MatterControllerConfig<S>,
     state_sender: SystemStateSender<'static>,
     readiness: &'static ClusterReadinessBarrier,
@@ -160,8 +151,8 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
     /// Register a cluster handler.
     ///
     /// The endpoint ID is obtained from `C::ENDPOINT_ID` (the [`MatterCluster`] trait).
-    /// Chains the cluster handler **and** a descriptor handler for that
-    /// endpoint into the handler chain, and records the endpoint metadata
+    /// Chains the cluster handler plus descriptor and identify handlers once per
+    /// endpoint, and records the endpoint metadata
     /// so `run()` can build the `Node` descriptor automatically.
     pub fn register<'b, C: MatterCluster>(
         mut self,
@@ -173,12 +164,14 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
         R: 'b,
     {
         let endpoint_id = C::ENDPOINT_ID;
+        let is_first_on_endpoint = self.endpoint_metas.iter().all(|m| m.id != endpoint_id);
 
         // Record endpoint metadata for the Node descriptor
-        self.endpoint_metas.push(EndpointMeta {
+        self.endpoint_metas.push(ClusterRegistrationMeta {
             id: endpoint_id,
             device_type: C::DEVICE_TYPE,
             cluster: C::CLUSTER_DEF,
+            client_clusters: C::CLIENT_CLUSTERS,
         });
 
         // Build the handler chain
@@ -186,10 +179,12 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
         let id_dataver_seed = DESC_DATAVER_COUNTER.fetch_add(1, portable_atomic::Ordering::Relaxed);
 
         let new_handler = ChainedHandler::new_with_matcher(
-            move |e, c| e == endpoint_id && c == desc::DescHandler::CLUSTER.id,
+            move |e, c| {
+                is_first_on_endpoint && e == endpoint_id && c == desc::DescHandler::CLUSTER.id
+            },
             Async(desc::DescHandler::new(Dataver::new(dataver_seed)).adapt()),
             ChainedHandler::new_with_matcher(
-                move |e, c| e == endpoint_id && c == identify::CLUSTER.id,
+                move |e, c| is_first_on_endpoint && e == endpoint_id && c == identify::CLUSTER.id,
                 Async(identify::IdentifyHandler::new(Dataver::new(id_dataver_seed)).adapt()),
                 ChainedHandler::new_with_matcher(
                     move |e, c| e == endpoint_id && c == C::CLUSTER_DEF.id,
@@ -220,27 +215,16 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
     pub async fn run(self) {
         let config = self.config;
         // Build the Node descriptor from registered endpoints.
-        let cluster_arrays: Vec<Vec<Cluster>> = self
-            .endpoint_metas
-            .iter()
-            .map(|meta| {
-                vec![
-                    desc::DescHandler::CLUSTER,
-                    identify::CLUSTER,
-                    meta.cluster.clone(),
-                ]
-            })
-            .collect();
-        let dtype_arrays: Vec<[DeviceType; 1]> = self
-            .endpoint_metas
-            .iter()
-            .map(|meta| [meta.device_type])
-            .collect();
-
-        let mut endpoints: Vec<Endpoint> = Vec::with_capacity(1 + self.endpoint_metas.len());
+        let grouped = group_endpoint_clusters(&self.endpoint_metas);
+        let mut endpoints: Vec<Endpoint> = Vec::with_capacity(1 + grouped.len());
         endpoints.push(EmbassyWifiMatterStack::<0, ()>::root_endpoint());
-        for (i, meta) in self.endpoint_metas.iter().enumerate() {
-            endpoints.push(Endpoint::new(meta.id, &dtype_arrays[i], &cluster_arrays[i]));
+        for g in &grouped {
+            endpoints.push(Endpoint::new_with_clients(
+                g.id,
+                &g.device_types,
+                &g.server_clusters,
+                &g.client_clusters,
+            ));
         }
 
         let node = Node {

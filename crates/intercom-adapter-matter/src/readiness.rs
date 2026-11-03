@@ -12,7 +12,7 @@ use intercom_core::ports::ecosystem::EcosystemInfoDriver;
 use log::info;
 use portable_atomic::AtomicPtr;
 
-use crate::config::{DOOR_LOCK_ENDPOINT_ID, MATTER_ECOSYSTEM, OCCUPANCY_SENSOR_ENDPOINT_ID};
+use crate::config::{AUDIO_DOORBELL_ENDPOINT_ID, DOOR_LOCK_ENDPOINT_ID, MATTER_ECOSYSTEM};
 
 const DOOR_LOCK_READY_BIT: u32 = 1 << 0;
 const RING_READY_BIT: u32 = 1 << 1;
@@ -103,16 +103,16 @@ impl EcosystemInfoDriver for ClusterReadinessBarrier {
     fn status(&self) -> Option<EcosystemStatus> {
         let mut status = EcosystemStatus::new(MATTER_ECOSYSTEM, self.is_paired())
             .with_endpoint(EndpointInfo {
+                id: AUDIO_DOORBELL_ENDPOINT_ID,
+                name: "Audio Doorbell",
+                cluster: "Switch",
+                ready: self.is_ring_ready(),
+            })
+            .with_endpoint(EndpointInfo {
                 id: DOOR_LOCK_ENDPOINT_ID,
                 name: "Door Lock",
                 cluster: "DoorLock",
                 ready: self.is_door_lock_ready(),
-            })
-            .with_endpoint(EndpointInfo {
-                id: OCCUPANCY_SENSOR_ENDPOINT_ID,
-                name: "Chime / Ring",
-                cluster: "OccupancySensing",
-                ready: self.is_ring_ready(),
             })
             .with_property(
                 "door_lock_subscribed",
@@ -128,7 +128,7 @@ impl EcosystemInfoDriver for ClusterReadinessBarrier {
             )
             .with_property(
                 "ring_sensor_endpoint",
-                EcosystemValue::Int(OCCUPANCY_SENSOR_ENDPOINT_ID as i64),
+                EcosystemValue::Int(AUDIO_DOORBELL_ENDPOINT_ID as i64),
             );
 
         let matter_ptr = self.matter.load(Ordering::Acquire);
@@ -161,9 +161,11 @@ mod tests {
         // Arrange
         static WATCH: SystemStateWatch = SystemStateWatch::new();
         let sender = SystemStateSender::new(&WATCH);
+
+        // Act
         let barrier = ClusterReadinessBarrier::new(sender);
 
-        // Act & Assert
+        // Assert
         assert!(!barrier.is_paired());
         assert!(!barrier.is_door_lock_ready());
         assert!(!barrier.is_ring_ready());

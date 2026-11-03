@@ -1,6 +1,6 @@
 //! Smart Intercom - Matter Door Lock Cluster Handler
 //!
-//! Exposes a Matter DoorLock cluster on Endpoint 1 (HomeKit lock accessory).
+//! Exposes a Matter DoorLock cluster on Endpoint 2 (`DOOR_LOCK_ENDPOINT_ID = 2`).
 //! Handles lock/unlock commands, pushes subscription reports when state changes,
 //! and notifies readiness via the `ClusterReadinessBarrier`.
 

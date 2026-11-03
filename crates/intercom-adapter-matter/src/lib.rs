@@ -4,8 +4,8 @@
 //! mirroring the C++ `MatterAccessControlDriver`.
 //!
 //! Provides:
-//! - Door Lock cluster (endpoint 1) — handles lock/unlock from HomeKit
-//! - Occupancy Sensor cluster (endpoint 2) — exposes ring as motion sensor
+//! - Door Lock cluster (endpoint 2) — handles lock/unlock from HomeKit
+//! - Occupancy Sensor cluster (endpoint 1) — exposes ring as motion sensor
 //! - `MatterController` — builder+runner for the full Matter-over-WiFi stack
 
 #![no_std]
@@ -27,20 +27,21 @@ pub use access_control::MatterAccessControlDriver;
 pub use commissioning::{
     derive_intercom_identity, DeviceIdentity, IdentityError, HOSTNAME_PREFIX, SERIAL_PREFIX,
 };
-pub use config::{DOOR_LOCK_ENDPOINT_ID, MATTER_ECOSYSTEM, OCCUPANCY_SENSOR_ENDPOINT_ID};
+pub use config::{
+    AUDIO_DOORBELL_ENDPOINT_ID, DOOR_LOCK_ENDPOINT_ID, MATTER_ECOSYSTEM,
+    OCCUPANCY_SENSOR_ENDPOINT_ID,
+};
 pub use controller::{DeviceInfo, MatterController, MatterControllerConfig, MatterPeripherals};
 pub use door_lock::{IntercomDoorLock, IntercomDoorLockConfig};
 pub use occupancy::{IntercomOccupancy, IntercomOccupancyConfig};
 pub use readiness::ClusterReadinessBarrier;
 
-/// Bump allocator size for the Matter protocol stack.
+/// Bump allocator size for the Matter 1.5 Audio Doorbell + Door Lock protocol stack.
 ///
-/// The rs-matter-embassy example uses 17500–18000 for a single cluster.
-/// We register two clusters (DoorLock + Occupancy) each with a descriptor
-/// handler, which consumes more bump memory during init. After init the
-/// allocator also needs headroom for CASE sessions, subscription reports,
-/// multi-fabric commissioning, and mDNS service records.
-const BUMP_SIZE: usize = 56000;
+/// Sized for Endpoint 0 + Endpoint 1 (`Switch`, `AudioAvStreamHandler`,
+/// `WebRtcProvHandler<..., 3, 2048, 1024, 128, 4>`, `Chime`) + Endpoint 2 (`DoorLock`),
+/// multi-fabric CASE sessions, event reports, and mDNS service records.
+const BUMP_SIZE: usize = 72_000;
 
 // ============================================================================
 // MatterCluster trait
@@ -67,4 +68,8 @@ pub trait MatterCluster: AsyncHandler {
 
     /// The Matter device type for the endpoint this cluster belongs to.
     const DEVICE_TYPE: DeviceType;
+
+    /// Optional client cluster IDs advertised in `Descriptor::ClientList` on `ENDPOINT_ID`
+    /// (e.g. `WebRTCTransportRequestor` `0x0554` on Endpoint 1).
+    const CLIENT_CLUSTERS: &'static [rs_matter::dm::ClusterId] = &[];
 }

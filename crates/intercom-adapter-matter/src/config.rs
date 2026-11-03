@@ -16,11 +16,14 @@ pub const MATTER_ECOSYSTEM: EcosystemId = EcosystemId::new("Matter");
 // Matter Endpoints
 // ============================================================================
 
-/// Matter endpoint ID for the door lock cluster
-pub const DOOR_LOCK_ENDPOINT_ID: u16 = 1;
+/// Matter endpoint ID for the Matter 1.5 Audio Doorbell (`0x0141`) composite endpoint.
+pub const AUDIO_DOORBELL_ENDPOINT_ID: u16 = 1;
 
-/// Matter endpoint ID for the occupancy sensor cluster
-pub const OCCUPANCY_SENSOR_ENDPOINT_ID: u16 = 2;
+/// Matter endpoint ID for the Door Lock (`0x000A`) endpoint.
+pub const DOOR_LOCK_ENDPOINT_ID: u16 = 2;
+
+/// Temporary compatibility alias removed in Task 3 when `occupancy.rs` is deleted.
+pub const OCCUPANCY_SENSOR_ENDPOINT_ID: u16 = AUDIO_DOORBELL_ENDPOINT_ID;
 
 // ============================================================================
 // Subscription Interval Policies (Matter Spec 8.5.1)
