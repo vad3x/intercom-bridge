@@ -40,6 +40,12 @@ impl GpioBootButtonConfig {
         self
     }
 
+    /// Attach any custom hold feedback provider.
+    pub fn with_hold_feedback<I: edf_gpio::led::HoldFeedback + 'static>(mut self, feedback: &'static I) -> Self {
+        self.inner = self.inner.with_indicator(feedback);
+        self
+    }
+
     /// Override the ecosystem and factory reset hold thresholds in milliseconds.
     pub fn with_hold_durations(mut self, ecosystem_ms: u64, factory_ms: u64) -> Self {
         self.inner = self.inner.with_hold_durations(ecosystem_ms, factory_ms);

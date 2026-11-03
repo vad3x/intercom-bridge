@@ -16,8 +16,9 @@ test = false
 
 [features]
 default = []
-devkit = ["flash-4mb", "ota-disabled"]
+devkit = ["flash-4mb", "led-smartled", "ota-disabled"]
 flash-4mb = []
+led-smartled = ["dep:esp-hal-smartled", "dep:smart-leds"]
 ota-disabled = []
 dummy-persist = []
 
@@ -27,6 +28,7 @@ intercom-media = { workspace = true }
 intercom-adapter-webrtc = { path = "../intercom-adapter-webrtc" }
 intercom-adapter-audio = { path = "../intercom-adapter-audio" }
 edf-core = { workspace = true }
+edf-gpio = { workspace = true }
 edf-ota = { workspace = true }
 edf-logger = { workspace = true }
 intercom-adapter-http = { path = "../intercom-adapter-http" }
@@ -53,6 +55,8 @@ esp-bootloader-esp-idf = { workspace = true, features = ["log-04", "esp32c6"] }
 esp-metadata-generated = { workspace = true, features = ["esp32c6"] }
 rs-matter-embassy = { path = "../../../rs-matter-embassy/rs-matter-embassy", default-features = false, features = ["esp", "trouble", "embassy-net", "log", "rustcrypto", "kv-blob-store-8192", "mld-v1-compat", "nd-learn-from-frames"] }
 esp-wifi-sys-esp32c6 = { workspace = true }
+esp-hal-smartled = { workspace = true, features = ["esp32c6"], optional = true }
+smart-leds = { workspace = true, optional = true }
 
 [dev-dependencies]
 critical-section = { workspace = true, features = ["std"] }

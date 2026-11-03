@@ -85,6 +85,7 @@ use intercom_adapter_gpio::boot_button::{GpioBootButtonConfig, GpioBootButtonDri
 #[cfg(target_arch = "riscv32")]
 use intercom_adapter_gpio::bus::{GpioBusConfig, GpioBusDriver};
 #[cfg(target_arch = "riscv32")]
+#[cfg(not(feature = "led-smartled"))]
 use intercom_adapter_gpio::led::GpioLedDriver;
 #[cfg(target_arch = "riscv32")]
 use intercom_adapter_gpio::ring::{GpioRingConfig, GpioRingDriver};
@@ -334,9 +335,21 @@ async fn main(_spawner: Spawner) {
         );
     }
 
+    #[cfg(not(feature = "led-smartled"))]
     static INDICATOR: StaticCell<GpioLedDriver> = StaticCell::new();
+    #[cfg(not(feature = "led-smartled"))]
     let indicator: &'static GpioLedDriver =
         &*INDICATOR.init(GpioLedDriver::new(peripherals.GPIO19));
+
+    #[cfg(feature = "led-smartled")]
+    static DEVKIT_INDICATOR: StaticCell<intercom_firmware::devkit_led::DevKitLedDriver> =
+        StaticCell::new();
+    #[cfg(feature = "led-smartled")]
+    let indicator: &'static intercom_firmware::devkit_led::DevKitLedDriver =
+        &*DEVKIT_INDICATOR.init(intercom_firmware::devkit_led::DevKitLedDriver::new(
+            peripherals.RMT,
+            peripherals.GPIO8,
+        ));
 
     let access_driver = MatterAccessControlDriver::new(&door_lock, &doorbell_switch);
     let call_broadcaster =
@@ -346,8 +359,14 @@ async fn main(_spawner: Spawner) {
         indicator,
         (FirmwarePersistenceReporter, call_broadcaster),
     );
+
+    #[cfg(not(feature = "led-smartled"))]
     let boot_button = GpioBootButtonDriver::new(
         GpioBootButtonConfig::new(peripherals.GPIO9).with_indicator(indicator),
+    );
+    #[cfg(feature = "led-smartled")]
+    let boot_button = GpioBootButtonDriver::new(
+        GpioBootButtonConfig::new(peripherals.GPIO9).with_hold_feedback(indicator),
     );
 
     let app = App::with_duration(
