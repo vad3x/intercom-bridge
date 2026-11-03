@@ -14,6 +14,7 @@
 extern crate alloc;
 
 mod access_control;
+mod audio_doorbell;
 mod chime_handler;
 pub mod commissioning;
 pub mod config;
@@ -25,15 +26,20 @@ pub mod readiness;
 use rs_matter::dm::{AsyncHandler, Cluster, DeviceType};
 
 pub use access_control::MatterAccessControlDriver;
+pub use audio_doorbell::{
+    ActiveCallGate, IntercomAudioAvCluster, IntercomAudioHooks, IntercomWebRtcHooks,
+    IntercomWebRtcProvCluster, MediaSessionPort,
+};
 pub use chime_handler::IntercomChime;
 pub use commissioning::{
-    DeviceIdentity, HOSTNAME_PREFIX, IdentityError, SERIAL_PREFIX, derive_intercom_identity,
+    derive_intercom_identity, DeviceIdentity, IdentityError, HOSTNAME_PREFIX, SERIAL_PREFIX,
 };
 pub use config::{AUDIO_DOORBELL_ENDPOINT_ID, DOOR_LOCK_ENDPOINT_ID, MATTER_ECOSYSTEM};
 pub use controller::{DeviceInfo, MatterController, MatterControllerConfig, MatterPeripherals};
 pub use door_lock::{IntercomDoorLock, IntercomDoorLockConfig};
 pub use doorbell_switch::IntercomDoorbellSwitch;
 pub use readiness::ClusterReadinessBarrier;
+pub use rs_matter::dm::clusters::app::webrtc_prov::WebRtcError;
 
 /// Bump allocator size for the Matter 1.5 Audio Doorbell + Door Lock protocol stack.
 ///

@@ -45,10 +45,13 @@ Concrete hardware drivers binding port traits to physical intercom lines and ESP
 
 ### Smart Home Protocol Adapter (`intercom-adapter-matter`)
 Concrete protocol drivers binding port traits and events to the smart home ecosystem:
-- `IntercomDoorLock` (Matter DoorLock cluster handler)
-- `IntercomOccupancy` (Matter OccupancySensing cluster handler)
-- `MatterAccessControlDriver` (bridges core lock/occupancy state)
+- `IntercomDoorbellSwitch`, `IntercomAudioAvCluster`, `IntercomWebRtcProvCluster`, and `IntercomChime` (Endpoint 1 Audio Doorbell `0x0141`: ring events and Opus WebRTC audio)
+- `IntercomDoorLock` (Endpoint 2 Door Lock `0x000A`: strike control and lock state)
+- `MatterAccessControlDriver` (bridges core ring and lock state to the two Matter endpoints)
 - `MatterController` (Wi-Fi, BLE commissioning, and CASE session runner)
+
+### WebRTC Media Adapter (`intercom-adapter-webrtc`)
+`WebRtcSignalingFacade` turns Matter SDP offers and answers into one bounded media session, using fresh hardware-backed entropy supplied by the firmware. The media engine uses ICE-Lite and accepts a peer only after authenticated STUN; remote candidate signaling is validated but does not choose the peer address. `MediaSessionPort` is declared by the Matter adapter and implemented by the WebRTC adapter.
 *(Future adapters: Home Assistant native API, MQTT, REST)*
 
 ## Composition Root (`intercom-firmware` -> binary: `intercom-bridge`)

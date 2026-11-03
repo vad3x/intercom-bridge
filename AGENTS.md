@@ -215,11 +215,14 @@ intercom-bridge/
 │   │   └── src/
 │   │       ├── config.rs           # Matter endpoint IDs and serial format
 │   │       ├── door_lock.rs        # IntercomDoorLock (DoorLock cluster handler)
-│   │       ├── occupancy.rs        # IntercomOccupancy (OccupancySensing cluster handler)
+│   │       ├── doorbell_switch.rs  # Endpoint 1 Switch press/release events
+│   │       ├── audio_doorbell.rs   # Endpoint 1 AV stream and WebRTC provider hooks
+│   │       ├── chime_handler.rs    # Endpoint 1 Chime cluster
 │   │       ├── access_control.rs   # MatterAccessControlDriver (bridges services ↔ clusters)
 │   │       ├── commissioning.rs    # Commissioning helpers
 │   │       └── controller.rs       # MatterController builder + runner (WiFi stack)
 │   ├── intercom-pairing-tool/      # Host CLI (`cargo qr`) for Matter QR & manual pairing codes
+│   ├── intercom-adapter-webrtc/    # SDP signaling facade, ICE-Lite, DTLS-SRTP, Opus media engine
 │   └── intercom-firmware/          # Composition root binary (intercom-bridge)
 │       └── src/
 │           ├── config.rs           # Hardware version, device info, flash partition layout
@@ -260,7 +263,10 @@ intercom-bridge/
 | `crates/intercom-adapter-matter/src/readiness.rs` | `ClusterReadinessBarrier` — internal Apple Home subscription readiness coordination |
 | `crates/intercom-adapter-matter/src/controller.rs` | `MatterController` — builder pattern for registering clusters + running the Matter stack |
 | `crates/intercom-adapter-matter/src/door_lock.rs` | `IntercomDoorLock` — Matter DoorLock cluster, triggers `AccessControllerHandle` on unlock |
-| `crates/intercom-adapter-matter/src/occupancy.rs` | `IntercomOccupancy` — Matter OccupancySensing cluster |
+| `crates/intercom-adapter-matter/src/doorbell_switch.rs` | `IntercomDoorbellSwitch` — Endpoint 1 Switch press/release events |
+| `crates/intercom-adapter-matter/src/audio_doorbell.rs` | Endpoint 1 AV stream and WebRTC provider hooks; declares `MediaSessionPort` |
+| `crates/intercom-adapter-matter/src/chime_handler.rs` | Endpoint 1 Chime cluster |
+| `crates/intercom-adapter-webrtc/src/signaling.rs` | SDP signaling facade, secure entropy port, and Matter media port implementation |
 | `crates/intercom-adapter-matter/src/access_control.rs` | `MatterAccessControlDriver` — implements `IntercomReporter` port |
 | `crates/intercom-adapter-gpio/src/` | GPIO implementations of port traits using `esp-hal` |
 | `crates/intercom-adapter-matter/src/` | Matter protocol adapter implementation using `rs-matter` |
@@ -321,21 +327,27 @@ pub trait SystemResetDriver {
 Cluster handlers implement `rs_matter::dm::AsyncHandler` and the `MatterCluster` trait. They are registered with `MatterController` via a builder pattern:
 
 ```rust
+let doorbell_switch = IntercomDoorbellSwitch::new(&readiness_barrier);
+let audio_av = IntercomAudioAvCluster::new(access_handle);
+let webrtc = IntercomWebRtcProvCluster::new(IntercomWebRtcHooks::new(
+    access_handle, &audio_av, &webrtc_signaling,
+));
+let chime = IntercomChime::new();
 let door_lock = IntercomDoorLock::new(IntercomDoorLockConfig {
-    access: access_handle,
-    readiness: &readiness_barrier,
-});
-let occupancy = IntercomOccupancy::new(IntercomOccupancyConfig {
-    readiness: &readiness_barrier,
+    access: access_handle, readiness: &readiness_barrier,
 });
 
 let matter = MatterController::new(
     config,
     state_sender,
+    &readiness_barrier,
     FirmwareResetDriver,
 )
-.register(&door_lock)
-.register(&occupancy);
+.register(&doorbell_switch)
+.register(&audio_av)
+.register(&webrtc)
+.register(&chime)
+.register(&door_lock);
 
 matter.run().await;
 ```
@@ -344,13 +356,12 @@ matter.run().await;
 When defining a cluster with `with_attrs(with!(...))`, **always prefix the attribute list with `system;`**:
 
 ```rust
-pub const CLUSTER: Cluster<'static> = occupancy_sensing::FULL_CLUSTER
-    .with_revision(5)
-    .with_features(occupancy_sensing::Feature::PASSIVE_INFRARED.bits())
+pub const CLUSTER: Cluster<'static> = switch::FULL_CLUSTER
+    .with_revision(2)
+    .with_features(switch::Feature::MOMENTARY_SWITCH.bits())
     .with_attrs(with!(system;
-        occupancy_sensing::AttributeId::Occupancy
-            | occupancy_sensing::AttributeId::OccupancySensorType
-            | occupancy_sensing::AttributeId::OccupancySensorTypeBitmap
+        switch::AttributeId::NumberOfPositions
+            | switch::AttributeId::CurrentPosition
     ))
     .with_cmds(with!());
 ```
@@ -358,14 +369,14 @@ pub const CLUSTER: Cluster<'static> = occupancy_sensing::FULL_CLUSTER
 **Why this matters:**
 - Without `system;`, `rs-matter`'s `with!` macro filters out all global system attributes (`0xFFF8` - `0xFFFD`).
 - This causes `AttributeList` (`0xFFFB`), `FeatureMap` (`0xFFFC`), `AcceptedCommandList` (`0xFFF9`), and `GeneratedCommandList` (`0xFFF8`) to return `AttributeNotFound`.
-- Strict ecosystem controllers like **Aqara Hub M3** query `FeatureMap` (e.g., PIR bit for `OccupancySensing`) and `AttributeList` during interview. If `FeatureMap` is missing or 0, Aqara rejects the cluster as invalid and will silently hide the device component from the UI.
-- Ensure device type revisions also match standard spec requirements (e.g. `OccupancySensor` is `dtype: 0x0107, drev: 4`, `DoorLock` is `dtype: 0x000A, drev: 3`).
+- Ecosystem controllers query `FeatureMap` and `AttributeList` during interview; missing global attributes can cause them to reject the cluster.
+- Device types follow the Matter 1.5 topology: `AudioDoorbell` is `dtype: 0x0141, drev: 1`; `DoorLock` is `dtype: 0x000A, drev: 3`.
 
 ### Matter Endpoints
 
 - **Endpoint 0:** Root node (system clusters, handled by rs-matter-embassy)
-- **Endpoint 1:** Door Lock Cluster (lock/unlock commands)
-- **Endpoint 2:** Occupancy Sensor (ring detection, appears as Motion Sensor in HomeKit, Home Assistant, and Aqara Home)
+- **Endpoint 1:** Audio Doorbell (`0x0141`): Switch ring events, Camera AV Stream Management (`0x0551`), WebRTC Transport Provider (`0x0553`), Chime, and WebRTC Transport Requestor client (`0x0554`). Audio signaling only starts or ends a media call; it never unlocks the door.
+- **Endpoint 2:** Door Lock (`0x000A`): lock/unlock commands and lock state. Strike actuation is independent of Endpoint 1 media.
 
 ### Over-The-Air (OTA) Firmware Updates & Fail-Safe Dual-Bank Flash
 

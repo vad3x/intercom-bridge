@@ -1,0 +1,625 @@
+//! Bounded Matter-facing SDP signaling for the single-session WebRTC media engine.
+
+use core::cell::RefCell;
+use core::fmt::Write;
+use core::sync::atomic::Ordering;
+
+use embassy_sync::blocking_mutex::Mutex;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use heapless::String;
+use portable_atomic::AtomicU32;
+
+use crate::dtls::{DtlsRole, DtlsSrtpEngine};
+use crate::sdp::{
+    DtlsSetupRole, LOCAL_OFFER_MID, LOCAL_OFFER_OPUS_PAYLOAD_TYPE, LocalSdpParams, SdpError,
+    SdpMediaDirection, parse_sdp_offer, write_sdp_answer, write_sdp_offer,
+};
+use crate::session::{
+    MEDIA_UDP_PORT, WebRtcSessionConfig, WebRtcSessionHandle, WebRtcSessionRequestError,
+};
+
+/// Cryptographically secure entropy supplied by the composition root.
+pub trait SecureRandom {
+    fn fill(&self, out: &mut [u8]) -> Result<(), SignalingError>;
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SignalingError {
+    NotReady,
+    InvalidSdp,
+    InvalidCandidate,
+    BufferTooSmall,
+    Busy,
+    InvalidInState,
+    Crypto,
+}
+
+#[derive(Clone)]
+struct PendingOffer {
+    local_ufrag: String<32>,
+    local_password: String<64>,
+    dtls_seed: [u8; 32],
+}
+
+struct SessionMaterial {
+    local_ufrag: String<32>,
+    local_password: String<64>,
+    dtls_seed: [u8; 32],
+    ssrc: u32,
+}
+
+/// Converts Matter SDP signaling into a single queued media session.
+pub struct WebRtcSignalingFacade<'a, R: SecureRandom> {
+    handle: WebRtcSessionHandle<'a>,
+    random: &'a R,
+    local_ipv4: AtomicU32,
+    pending: Mutex<CriticalSectionRawMutex, RefCell<Option<PendingOffer>>>,
+}
+
+impl<'a, R: SecureRandom> WebRtcSignalingFacade<'a, R> {
+    pub const fn new(handle: WebRtcSessionHandle<'a>, random: &'a R) -> Self {
+        Self {
+            handle,
+            random,
+            local_ipv4: AtomicU32::new(0),
+            pending: Mutex::new(RefCell::new(None)),
+        }
+    }
+
+    pub fn set_local_ipv4(&self, address: [u8; 4]) {
+        self.local_ipv4
+            .store(u32::from_be_bytes(address), Ordering::Release);
+    }
+
+    fn local_ipv4(&self) -> Result<[u8; 4], SignalingError> {
+        let address = self.local_ipv4.load(Ordering::Acquire).to_be_bytes();
+        if address == [0; 4] {
+            Err(SignalingError::NotReady)
+        } else {
+            Ok(address)
+        }
+    }
+
+    fn new_material(&self) -> Result<SessionMaterial, SignalingError> {
+        let mut random = [0u8; 60];
+        self.random.fill(&mut random)?;
+        let mut local_ufrag = String::<32>::new();
+        let mut local_password = String::<64>::new();
+        for byte in &random[32..40] {
+            write!(local_ufrag, "{byte:02x}").map_err(|_| SignalingError::Crypto)?;
+        }
+        for byte in &random[40..56] {
+            write!(local_password, "{byte:02x}").map_err(|_| SignalingError::Crypto)?;
+        }
+        let mut dtls_seed = [0u8; 32];
+        dtls_seed.copy_from_slice(&random[..32]);
+        Ok(SessionMaterial {
+            local_ufrag,
+            local_password,
+            dtls_seed,
+            ssrc: u32::from_be_bytes(
+                random[56..60]
+                    .try_into()
+                    .map_err(|_| SignalingError::Crypto)?,
+            ),
+        })
+    }
+
+    fn local_fingerprint(seed: [u8; 32], role: DtlsRole) -> Result<[u8; 32], SignalingError> {
+        // The media engine uses the same seed to recreate this certificate when it starts.
+        let identity = DtlsSrtpEngine::new(role, seed).map_err(|_| SignalingError::Crypto)?;
+        Ok(identity.local_cert_sha256())
+    }
+
+    fn local_params<'b>(
+        ipv4: [u8; 4],
+        material: &'b SessionMaterial,
+        fingerprint: [u8; 32],
+    ) -> LocalSdpParams<'b> {
+        LocalSdpParams {
+            ipv4,
+            ipv6: [0; 8],
+            port: MEDIA_UDP_PORT,
+            ice_ufrag: &material.local_ufrag,
+            ice_pwd: &material.local_password,
+            sha256_fingerprint: fingerprint,
+            ssrc: material.ssrc,
+        }
+    }
+
+    pub fn accept_offer(
+        &self,
+        offer: &str,
+        answer_out: &mut [u8],
+    ) -> Result<usize, SignalingError> {
+        let ipv4 = self.local_ipv4()?;
+        if !self.handle.is_idle() || self.pending.lock(|p| p.borrow().is_some()) {
+            return Err(SignalingError::Busy);
+        }
+        let remote = parse_sdp_offer(offer).map_err(map_sdp_error)?;
+        let role = match remote.setup {
+            DtlsSetupRole::Passive => DtlsRole::Client,
+            DtlsSetupRole::Active | DtlsSetupRole::ActPass => DtlsRole::Server,
+        };
+        let material = self.new_material()?;
+        let fingerprint = Self::local_fingerprint(material.dtls_seed, role)?;
+        let params = Self::local_params(ipv4, &material, fingerprint);
+        let len = write_sdp_answer(&remote, &params, answer_out).map_err(map_sdp_error)?;
+        let config = WebRtcSessionConfig::new(
+            &material.local_ufrag,
+            remote.ice_ufrag,
+            &material.local_password,
+            remote.sha256_fingerprint,
+            role,
+            material.dtls_seed,
+            remote.opus_payload_type,
+        )
+        .map_err(|_| SignalingError::InvalidSdp)?;
+        self.handle.start(config).map_err(map_request_error)?;
+        Ok(len)
+    }
+
+    pub fn create_offer(&self, offer_out: &mut [u8]) -> Result<usize, SignalingError> {
+        let ipv4 = self.local_ipv4()?;
+        if !self.handle.is_idle() || self.pending.lock(|p| p.borrow().is_some()) {
+            return Err(SignalingError::Busy);
+        }
+        let material = self.new_material()?;
+        let fingerprint = Self::local_fingerprint(material.dtls_seed, DtlsRole::Server)?;
+        let params = Self::local_params(ipv4, &material, fingerprint);
+        let len = write_sdp_offer(&params, offer_out).map_err(map_sdp_error)?;
+        self.pending.lock(|p| {
+            *p.borrow_mut() = Some(PendingOffer {
+                local_ufrag: material.local_ufrag,
+                local_password: material.local_password,
+                dtls_seed: material.dtls_seed,
+            });
+        });
+        Ok(len)
+    }
+
+    pub fn accept_answer(&self, answer: &str) -> Result<(), SignalingError> {
+        let remote = parse_sdp_offer(answer).map_err(map_sdp_error)?;
+        if remote.mid != LOCAL_OFFER_MID
+            || remote.opus_payload_type != LOCAL_OFFER_OPUS_PAYLOAD_TYPE
+            || remote.direction != SdpMediaDirection::SendRecv
+        {
+            return Err(SignalingError::InvalidSdp);
+        }
+        let role = match remote.setup {
+            DtlsSetupRole::Active => DtlsRole::Server,
+            DtlsSetupRole::Passive => DtlsRole::Client,
+            DtlsSetupRole::ActPass => return Err(SignalingError::InvalidSdp),
+        };
+        self.pending.lock(|pending| {
+            let pending = pending.borrow();
+            let local = pending.as_ref().ok_or(SignalingError::InvalidInState)?;
+            let config = WebRtcSessionConfig::new(
+                &local.local_ufrag,
+                remote.ice_ufrag,
+                &local.local_password,
+                remote.sha256_fingerprint,
+                role,
+                local.dtls_seed,
+                remote.opus_payload_type,
+            )
+            .map_err(|_| SignalingError::InvalidSdp)?;
+            self.handle.start(config).map_err(map_request_error)
+        })?;
+        self.pending.lock(|pending| *pending.borrow_mut() = None);
+        Ok(())
+    }
+
+    pub fn add_candidate(&self, candidate: &str) -> Result<(), SignalingError> {
+        if self.handle.is_idle() && !self.pending.lock(|p| p.borrow().is_some()) {
+            return Err(SignalingError::InvalidInState);
+        }
+        validate_remote_candidate(candidate)
+    }
+
+    pub fn stop(&self) {
+        self.pending.lock(|pending| *pending.borrow_mut() = None);
+        let _ = self.handle.stop();
+    }
+
+    pub fn is_idle(&self) -> bool {
+        self.handle.is_idle()
+    }
+
+    pub async fn wait_idle(&self) {
+        self.handle.wait_idle().await;
+    }
+}
+
+fn map_sdp_error(error: SdpError) -> SignalingError {
+    match error {
+        SdpError::BufferTooSmall => SignalingError::BufferTooSmall,
+        _ => SignalingError::InvalidSdp,
+    }
+}
+
+fn map_request_error(error: WebRtcSessionRequestError) -> SignalingError {
+    match error {
+        WebRtcSessionRequestError::Busy => SignalingError::Busy,
+        WebRtcSessionRequestError::NotActive => SignalingError::InvalidInState,
+    }
+}
+
+/// ICE-Lite accepts candidate signaling but chooses its peer only from authenticated STUN.
+pub fn validate_remote_candidate(candidate: &str) -> Result<(), SignalingError> {
+    let candidate = candidate.strip_prefix("a=").unwrap_or(candidate);
+    let fields = candidate
+        .strip_prefix("candidate:")
+        .ok_or(SignalingError::InvalidCandidate)?;
+    let mut parts = fields.split_ascii_whitespace();
+    let foundation = parts.next().ok_or(SignalingError::InvalidCandidate)?;
+    let component = parts.next().and_then(|v| v.parse::<u8>().ok());
+    let transport = parts.next();
+    let priority = parts.next().and_then(|v| v.parse::<u32>().ok());
+    let address = parts.next().ok_or(SignalingError::InvalidCandidate)?;
+    let port = parts.next().and_then(|v| v.parse::<u16>().ok());
+    let typ = parts.next();
+    let kind = parts.next();
+    if foundation.is_empty()
+        || component != Some(1)
+        || !transport.is_some_and(|v| v.eq_ignore_ascii_case("UDP"))
+        || priority.is_none()
+        || address.is_empty()
+        || port.is_none_or(|v| v == 0)
+        || typ != Some("typ")
+        || !matches!(kind, Some("host" | "srflx" | "prflx" | "relay"))
+    {
+        return Err(SignalingError::InvalidCandidate);
+    }
+    Ok(())
+}
+
+#[cfg(feature = "matter-port")]
+mod matter_port {
+    use super::{SecureRandom, SignalingError, WebRtcSignalingFacade};
+    use intercom_adapter_matter::MediaSessionPort;
+    use intercom_adapter_matter::WebRtcError;
+
+    fn map_error(error: SignalingError) -> WebRtcError {
+        match error {
+            SignalingError::NotReady | SignalingError::InvalidInState => {
+                WebRtcError::InvalidInState
+            }
+            SignalingError::InvalidSdp | SignalingError::InvalidCandidate => {
+                WebRtcError::InvalidCommand
+            }
+            SignalingError::BufferTooSmall | SignalingError::Busy => WebRtcError::ResourceExhausted,
+            SignalingError::Crypto => WebRtcError::Failure,
+        }
+    }
+
+    impl<R: SecureRandom> MediaSessionPort for WebRtcSignalingFacade<'_, R> {
+        fn accept_remote_offer(
+            &self,
+            offer_sdp: &str,
+            answer_out: &mut [u8],
+        ) -> Result<usize, WebRtcError> {
+            self.accept_offer(offer_sdp, answer_out).map_err(map_error)
+        }
+
+        fn build_local_offer(&self, offer_out: &mut [u8]) -> Result<usize, WebRtcError> {
+            self.create_offer(offer_out).map_err(map_error)
+        }
+
+        fn accept_remote_answer(&self, answer_sdp: &str) -> Result<(), WebRtcError> {
+            self.accept_answer(answer_sdp).map_err(map_error)
+        }
+
+        fn add_remote_ice_candidate(&self, candidate_sdp: &str) -> Result<(), WebRtcError> {
+            self.add_candidate(candidate_sdp).map_err(map_error)
+        }
+
+        fn stop_media_session(&self) {
+            self.stop();
+        }
+
+        async fn wait_media_idle(&self) {
+            self.wait_idle().await;
+        }
+
+        fn is_media_idle(&self) -> bool {
+            self.is_idle()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use core::cell::Cell;
+
+    use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+    use embassy_sync::channel::Channel;
+    use intercom_core::ports::inbound::{AccessControllerHandle, CommandChannel};
+    use intercom_media::{RxAudioChannel, TxAudioChannel};
+    use portable_atomic::AtomicU8;
+
+    use super::{SecureRandom, SignalingError, WebRtcSignalingFacade, validate_remote_candidate};
+    use crate::session::{WebRtcMediaEngine, WebRtcSessionConfig};
+
+    const CONTROLLER_OFFER: &str = "v=0\r\n\
+o=- 1234 2 IN IP4 127.0.0.1\r\n\
+s=-\r\n\
+t=0 0\r\n\
+a=group:BUNDLE 0\r\n\
+m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n\
+a=mid:0\r\n\
+a=ice-ufrag:ctrlUfrag\r\n\
+a=ice-pwd:ctrlPassword0123456789abcdef\r\n\
+a=fingerprint:sha-256 AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99\r\n\
+a=setup:actpass\r\n\
+a=rtcp-mux\r\n\
+a=rtpmap:111 opus/48000/2\r\n";
+
+    struct SecureRandomMock(Cell<u8>);
+
+    impl SecureRandom for SecureRandomMock {
+        fn fill(&self, out: &mut [u8]) -> Result<(), SignalingError> {
+            let next = self.0.get().wrapping_add(1);
+            self.0.set(next);
+            out.fill(next);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn offer_rejects_until_local_ipv4_is_ready_without_queuing_media() {
+        // Arrange
+        let commands = CommandChannel::new();
+        let requests = Channel::<CriticalSectionRawMutex, WebRtcSessionConfig, 1>::new();
+        let state = AtomicU8::new(0);
+        let rx = RxAudioChannel::new();
+        let tx = TxAudioChannel::new();
+        let (_engine, handle) = WebRtcMediaEngine::new(
+            &requests,
+            &state,
+            AccessControllerHandle::new(commands.sender()),
+            rx.receiver(),
+            tx.sender(),
+        );
+        let random = SecureRandomMock(Cell::new(0));
+        let facade = WebRtcSignalingFacade::new(handle, &random);
+        let mut answer = [0u8; 2048];
+
+        // Act
+        let result = facade.accept_offer("v=0\r\n", &mut answer);
+
+        // Assert
+        assert_eq!(result, Err(SignalingError::NotReady));
+        assert!(handle.is_idle());
+    }
+
+    #[test]
+    fn accepted_offer_queues_media_with_fresh_credentials_and_matching_sdp() {
+        // Arrange
+        let _guard = crate::dtls::DTLS_TEST_LOCK.lock().expect("DTLS lock");
+        let commands = CommandChannel::new();
+        let requests = Channel::<CriticalSectionRawMutex, WebRtcSessionConfig, 1>::new();
+        let state = AtomicU8::new(0);
+        let rx = RxAudioChannel::new();
+        let tx = TxAudioChannel::new();
+        let (_engine, handle) = WebRtcMediaEngine::new(
+            &requests,
+            &state,
+            AccessControllerHandle::new(commands.sender()),
+            rx.receiver(),
+            tx.sender(),
+        );
+        let random = SecureRandomMock(Cell::new(0));
+        let facade = WebRtcSignalingFacade::new(handle, &random);
+        facade.set_local_ipv4([192, 168, 1, 50]);
+        let mut answer = [0u8; 2048];
+
+        // Act
+        let len = facade
+            .accept_offer(CONTROLLER_OFFER, &mut answer)
+            .expect("answer");
+        let config = requests.receiver().try_receive().expect("media queued");
+        let answer = core::str::from_utf8(&answer[..len]).expect("UTF-8 SDP");
+
+        // Assert
+        assert!(answer.contains("c=IN IP4 192.168.1.50"));
+        assert!(answer.contains("a=ice-ufrag:"));
+        assert_eq!(config.remote_ufrag.as_str(), "ctrlUfrag");
+        assert_eq!(config.payload_type, 111);
+        assert!(!handle.is_idle());
+    }
+
+    #[test]
+    fn short_answer_buffer_rejects_offer_without_queuing_media() {
+        // Arrange
+        let _guard = crate::dtls::DTLS_TEST_LOCK.lock().expect("DTLS lock");
+        let commands = CommandChannel::new();
+        let requests = Channel::<CriticalSectionRawMutex, WebRtcSessionConfig, 1>::new();
+        let state = AtomicU8::new(0);
+        let rx = RxAudioChannel::new();
+        let tx = TxAudioChannel::new();
+        let (_engine, handle) = WebRtcMediaEngine::new(
+            &requests,
+            &state,
+            AccessControllerHandle::new(commands.sender()),
+            rx.receiver(),
+            tx.sender(),
+        );
+        let random = SecureRandomMock(Cell::new(0));
+        let facade = WebRtcSignalingFacade::new(handle, &random);
+        facade.set_local_ipv4([192, 168, 1, 50]);
+        let mut answer = [0u8; 4];
+
+        // Act
+        let result = facade.accept_offer(CONTROLLER_OFFER, &mut answer);
+
+        // Assert
+        assert_eq!(result, Err(SignalingError::BufferTooSmall));
+        assert!(handle.is_idle());
+        assert!(requests.receiver().try_receive().is_err());
+    }
+
+    #[test]
+    fn local_offer_starts_media_only_after_valid_remote_answer() {
+        // Arrange
+        let _guard = crate::dtls::DTLS_TEST_LOCK.lock().expect("DTLS lock");
+        let commands = CommandChannel::new();
+        let requests = Channel::<CriticalSectionRawMutex, WebRtcSessionConfig, 1>::new();
+        let state = AtomicU8::new(0);
+        let rx = RxAudioChannel::new();
+        let tx = TxAudioChannel::new();
+        let (_engine, handle) = WebRtcMediaEngine::new(
+            &requests,
+            &state,
+            AccessControllerHandle::new(commands.sender()),
+            rx.receiver(),
+            tx.sender(),
+        );
+        let random = SecureRandomMock(Cell::new(0));
+        let facade = WebRtcSignalingFacade::new(handle, &random);
+        facade.set_local_ipv4([192, 168, 1, 50]);
+        let mut offer = [0u8; 2048];
+
+        // Act
+        let len = facade.create_offer(&mut offer).expect("local offer");
+        let before_answer = requests.receiver().try_receive();
+        let answer = CONTROLLER_OFFER.replace("a=setup:actpass", "a=setup:active");
+        let accepted = facade.accept_answer(&answer);
+        let config = requests.receiver().try_receive().expect("media queued");
+
+        // Assert
+        assert!(
+            core::str::from_utf8(&offer[..len])
+                .unwrap()
+                .contains("a=setup:actpass")
+        );
+        assert!(before_answer.is_err());
+        assert_eq!(accepted, Ok(()));
+        assert_eq!(config.local_dtls_role, crate::dtls::DtlsRole::Server);
+    }
+
+    #[test]
+    fn candidate_validation_accepts_udp_host_and_rejects_malformed_candidates() {
+        // Arrange
+        let valid = "candidate:1 1 UDP 2130706431 192.168.1.50 50000 typ host";
+        let missing_port = "candidate:1 1 UDP 2130706431 192.168.1.50 typ host";
+
+        // Act
+        let accepted = validate_remote_candidate(valid);
+        let rejected = validate_remote_candidate(missing_port);
+
+        // Assert
+        assert_eq!(accepted, Ok(()));
+        assert_eq!(rejected, Err(SignalingError::InvalidCandidate));
+    }
+
+    struct AnswerRetryObservation {
+        rejected: Result<(), SignalingError>,
+        queued_after_rejection: bool,
+        retry: Result<(), SignalingError>,
+        queued_after_retry: bool,
+    }
+
+    fn try_invalid_answer_then_retry(invalid_answer: &str) -> AnswerRetryObservation {
+        let _guard = crate::dtls::DTLS_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let commands = CommandChannel::new();
+        let requests = Channel::<CriticalSectionRawMutex, WebRtcSessionConfig, 1>::new();
+        let state = AtomicU8::new(0);
+        let rx = RxAudioChannel::new();
+        let tx = TxAudioChannel::new();
+        let (_engine, handle) = WebRtcMediaEngine::new(
+            &requests,
+            &state,
+            AccessControllerHandle::new(commands.sender()),
+            rx.receiver(),
+            tx.sender(),
+        );
+        let random = SecureRandomMock(Cell::new(0));
+        let facade = WebRtcSignalingFacade::new(handle, &random);
+        facade.set_local_ipv4([192, 168, 1, 50]);
+        let mut offer = [0u8; 2048];
+        facade.create_offer(&mut offer).expect("local offer");
+
+        // Act
+        let rejected = facade.accept_answer(invalid_answer);
+        let queued_after_rejection = requests.receiver().try_receive().is_ok();
+        let valid_answer = CONTROLLER_OFFER.replace("a=setup:actpass", "a=setup:active");
+        let retry = facade.accept_answer(&valid_answer);
+        let queued_after_retry = requests.receiver().try_receive().is_ok();
+
+        AnswerRetryObservation {
+            rejected,
+            queued_after_rejection,
+            retry,
+            queued_after_retry,
+        }
+    }
+
+    #[test]
+    fn answer_with_wrong_mid_is_rejected_without_losing_pending_offer() {
+        // Arrange
+        let answer = CONTROLLER_OFFER
+            .replace("a=setup:actpass", "a=setup:active")
+            .replace("a=mid:0", "a=mid:1");
+
+        // Act
+        let observation = try_invalid_answer_then_retry(&answer);
+
+        // Assert
+        assert_eq!(observation.rejected, Err(SignalingError::InvalidSdp));
+        assert!(!observation.queued_after_rejection);
+        assert_eq!(observation.retry, Ok(()));
+        assert!(observation.queued_after_retry);
+    }
+
+    #[test]
+    fn answer_with_wrong_opus_payload_type_is_rejected_without_queuing_media() {
+        // Arrange
+        let answer = CONTROLLER_OFFER
+            .replace("a=setup:actpass", "a=setup:active")
+            .replace("SAVPF 111", "SAVPF 112")
+            .replace("rtpmap:111", "rtpmap:112");
+
+        // Act
+        let observation = try_invalid_answer_then_retry(&answer);
+
+        // Assert
+        assert_eq!(observation.rejected, Err(SignalingError::InvalidSdp));
+        assert!(!observation.queued_after_rejection);
+        assert_eq!(observation.retry, Ok(()));
+        assert!(observation.queued_after_retry);
+    }
+
+    #[test]
+    fn answer_with_actpass_role_is_rejected_and_can_be_retried() {
+        // Arrange
+        let answer = CONTROLLER_OFFER;
+
+        // Act
+        let observation = try_invalid_answer_then_retry(answer);
+
+        // Assert
+        assert_eq!(observation.rejected, Err(SignalingError::InvalidSdp));
+        assert!(!observation.queued_after_rejection);
+        assert_eq!(observation.retry, Ok(()));
+        assert!(observation.queued_after_retry);
+    }
+
+    #[test]
+    fn inactive_answer_is_rejected_for_two_way_audio() {
+        // Arrange
+        let answer =
+            CONTROLLER_OFFER.replace("a=setup:actpass", "a=setup:active") + "a=inactive\r\n";
+
+        // Act
+        let observation = try_invalid_answer_then_retry(&answer);
+
+        // Assert
+        assert_eq!(observation.rejected, Err(SignalingError::InvalidSdp));
+        assert!(!observation.queued_after_rejection);
+        assert_eq!(observation.retry, Ok(()));
+        assert!(observation.queued_after_retry);
+    }
+}

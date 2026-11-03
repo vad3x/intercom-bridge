@@ -119,7 +119,8 @@ export function App() {
             switch (endpoint.cluster) {
               case 'DoorLock':
                 return '🔒 ';
-              case 'OccupancySensing':
+              case 'Switch':
+              case 'AudioDoorbell':
                 return '🔔 ';
               default:
                 return '';

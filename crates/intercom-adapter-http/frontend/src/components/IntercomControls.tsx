@@ -266,7 +266,7 @@ export const IntercomControls: Component<IntercomControlsProps> = (props) => {
                 {props.isRinging ? 'Ringing!' : 'Idle'}
               </div>
               <div class="text-xs text-base-content/60 mt-1">
-                Optocoupler Input • Matter Occupancy Endpoint 2
+                Optocoupler Input • Matter Audio Doorbell Endpoint 1
               </div>
               <div class="w-full mt-5">
                 <button

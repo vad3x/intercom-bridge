@@ -23,7 +23,7 @@ const SESSION_STOP_ACTIVE: u8 = 4;
 
 pub const OPUS_DTX_MAX_BYTES: usize = 3;
 pub const OPUS_RTP_CLOCK_INCREMENT: u32 = 960;
-pub const MEDIA_UDP_PORT: u16 = 49_152;
+pub const MEDIA_UDP_PORT: u16 = 50_000;
 const UDP_RX_PACKET_BYTES: usize = 2_048;
 const UDP_TX_PACKET_BYTES: usize = 2_048;
 const UDP_METADATA_SLOTS: usize = 4;
@@ -153,7 +153,17 @@ impl WebRtcSessionHandle<'_> {
     /// Requests teardown and waits until the engine has dropped all session storage.
     pub async fn stop_and_wait(&self) {
         let _ = self.stop();
-        while self.state.load(portable_atomic::Ordering::Acquire) != SESSION_IDLE {
+        self.wait_idle().await;
+    }
+
+    /// True only after the engine has dropped all session-owned storage.
+    pub fn is_idle(&self) -> bool {
+        self.state.load(portable_atomic::Ordering::Acquire) == SESSION_IDLE
+    }
+
+    /// Waits until the engine has dropped all session-owned storage.
+    pub async fn wait_idle(&self) {
+        while !self.is_idle() {
             embassy_futures::yield_now().await;
         }
     }
@@ -837,6 +847,27 @@ mod tests {
     }
 
     #[test]
+    fn session_config_binds_matter_audio_to_udp_port_50000() {
+        // Arrange
+        let config = WebRtcSessionConfig::new(
+            "local1",
+            "remote1",
+            "0123456789012345678901",
+            [0x5a; 32],
+            DtlsRole::Server,
+            [0x42; 32],
+            111,
+        )
+        .expect("valid config");
+
+        // Act
+        let port = config.local_port;
+
+        // Assert
+        assert_eq!(port, 50_000);
+    }
+
+    #[test]
     fn media_demux_ignores_rtcp_payload_types_for_opus() {
         // Arrange
         let mut rtp = [0u8; 12];
@@ -922,6 +953,27 @@ mod tests {
             state.load(portable_atomic::Ordering::Acquire),
             SESSION_STOP_ACTIVE
         );
+    }
+
+    #[test]
+    fn session_handle_reports_idle_only_after_engine_releases_storage() {
+        // Arrange
+        let requests = Channel::<CriticalSectionRawMutex, WebRtcSessionConfig, 1>::new();
+        let state = portable_atomic::AtomicU8::new(SESSION_STOP_ACTIVE);
+        let handle = WebRtcSessionHandle {
+            sender: requests.sender(),
+            state: &state,
+        };
+
+        // Act
+        let while_stopping = handle.is_idle();
+        state.store(SESSION_IDLE, portable_atomic::Ordering::Release);
+        let after_cleanup = handle.is_idle();
+        embassy_futures::block_on(handle.wait_idle());
+
+        // Assert
+        assert!(!while_stopping);
+        assert!(after_cleanup);
     }
 
     #[test]

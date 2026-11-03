@@ -2,6 +2,9 @@
 
 use core::fmt::Write;
 
+pub const LOCAL_OFFER_MID: &str = "0";
+pub const LOCAL_OFFER_OPUS_PAYLOAD_TYPE: u8 = 111;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SdpError {
     MissingAudioSection,
@@ -226,7 +229,14 @@ pub fn write_sdp_answer(
 }
 
 pub fn write_sdp_offer(local: &LocalSdpParams<'_>, out: &mut [u8]) -> Result<usize, SdpError> {
-    write_sdp_document("0", 111, "actpass", "sendrecv", local, out)
+    write_sdp_document(
+        LOCAL_OFFER_MID,
+        LOCAL_OFFER_OPUS_PAYLOAD_TYPE,
+        "actpass",
+        "sendrecv",
+        local,
+        out,
+    )
 }
 
 fn write_sdp_document(
@@ -403,8 +413,8 @@ mod tests {
     extern crate std;
 
     use super::{
-        parse_sdp_offer, write_sdp_answer, write_sdp_offer, DtlsSetupRole, LocalSdpParams,
-        SdpError, SdpMediaDirection,
+        DtlsSetupRole, LocalSdpParams, SdpError, SdpMediaDirection, parse_sdp_offer,
+        write_sdp_answer, write_sdp_offer,
     };
 
     const CONTROLLER_OFFER: &str = "v=0\r\n\
@@ -610,8 +620,11 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n",
 
         // Assert
         assert!(offer.contains("a=candidate:1 1 UDP 2130706431 192.168.1.142 50000 typ host\r\n"));
-        assert!(offer
-            .contains("a=candidate:2 1 UDP 2130706430 2001:db8:1:2:0:0:0:142 50000 typ host\r\n"));
+        assert!(
+            offer.contains(
+                "a=candidate:2 1 UDP 2130706430 2001:db8:1:2:0:0:0:142 50000 typ host\r\n"
+            )
+        );
     }
 
     #[test]

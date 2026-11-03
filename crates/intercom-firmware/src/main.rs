@@ -73,6 +73,8 @@ use intercom_adapter_http::{HttpAudioMedia, HttpServer, HttpServerConfig};
 use intercom_adapter_webrtc::session::{
     WebRtcMediaEngine, WebRtcSessionConfig, WebRtcSessionHandle,
 };
+#[cfg(target_arch = "riscv32")]
+use intercom_adapter_webrtc::signaling::{SecureRandom, SignalingError, WebRtcSignalingFacade};
 
 #[cfg(target_arch = "riscv32")]
 use intercom_adapter_gpio::boot_button::{GpioBootButtonConfig, GpioBootButtonDriver};
@@ -85,9 +87,9 @@ use intercom_adapter_gpio::ring::{GpioRingConfig, GpioRingDriver};
 
 #[cfg(target_arch = "riscv32")]
 use intercom_adapter_matter::{
-    ClusterReadinessBarrier, DeviceInfo, IntercomDoorLock, IntercomDoorLockConfig,
-    IntercomOccupancy, IntercomOccupancyConfig, MatterAccessControlDriver, MatterController,
-    MatterControllerConfig, MatterPeripherals,
+    ClusterReadinessBarrier, DeviceInfo, IntercomAudioAvCluster, IntercomChime, IntercomDoorLock,
+    IntercomDoorLockConfig, IntercomDoorbellSwitch, IntercomWebRtcHooks, IntercomWebRtcProvCluster,
+    MatterAccessControlDriver, MatterController, MatterControllerConfig, MatterPeripherals,
 };
 
 #[cfg(target_arch = "riscv32")]
@@ -102,6 +104,18 @@ const RECLAIMED_RAM: usize =
 #[cfg(target_arch = "riscv32")]
 fn media_free_heap_bytes() -> u32 {
     esp_alloc::HEAP.free().min(u32::MAX as usize) as u32
+}
+
+#[cfg(target_arch = "riscv32")]
+struct HardwareSecureRandom;
+
+#[cfg(target_arch = "riscv32")]
+impl SecureRandom for HardwareSecureRandom {
+    fn fill(&self, out: &mut [u8]) -> Result<(), SignalingError> {
+        let trng = esp_hal::rng::Trng::try_new().map_err(|_| SignalingError::NotReady)?;
+        trng.read(out);
+        Ok(())
+    }
 }
 
 #[cfg(target_arch = "riscv32")]
@@ -188,6 +202,17 @@ async fn main(_spawner: Spawner) {
     static READINESS: StaticCell<ClusterReadinessBarrier> = StaticCell::new();
     let readiness = READINESS.init(ClusterReadinessBarrier::new(state_sender));
 
+    let (mut webrtc_engine, webrtc_session_handle) = WebRtcMediaEngine::new(
+        &WEBRTC_REQUESTS,
+        &WEBRTC_STATE,
+        access_handle,
+        RX_AUDIO_CHANNEL.receiver(),
+        TX_AUDIO_CHANNEL.sender(),
+    );
+    let webrtc_session_handle = WEBRTC_HANDLE.init(webrtc_session_handle);
+    static SECURE_RANDOM: HardwareSecureRandom = HardwareSecureRandom;
+    let webrtc_signaling = WebRtcSignalingFacade::new(*webrtc_session_handle, &SECURE_RANDOM);
+
     // ========================================================================
     // Persistence & initial configuration
     // ========================================================================
@@ -217,13 +242,19 @@ async fn main(_spawner: Spawner) {
     // Matter drivers — own their state internally
     // ========================================================================
 
+    let doorbell_switch = IntercomDoorbellSwitch::new(readiness);
+    let audio_av_cluster = IntercomAudioAvCluster::new(access_handle);
+    let webrtc_prov_cluster = IntercomWebRtcProvCluster::new(IntercomWebRtcHooks::new(
+        access_handle,
+        &audio_av_cluster,
+        &webrtc_signaling,
+    ));
+    let chime_cluster = IntercomChime::new();
     let door_lock = IntercomDoorLock::new(IntercomDoorLockConfig {
         access: access_handle,
         readiness,
     });
     door_lock.set_unlock_duration(initial_duration_sec);
-
-    let occupancy = IntercomOccupancy::new(IntercomOccupancyConfig { readiness });
 
     // ========================================================================
     // Matter controller — register cluster handlers via builder
@@ -255,8 +286,11 @@ async fn main(_spawner: Spawner) {
         readiness,
         FirmwareResetDriver,
     )
-    .register(&door_lock)
-    .register(&occupancy);
+    .register(&doorbell_switch)
+    .register(&audio_av_cluster)
+    .register(&webrtc_prov_cluster)
+    .register(&chime_cluster)
+    .register(&door_lock);
 
     // ========================================================================
     // Create GPIO + access control drivers → wire into App
@@ -300,7 +334,7 @@ async fn main(_spawner: Spawner) {
     let indicator: &'static GpioLedDriver =
         &*INDICATOR.init(GpioLedDriver::new(peripherals.GPIO19));
 
-    let access_driver = MatterAccessControlDriver::new(&door_lock, &occupancy);
+    let access_driver = MatterAccessControlDriver::new(&door_lock, &doorbell_switch);
     let call_broadcaster =
         intercom_core::events::CallStateBroadcastReporter::new(&CALL_STATE_WATCH);
     let reporter = (
@@ -332,15 +366,6 @@ async fn main(_spawner: Spawner) {
         &STATE_WATCH,
     );
     let mut ota_driver = FlashOtaDriver::new(config::OTA_PUBLIC_KEY);
-    let (mut webrtc_engine, webrtc_session_handle) = WebRtcMediaEngine::new(
-        &WEBRTC_REQUESTS,
-        &WEBRTC_STATE,
-        access_handle,
-        RX_AUDIO_CHANNEL.receiver(),
-        TX_AUDIO_CHANNEL.sender(),
-    );
-    let webrtc_session_handle = WEBRTC_HANDLE.init(webrtc_session_handle);
-
     // ========================================================================
     // Run App, Matter, LED, HTTP, and I2S services concurrently
     // ========================================================================
@@ -408,7 +433,26 @@ async fn main(_spawner: Spawner) {
 
     let webrtc_future = async {
         let stack = rs_matter_embassy::enet::wait_global_stack().await;
-        webrtc_engine.run(stack, media_free_heap_bytes).await;
+        stack.wait_config_up().await;
+        loop {
+            if let Some(config) = stack.config_v4() {
+                webrtc_signaling.set_local_ipv4(config.address.address().octets());
+                break;
+            }
+            embassy_time::Timer::after_millis(100).await;
+        }
+        let refresh_ip = async {
+            loop {
+                let address = stack
+                    .config_v4()
+                    .map(|config| config.address.address().octets())
+                    .unwrap_or([0; 4]);
+                webrtc_signaling.set_local_ipv4(address);
+                embassy_time::Timer::after_secs(2).await;
+            }
+        };
+        embassy_futures::join::join(webrtc_engine.run(stack, media_free_heap_bytes), refresh_ip)
+            .await;
     };
 
     embassy_futures::join::join5(

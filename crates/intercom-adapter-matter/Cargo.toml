@@ -7,6 +7,7 @@ description = "Smart Home Matter protocol adapter for Intercom Bridge"
 
 [dependencies]
 intercom-core = { path = "../intercom-core" }
+heapless = { workspace = true }
 edf-matter = { workspace = true }
 log = { workspace = true }
 portable-atomic = { workspace = true }
