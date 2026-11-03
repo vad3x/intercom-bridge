@@ -5,9 +5,10 @@
 //! domain actions, and firmware OTA flashing.
 
 use edf_core::ports::ota::{OtaFlashDriver, OtaStream};
-use embassy_net::tcp::TcpSocket;
 use embassy_net::Stack;
+use embassy_net::tcp::TcpSocket;
 use embassy_time::{Duration, Timer};
+use intercom_adapter_webrtc::session::WebRtcSessionHandle;
 use intercom_core::domain::ecosystem::{EcosystemId, EcosystemType};
 use intercom_core::domain::intercom::SessionOwner;
 use intercom_core::events::SystemStateSender;
@@ -19,11 +20,11 @@ use intercom_core::service::DiagnosticsService;
 use log::{info, warn};
 use picoserve::response::IntoResponse;
 
+use crate::DASHBOARD_HTML_GZ;
 use crate::config::{
-    HttpServerConfig, HTTP_BUFFER_SIZE, JSON_BUFFER_SIZE, LOG_BUFFER_SIZE,
+    HTTP_BUFFER_SIZE, HttpServerConfig, JSON_BUFFER_SIZE, LOG_BUFFER_SIZE,
     STREAM_WRITE_BUFFER_SIZE, TCP_RX_BUFFER_SIZE, TCP_TX_BUFFER_SIZE,
 };
-use crate::DASHBOARD_HTML_GZ;
 
 // ============================================================================
 // Internal State Types
@@ -49,6 +50,7 @@ pub(crate) struct AppState<
     pub(crate) reboot_requested: &'a core::cell::Cell<bool>,
     pub(crate) reset_requested: &'a core::cell::Cell<Option<ResetScope>>,
     pub(crate) audio_media: Option<crate::HttpAudioMedia<'a>>,
+    pub(crate) webrtc_session: Option<&'a WebRtcSessionHandle<'a>>,
     pub(crate) log_provider: fn(&mut [u8]) -> usize,
 }
 
@@ -93,6 +95,7 @@ pub struct HttpServer<
     log_provider: fn(&mut [u8]) -> usize,
     config: HttpServerConfig,
     audio_media: Option<crate::HttpAudioMedia<'a>>,
+    webrtc_session: Option<&'a WebRtcSessionHandle<'a>>,
 }
 
 impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, T: EcosystemType>
@@ -117,6 +120,7 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, T: Ec
             reset_driver: None,
             state_sender: None,
             audio_media: None,
+            webrtc_session: None,
             log_provider,
             config,
         }
@@ -124,13 +128,13 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, T: Ec
 }
 
 impl<
-        'a,
-        H: HardwareInfoDriver,
-        E: EcosystemInfoDriver,
-        O: OtaFlashDriver,
-        R: SystemResetDriver,
-        T: EcosystemType,
-    > HttpServer<'a, H, E, O, R, T>
+    'a,
+    H: HardwareInfoDriver,
+    E: EcosystemInfoDriver,
+    O: OtaFlashDriver,
+    R: SystemResetDriver,
+    T: EcosystemType,
+> HttpServer<'a, H, E, O, R, T>
 {
     /// Create a new `HttpServer` bound to an `embassy_net::Stack`.
     pub fn new(
@@ -153,6 +157,7 @@ impl<
             reset_driver: Some(reset_driver),
             state_sender,
             audio_media: None,
+            webrtc_session: None,
             log_provider,
             config,
         }
@@ -161,6 +166,12 @@ impl<
     /// Attach the static audio channels and lifecycle watches.
     pub fn with_audio_media(mut self, media: crate::HttpAudioMedia<'a>) -> Self {
         self.audio_media = Some(media);
+        self
+    }
+
+    /// Attach the WebRTC session so OTA can wait for active media buffers to be released.
+    pub fn with_webrtc_session(mut self, session: &'a WebRtcSessionHandle<'a>) -> Self {
+        self.webrtc_session = Some(session);
         self
     }
 
@@ -178,6 +189,7 @@ impl<
             reset_driver: Some(reset_driver),
             state_sender: self.state_sender,
             audio_media: self.audio_media,
+            webrtc_session: self.webrtc_session,
             log_provider: self.log_provider,
             config: self.config,
         }
@@ -212,6 +224,7 @@ impl<
             ota_busy: None,
             state_sender: self.state_sender,
             audio_media: self.audio_media,
+            webrtc_session: self.webrtc_session,
             tarpit_delay: self.config.tarpit_delay,
             read_request_timeout: self.config.read_request_timeout,
             had_error: &had_error,
@@ -258,6 +271,7 @@ impl<
         let diagnostics = self.diagnostics;
         let state_sender = self.state_sender;
         let audio_media = self.audio_media;
+        let webrtc_session = self.webrtc_session;
         let log_provider = self.log_provider;
         let proxy = crate::ota_proxy::OtaProxy::new();
         let picoserve_config = picoserve::Config::new(picoserve::Timeouts {
@@ -287,6 +301,7 @@ impl<
                     ota_busy: Some(proxy.busy()),
                     state_sender,
                     audio_media,
+                    webrtc_session,
                     tarpit_delay: config.tarpit_delay,
                     read_request_timeout: config.read_request_timeout,
                     had_error: &had_error,
@@ -641,7 +656,7 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, T: Ec
             Err(rejection) => {
                 return rejection
                     .write_to(request.body_connection.finalize().await?, response_writer)
-                    .await
+                    .await;
             }
         };
         match state.audio_media {
@@ -684,6 +699,9 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, T: Ec
         // Force the physical outputs LOW before any upload validation or flash work.
         // The interlock remains inhibited until reboot even if this update fails or is cancelled.
         state.bus_safety.inhibit();
+        if let Some(session) = state.webrtc_session {
+            session.stop_and_wait().await;
+        }
         state.access_handle.emergency_stop();
         let content_len = match request
             .parts

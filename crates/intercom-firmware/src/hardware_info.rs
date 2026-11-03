@@ -37,8 +37,8 @@ impl HardwareInfoDriver for FirmwareHardwareInfo {
         #[cfg(target_arch = "riscv32")]
         {
             use esp_wifi_sys_esp32c6::include::{
-                esp_wifi_get_config, esp_wifi_sta_get_ap_info, wifi_ap_record_t, wifi_config_t,
-                wifi_interface_t_WIFI_IF_STA, ESP_OK,
+                ESP_OK, esp_wifi_get_config, esp_wifi_sta_get_ap_info, wifi_ap_record_t,
+                wifi_config_t, wifi_interface_t_WIFI_IF_STA,
             };
 
             // Query active AP record first

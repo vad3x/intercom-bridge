@@ -9,12 +9,15 @@ use sha1::Sha1;
 const RTP_FIXED_HEADER_BYTES: usize = 12;
 const AUTH_TAG_BYTES: usize = 10;
 const AUTH_KEY_BYTES: usize = 20;
+const SRTCP_INDEX_BYTES: usize = 4;
+const SRTCP_FIXED_RR_BYTES: usize = 8;
 type HmacSha1 = Hmac<Sha1>;
 type Aes128Ctr = ctr::Ctr128BE<Aes128>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SrtpError {
     InvalidRtpPacket,
+    InvalidRtcpPacket,
     BufferTooSmall,
     AuthenticationFailed,
     Replay,
@@ -28,6 +31,9 @@ pub struct SrtpSession {
     last_sent_sequence: Option<u16>,
     highest_received_index: Option<u64>,
     replay_window: u64,
+    send_rtcp_index: u32,
+    highest_received_rtcp_index: Option<u32>,
+    rtcp_replay_window: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -35,6 +41,9 @@ struct SrtpDirection {
     encryption_key: [u8; 16],
     authentication_key: [u8; AUTH_KEY_BYTES],
     session_salt: [u8; 14],
+    rtcp_encryption_key: [u8; 16],
+    rtcp_authentication_key: [u8; AUTH_KEY_BYTES],
+    rtcp_session_salt: [u8; 14],
 }
 
 impl SrtpSession {
@@ -47,6 +56,9 @@ impl SrtpSession {
             last_sent_sequence: None,
             highest_received_index: None,
             replay_window: 0,
+            send_rtcp_index: 0,
+            highest_received_rtcp_index: None,
+            rtcp_replay_window: 0,
         }
     }
 
@@ -72,6 +84,9 @@ impl SrtpSession {
             last_sent_sequence: None,
             highest_received_index: None,
             replay_window: 0,
+            send_rtcp_index: 0,
+            highest_received_rtcp_index: None,
+            rtcp_replay_window: 0,
         }
     }
 
@@ -174,6 +189,96 @@ impl SrtpSession {
         Ok(payload_end)
     }
 
+    pub fn protect_rtcp(
+        &mut self,
+        packet: &mut [u8],
+        packet_length: usize,
+    ) -> Result<usize, SrtpError> {
+        validate_receiver_report(packet, packet_length)?;
+        let rtcp_end = packet_length;
+        let index_offset = rtcp_end;
+        let tag_offset = index_offset + SRTCP_INDEX_BYTES;
+        let protected_length = tag_offset
+            .checked_add(AUTH_TAG_BYTES)
+            .filter(|length| *length <= packet.len())
+            .ok_or(SrtpError::BufferTooSmall)?;
+        if self.send_rtcp_index > 0x7fff_ffff {
+            return Err(SrtpError::OutOfOrder);
+        }
+
+        let index = self.send_rtcp_index | 0x8000_0000;
+        let ssrc = u32::from_be_bytes(packet[4..8].try_into().expect("RTCP SSRC"));
+        self.crypt_rtcp_payload(
+            &self.send,
+            packet,
+            SRTCP_FIXED_RR_BYTES,
+            rtcp_end,
+            ssrc,
+            self.send_rtcp_index,
+        );
+        packet[index_offset..tag_offset].copy_from_slice(&index.to_be_bytes());
+        let mut mac = HmacSha1::new_from_slice(&self.send.rtcp_authentication_key)
+            .expect("fixed SRTCP authentication key length");
+        mac.update(&packet[..tag_offset]);
+        packet[tag_offset..protected_length]
+            .copy_from_slice(&mac.finalize().into_bytes()[..AUTH_TAG_BYTES]);
+        self.send_rtcp_index += 1;
+        Ok(protected_length)
+    }
+
+    pub fn unprotect_rtcp(
+        &mut self,
+        packet: &mut [u8],
+        packet_length: usize,
+    ) -> Result<usize, SrtpError> {
+        if packet_length < SRTCP_FIXED_RR_BYTES + SRTCP_INDEX_BYTES + AUTH_TAG_BYTES
+            || packet_length > packet.len()
+        {
+            return Err(SrtpError::InvalidRtcpPacket);
+        }
+        let rtcp_end = packet_length - SRTCP_INDEX_BYTES - AUTH_TAG_BYTES;
+        validate_receiver_report(packet, rtcp_end)?;
+        let index_offset = rtcp_end;
+        let index = u32::from_be_bytes(
+            packet[index_offset..index_offset + SRTCP_INDEX_BYTES]
+                .try_into()
+                .expect("SRTCP index"),
+        );
+        let packet_index = index & 0x7fff_ffff;
+        if !self.accept_rtcp_index(packet_index) {
+            return Err(SrtpError::Replay);
+        }
+        let tag_offset = index_offset + SRTCP_INDEX_BYTES;
+        let mut mac = HmacSha1::new_from_slice(&self.receive.rtcp_authentication_key)
+            .expect("fixed SRTCP authentication key length");
+        mac.update(&packet[..tag_offset]);
+        let expected_tag = mac.finalize().into_bytes();
+        let mut tag_difference = 0u8;
+        for (expected, actual) in expected_tag[..AUTH_TAG_BYTES]
+            .iter()
+            .zip(&packet[tag_offset..packet_length])
+        {
+            tag_difference |= *expected ^ *actual;
+        }
+        if tag_difference != 0 {
+            return Err(SrtpError::AuthenticationFailed);
+        }
+
+        if index & 0x8000_0000 != 0 {
+            let ssrc = u32::from_be_bytes(packet[4..8].try_into().expect("RTCP SSRC"));
+            self.crypt_rtcp_payload(
+                &self.receive,
+                packet,
+                SRTCP_FIXED_RR_BYTES,
+                rtcp_end,
+                ssrc,
+                packet_index,
+            );
+        }
+        self.update_rtcp_replay_window(packet_index);
+        Ok(rtcp_end)
+    }
+
     pub const fn send_rollover_counter(&self) -> u32 {
         self.send_rollover_counter
     }
@@ -249,6 +354,38 @@ impl SrtpSession {
         }
     }
 
+    fn accept_rtcp_index(&self, packet_index: u32) -> bool {
+        match self.highest_received_rtcp_index {
+            None => true,
+            Some(highest) if packet_index > highest => true,
+            Some(highest) => {
+                let distance = highest - packet_index;
+                distance < 64 && self.rtcp_replay_window & (1u64 << distance) == 0
+            }
+        }
+    }
+
+    fn update_rtcp_replay_window(&mut self, packet_index: u32) {
+        match self.highest_received_rtcp_index {
+            None => {
+                self.rtcp_replay_window = 1;
+                self.highest_received_rtcp_index = Some(packet_index);
+            }
+            Some(highest) if packet_index > highest => {
+                let distance = packet_index - highest;
+                self.rtcp_replay_window = if distance >= 64 {
+                    1
+                } else {
+                    (self.rtcp_replay_window << distance) | 1
+                };
+                self.highest_received_rtcp_index = Some(packet_index);
+            }
+            Some(highest) => {
+                self.rtcp_replay_window |= 1u64 << (highest - packet_index);
+            }
+        }
+    }
+
     fn crypt_payload(
         &self,
         direction: &SrtpDirection,
@@ -270,18 +407,71 @@ impl SrtpSession {
         let mut cipher = Aes128Ctr::new((&direction.encryption_key).into(), (&iv).into());
         cipher.apply_keystream(&mut packet[payload_start..payload_end]);
     }
+
+    fn crypt_rtcp_payload(
+        &self,
+        direction: &SrtpDirection,
+        packet: &mut [u8],
+        payload_start: usize,
+        payload_end: usize,
+        ssrc: u32,
+        index: u32,
+    ) {
+        let mut iv = [0u8; 16];
+        iv[..14].copy_from_slice(&direction.rtcp_session_salt);
+        for (slot, byte) in iv[4..8].iter_mut().zip(ssrc.to_be_bytes()) {
+            *slot ^= byte;
+        }
+        for (slot, byte) in iv[8..12].iter_mut().zip(index.to_be_bytes()) {
+            *slot ^= byte;
+        }
+        let mut cipher = Aes128Ctr::new((&direction.rtcp_encryption_key).into(), (&iv).into());
+        cipher.apply_keystream(&mut packet[payload_start..payload_end]);
+    }
 }
 
 impl SrtpDirection {
     fn from_master(master_key: &[u8; 16], master_salt: &[u8; 14]) -> Self {
         let (encryption_key, authentication_key, session_salt) =
             SrtpSession::derive_session_keys(master_key, master_salt);
+        let rtcp_encryption_key = derive_key::<16>(master_key, master_salt, 0x03);
+        let rtcp_authentication_key = derive_key::<AUTH_KEY_BYTES>(master_key, master_salt, 0x04);
+        let rtcp_session_salt = derive_key::<14>(master_key, master_salt, 0x05);
         Self {
             encryption_key,
             authentication_key,
             session_salt,
+            rtcp_encryption_key,
+            rtcp_authentication_key,
+            rtcp_session_salt,
         }
     }
+}
+
+fn validate_receiver_report(packet: &[u8], packet_length: usize) -> Result<(), SrtpError> {
+    if packet_length < SRTCP_FIXED_RR_BYTES
+        || packet_length > packet.len()
+        || packet[0] >> 6 != 2
+        || packet[1] != 201
+    {
+        return Err(SrtpError::InvalidRtcpPacket);
+    }
+    let first_packet_length = (usize::from(u16::from_be_bytes([packet[2], packet[3]]))
+        .saturating_add(1))
+    .checked_mul(4)
+    .ok_or(SrtpError::InvalidRtcpPacket)?;
+    let report_count = usize::from(packet[0] & 0x1f);
+    let minimum_report_length = SRTCP_FIXED_RR_BYTES
+        .checked_add(
+            report_count
+                .checked_mul(24)
+                .ok_or(SrtpError::InvalidRtcpPacket)?,
+        )
+        .ok_or(SrtpError::InvalidRtcpPacket)?;
+    if first_packet_length > packet_length || minimum_report_length > first_packet_length {
+        return Err(SrtpError::InvalidRtcpPacket);
+    }
+    Ok(())
 }
 
 fn rtp_payload_offset(packet: &[u8], packet_length: usize) -> Option<usize> {
@@ -366,7 +556,9 @@ mod tests {
         );
         assert_eq!(
             keys.2,
-            [0x30, 0xCB, 0xBC, 0x08, 0x86, 0x3D, 0x8C, 0x85, 0xD4, 0x9D, 0xB3, 0x4A, 0x9A, 0xE1]
+            [
+                0x30, 0xCB, 0xBC, 0x08, 0x86, 0x3D, 0x8C, 0x85, 0xD4, 0x9D, 0xB3, 0x4A, 0x9A, 0xE1
+            ]
         );
     }
 
@@ -391,6 +583,25 @@ mod tests {
         // Assert
         assert_eq!(plain_len, packet_len);
         assert_eq!(&packet[12..plain_len], b"pcm-opus");
+    }
+
+    #[test]
+    fn protects_and_unprotects_srtcp_receiver_report() {
+        // Arrange
+        let mut sender = SrtpSession::new([0x11; 16], [0x22; 14]);
+        let mut receiver = SrtpSession::new([0x11; 16], [0x22; 14]);
+        let mut packet = [0; 64];
+        packet[..8].copy_from_slice(&[0x80, 201, 0, 1, 0x01, 0x02, 0x03, 0x04]);
+
+        // Act
+        let protected_length = sender.protect_rtcp(&mut packet, 8).expect("protect");
+        let plain_length = receiver
+            .unprotect_rtcp(&mut packet, protected_length)
+            .expect("unprotect");
+
+        // Assert
+        assert_eq!(plain_length, 8);
+        assert_eq!(&packet[..8], &[0x80, 201, 0, 1, 0x01, 0x02, 0x03, 0x04]);
     }
 
     #[test]

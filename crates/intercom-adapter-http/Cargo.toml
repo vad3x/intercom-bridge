@@ -12,6 +12,8 @@ embassy-futures = { workspace = true }
 embassy-net = { workspace = true, features = ["tcp", "proto-ipv4", "medium-ethernet"] }
 embassy-time = { workspace = true }
 intercom-media = { workspace = true }
+intercom-adapter-webrtc = { path = "../intercom-adapter-webrtc" }
+portable-atomic = { workspace = true }
 intercom-core = { path = "../intercom-core" }
 log = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

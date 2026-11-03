@@ -13,6 +13,8 @@ const HEAP_INITIALIZING: u8 = 1;
 const HEAP_READY: u8 = 2;
 static HEAP_STATE: AtomicU8 = AtomicU8::new(0);
 static ACTIVE_ENGINES: AtomicUsize = AtomicUsize::new(0);
+#[cfg(test)]
+pub(crate) static DTLS_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DtlsRole {
@@ -289,14 +291,11 @@ unsafe extern "C" {
 mod tests {
     use super::{DtlsRole, DtlsSrtpEngine};
     use core::sync::atomic::Ordering;
-    use std::sync::Mutex;
-
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn dtls_1_2_client_and_server_complete_handshake_and_export_matching_srtp_keys() {
         // Arrange
-        let _guard = TEST_LOCK
+        let _guard = super::DTLS_TEST_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut server = DtlsSrtpEngine::new(DtlsRole::Server, [0x42; 32]).expect("server init");
@@ -363,7 +362,7 @@ mod tests {
     #[test]
     fn allocator_arena_is_released_and_can_be_reinitialized() {
         // Arrange
-        let _guard = TEST_LOCK
+        let _guard = super::DTLS_TEST_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let (heap_ptr, _) = super::heap_buffer();

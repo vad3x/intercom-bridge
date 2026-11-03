@@ -7,7 +7,7 @@
 use edf_core::ports::ota::{OtaDriverError, OtaFlashDriver, OtaStream};
 use flate2::read::GzDecoder;
 use futures::executor::block_on;
-use intercom_adapter_http::{HttpServer, HttpServerConfig, DASHBOARD_HTML_GZ};
+use intercom_adapter_http::{DASHBOARD_HTML_GZ, HttpServer, HttpServerConfig};
 use intercom_core::events::{SystemState, SystemStateWatch};
 use intercom_core::ports::diagnostics::HardwareInfoDriver;
 use intercom_core::ports::inbound::{AccessCommand, AccessControllerHandle, CommandChannel};
@@ -1046,6 +1046,96 @@ fn ota_inhibits_relays_before_flash_with_empty_or_saturated_command_queue() {
     }
 }
 
+struct SessionObservingOtaDriver<'a> {
+    session_state: &'a portable_atomic::AtomicU8,
+    entered: bool,
+}
+
+impl OtaFlashDriver for SessionObservingOtaDriver<'_> {
+    async fn handle_flash_stream<S: OtaStream>(
+        &mut self,
+        stream: &mut S,
+        content_length: usize,
+    ) -> Result<(), OtaDriverError> {
+        assert_eq!(
+            self.session_state.load(portable_atomic::Ordering::Acquire),
+            0,
+            "OTA flash must wait until WebRTC frees session storage"
+        );
+        self.entered = true;
+        let mut data = [0u8; 4];
+        assert_eq!(stream.read(&mut data).await.unwrap(), content_length);
+        Ok(())
+    }
+}
+
+#[test]
+fn ota_waits_for_webrtc_session_storage_to_be_released_before_flashing() {
+    // Arrange
+    use intercom_adapter_webrtc::dtls::DtlsRole;
+    use intercom_adapter_webrtc::session::{WebRtcMediaEngine, WebRtcSessionConfig};
+    let commands = CommandChannel::new();
+    let access_handle = AccessControllerHandle::new(commands.sender());
+    let requests = embassy_sync::channel::Channel::new();
+    let session_state = portable_atomic::AtomicU8::new(0);
+    let rx_audio = intercom_media::RxAudioChannel::new();
+    let tx_audio = intercom_media::TxAudioChannel::new();
+    let (_engine, session) = WebRtcMediaEngine::new(
+        &requests,
+        &session_state,
+        access_handle,
+        rx_audio.receiver(),
+        tx_audio.sender(),
+    );
+    let session_config = WebRtcSessionConfig::new(
+        "local1",
+        "remote1",
+        "0123456789012345678901",
+        [0x5a; 32],
+        DtlsRole::Server,
+        [0x42; 32],
+        111,
+    )
+    .unwrap();
+    session.start(session_config).unwrap();
+
+    let hardware = MockHardwareInfo;
+    let watch = SystemStateWatch::new();
+    let diagnostics = DiagnosticsService::new(&hardware, &watch);
+    let mut ota = SessionObservingOtaDriver {
+        session_state: &session_state,
+        entered: false,
+    };
+    let mut server = HttpServer::new_unbound(
+        access_handle,
+        &BusSafetyDriverMock,
+        &diagnostics,
+        &mut ota,
+        test_log_provider,
+        HttpServerConfig::default(),
+    )
+    .with_webrtc_session(&session);
+    let mut stream =
+        MockStream::new(b"POST /api/v1/ota/flash HTTP/1.1\r\nContent-Length: 4\r\n\r\nDATA");
+
+    // Act
+    let (result, ()) = block_on(embassy_futures::join::join(
+        server.handle_request(&mut stream),
+        async {
+            while !session.is_stopping() {
+                embassy_futures::yield_now().await;
+            }
+            session_state.store(0, portable_atomic::Ordering::Release);
+        },
+    ));
+
+    // Assert
+    assert!(result.is_ok());
+    assert!(ota.entered);
+    assert_eq!(session_state.load(portable_atomic::Ordering::Acquire), 0);
+    assert_eq!(commands.try_receive(), Ok(AccessCommand::EmergencyStop));
+}
+
 #[test]
 fn reset_and_reboot_inhibit_relays_before_queueing_emergency_stop() {
     use intercom_core::domain::intercom::BusLineState;
@@ -1394,9 +1484,11 @@ fn bench_tone_route_dispatches_bench_owner_and_rejects_invalid_query() {
         // Assert
         assert!(result.is_ok());
         let code = if expected.is_some() { "200" } else { "400" };
-        assert!(stream
-            .written_str()
-            .starts_with(&format!("HTTP/1.1 {code} ")));
+        assert!(
+            stream
+                .written_str()
+                .starts_with(&format!("HTTP/1.1 {code} "))
+        );
         assert_eq!(channel.try_receive().ok(), expected);
         assert!(channel.try_receive().is_err());
     }

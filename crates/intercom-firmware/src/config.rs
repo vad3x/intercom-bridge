@@ -85,8 +85,8 @@ pub const DEFAULT_DOOR_DURATION_SEC: u32 = intercom_core::config::DEFAULT_DOOR_U
 // Memory & Logging Configuration
 // ============================================================================
 
-/// Total heap size allocated to the esp-alloc runtime (210 KiB).
-pub const HEAP_SIZE: usize = 210 * 1024;
+/// Total heap size allocated to the esp-alloc runtime (184 KiB), reserving at least 42 KiB main stack.
+pub const HEAP_SIZE: usize = 184 * 1024;
 
 /// Diagnostic log history (2 KiB), leaving room for two HTTP sockets and audio.
 pub const LOG_BUFFER_CAPACITY: usize = 2048;

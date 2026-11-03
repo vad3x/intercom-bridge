@@ -33,6 +33,11 @@ use core::pin::pin;
 #[cfg(target_arch = "riscv32")]
 use embassy_executor::Spawner;
 #[cfg(target_arch = "riscv32")]
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+#[cfg(target_arch = "riscv32")]
+use embassy_sync::channel::Channel;
+#[cfg(target_arch = "riscv32")]
+#[cfg(target_arch = "riscv32")]
 use esp_alloc::heap_allocator;
 #[cfg(target_arch = "riscv32")]
 use esp_backtrace as _;
@@ -64,6 +69,10 @@ use intercom_core::service::DiagnosticsService;
 use edf_ota::driver::FlashOtaDriver;
 #[cfg(target_arch = "riscv32")]
 use intercom_adapter_http::{HttpAudioMedia, HttpServer, HttpServerConfig};
+#[cfg(target_arch = "riscv32")]
+use intercom_adapter_webrtc::session::{
+    WebRtcMediaEngine, WebRtcSessionConfig, WebRtcSessionHandle,
+};
 
 #[cfg(target_arch = "riscv32")]
 use intercom_adapter_gpio::boot_button::{GpioBootButtonConfig, GpioBootButtonDriver};
@@ -89,6 +98,11 @@ use self::reset::{FirmwarePersistenceReporter, FirmwareResetDriver};
 #[cfg(target_arch = "riscv32")]
 const RECLAIMED_RAM: usize =
     memory_range!("DRAM2_UNINIT").end - memory_range!("DRAM2_UNINIT").start;
+
+#[cfg(target_arch = "riscv32")]
+fn media_free_heap_bytes() -> u32 {
+    esp_alloc::HEAP.free().min(u32::MAX as usize) as u32
+}
 
 #[cfg(target_arch = "riscv32")]
 esp_bootloader_esp_idf::esp_app_desc!(
@@ -162,6 +176,10 @@ async fn main(_spawner: Spawner) {
     static WS_AUDIO_ACTIVE: core::sync::atomic::AtomicBool =
         core::sync::atomic::AtomicBool::new(false);
     static TX_AUDIO_CHANNEL: intercom_media::TxAudioChannel = intercom_media::TxAudioChannel::new();
+    static WEBRTC_REQUESTS: Channel<CriticalSectionRawMutex, WebRtcSessionConfig, 1> =
+        Channel::new();
+    static WEBRTC_STATE: portable_atomic::AtomicU8 = portable_atomic::AtomicU8::new(0);
+    static WEBRTC_HANDLE: StaticCell<WebRtcSessionHandle<'static>> = StaticCell::new();
 
     static COMMAND_CHANNEL: CommandChannel = CommandChannel::new();
     let access_handle = AccessControllerHandle::new(COMMAND_CHANNEL.sender());
@@ -314,6 +332,14 @@ async fn main(_spawner: Spawner) {
         &STATE_WATCH,
     );
     let mut ota_driver = FlashOtaDriver::new(config::OTA_PUBLIC_KEY);
+    let (mut webrtc_engine, webrtc_session_handle) = WebRtcMediaEngine::new(
+        &WEBRTC_REQUESTS,
+        &WEBRTC_STATE,
+        access_handle,
+        RX_AUDIO_CHANNEL.receiver(),
+        TX_AUDIO_CHANNEL.sender(),
+    );
+    let webrtc_session_handle = WEBRTC_HANDLE.init(webrtc_session_handle);
 
     // ========================================================================
     // Run App, Matter, LED, HTTP, and I2S services concurrently
@@ -363,7 +389,8 @@ async fn main(_spawner: Spawner) {
             call_watch: &CALL_STATE_WATCH,
             state_watch: &STATE_WATCH,
             ws_active: &WS_AUDIO_ACTIVE,
-        });
+        })
+        .with_webrtc_session(webrtc_session_handle);
         http_server.run().await;
     };
 
@@ -379,12 +406,17 @@ async fn main(_spawner: Spawner) {
         }
     };
 
+    let webrtc_future = async {
+        let stack = rs_matter_embassy::enet::wait_global_stack().await;
+        webrtc_engine.run(stack, media_free_heap_bytes).await;
+    };
+
     embassy_futures::join::join5(
         app_future,
         matter_future,
         led_future,
         http_future,
-        i2s_future,
+        embassy_futures::join::join(i2s_future, webrtc_future),
     )
     .await;
 }

@@ -7,4 +7,5 @@ pub mod ice;
 pub mod mux;
 pub mod opus;
 pub mod sdp;
+pub mod session;
 pub mod srtp;

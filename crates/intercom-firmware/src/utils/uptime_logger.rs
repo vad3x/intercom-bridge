@@ -1,6 +1,6 @@
 //! Intercom composition for the shared uptime logger.
 
-use edf_logger::{UptimeLogger, DEFAULT_SUPPRESSED_DEBUG_EXACT, DEFAULT_SUPPRESSED_DEBUG_PREFIXES};
+use edf_logger::{DEFAULT_SUPPRESSED_DEBUG_EXACT, DEFAULT_SUPPRESSED_DEBUG_PREFIXES, UptimeLogger};
 
 static LOGGER: UptimeLogger<{ crate::config::LOG_BUFFER_CAPACITY }> = UptimeLogger::new(
     uptime_millis,
@@ -53,7 +53,7 @@ fn uart_colors(level: log::Level) -> (&'static str, &'static str) {
 
 #[cfg(test)]
 mod tests {
-    use super::{get_buffered_logs, uart_colors, LOGGER};
+    use super::{LOGGER, get_buffered_logs, uart_colors};
     use log::{Level, Log, Record};
 
     #[test]
