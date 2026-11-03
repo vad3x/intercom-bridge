@@ -15,6 +15,10 @@ harness = false
 test = false
 
 [features]
+default = []
+devkit = ["flash-4mb", "ota-disabled"]
+flash-4mb = []
+ota-disabled = []
 dummy-persist = []
 
 [dependencies]

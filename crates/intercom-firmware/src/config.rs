@@ -10,6 +10,9 @@ use core::ops::Range;
 // ============================================================================
 
 /// Hardware version string.
+#[cfg(feature = "devkit")]
+pub const HW_VER_STR: &str = "2.0-devkit";
+#[cfg(not(feature = "devkit"))]
 pub const HW_VER_STR: &str = "2.0";
 
 /// Numeric hardware version derived from `HW_VER_STR`.
@@ -48,7 +51,10 @@ pub const OTA_1_OFFSET: u32 = 0x370000;
 #[allow(dead_code)]
 pub const OTA_SLOT_SIZE: u32 = 0x350000;
 
-/// Start offset of the `system_kvs` partition in flash (from partitions.csv).
+/// Start offset of the `system_kvs` partition in flash (from partitions.csv / partitions-4mb.csv).
+#[cfg(feature = "flash-4mb")]
+pub const SYSTEM_KVS_OFFSET: u32 = 0x3d0000;
+#[cfg(not(feature = "flash-4mb"))]
 pub const SYSTEM_KVS_OFFSET: u32 = 0x6c0000;
 
 /// Size of the `system_kvs` partition (8 KiB = 2 sectors × 4 KiB).
@@ -65,7 +71,10 @@ pub const WIFI_KVS_SIZE: u32 = SYSTEM_KVS_SIZE;
 #[allow(dead_code)]
 pub const WIFI_KVS_RANGE: Range<u32> = SYSTEM_KVS_RANGE;
 
-/// Start offset of the `matter_kvs` partition in flash (from partitions.csv).
+/// Start offset of the `matter_kvs` partition in flash (from partitions.csv / partitions-4mb.csv).
+#[cfg(feature = "flash-4mb")]
+pub const MATTER_KVS_OFFSET: u32 = 0x3d2000;
+#[cfg(not(feature = "flash-4mb"))]
 pub const MATTER_KVS_OFFSET: u32 = 0x6c2000;
 
 /// Size of the `matter_kvs` partition (24 KiB = 6 sectors × 4 KiB).
@@ -170,7 +179,7 @@ pub const AVAILABLE_ECOSYSTEMS: &[SupportedEcosystem] = &[
 // Private helpers
 // ============================================================================
 
-/// Parse a dotted version string (e.g. `"1.2.3"`, `"1.1"`) into a numeric
+/// Parse a dotted version string (e.g. `"1.2.3"`, `"1.1"`, `"2.0-devkit"`) into a numeric
 /// value at compile time: `major * 10000 + minor * 100 + patch`.
 const fn parse_version(version: &str) -> u32 {
     let bytes = version.as_bytes();
@@ -180,8 +189,14 @@ const fn parse_version(version: &str) -> u32 {
     while i < bytes.len() {
         if bytes[i] == b'.' {
             part += 1;
-        } else {
+            if part >= 3 {
+                break;
+            }
+        } else if bytes[i] >= b'0' && bytes[i] <= b'9' {
             parts[part] = parts[part] * 10 + (bytes[i] - b'0') as u32;
+        } else {
+            // Stop at any non-numeric/non-dot separator (e.g. "-devkit")
+            break;
         }
         i += 1;
     }
@@ -225,6 +240,9 @@ mod tests {
     fn test_flash_partitions_are_sector_aligned_and_non_overlapping() {
         // Arrange
         const SECTOR_SIZE: u32 = 4096;
+        #[cfg(feature = "flash-4mb")]
+        const FLASH_TOTAL_SIZE: u32 = 0x400000; // 4 MB
+        #[cfg(not(feature = "flash-4mb"))]
         const FLASH_TOTAL_SIZE: u32 = 0x800000; // 8 MB
 
         // Act
@@ -252,6 +270,9 @@ mod pcb_v2_tests {
     #[test]
     fn firmware_identifies_pcb_v2() {
         // Arrange
+        #[cfg(feature = "devkit")]
+        let expected_version = "2.0-devkit";
+        #[cfg(not(feature = "devkit"))]
         let expected_version = "2.0";
 
         // Act
