@@ -422,7 +422,9 @@ impl SrtpSession {
         for (slot, byte) in iv[4..8].iter_mut().zip(ssrc.to_be_bytes()) {
             *slot ^= byte;
         }
-        for (slot, byte) in iv[8..12].iter_mut().zip(index.to_be_bytes()) {
+        // RFC 3711 §4.1.1 uses index * 2^16: the 31-bit index occupies
+        // bytes 10..14 of the 128-bit IV, with bytes 8..10 and 14..16 zero.
+        for (slot, byte) in iv[10..14].iter_mut().zip(index.to_be_bytes()) {
             *slot ^= byte;
         }
         let mut cipher = Aes128Ctr::new((&direction.rtcp_encryption_key).into(), (&iv).into());
@@ -512,7 +514,7 @@ fn derive_key<const N: usize>(master_key: &[u8; 16], master_salt: &[u8; 14], lab
 
 #[cfg(test)]
 mod tests {
-    use super::{SrtpError, SrtpSession};
+    use super::{SrtpDirection, SrtpError, SrtpSession};
     use crate::dtls::{DtlsRole, DtlsSrtpKeys};
 
     fn rtp_packet(sequence: u16, payload: &[u8], output: &mut [u8]) -> usize {
@@ -602,6 +604,44 @@ mod tests {
         // Assert
         assert_eq!(plain_length, 8);
         assert_eq!(&packet[..8], &[0x80, 201, 0, 1, 0x01, 0x02, 0x03, 0x04]);
+    }
+
+    #[test]
+    fn srtcp_ctr_iv_matches_rfc_3711_index_offset_known_answer() {
+        // Arrange
+        // RFC 3711 Appendix B.2 session key/salt; IV uses its §4.1.1 SRTCP index formula.
+        // For SSRC=0 and index=1, salt<<16 XOR index<<16 is F0F1...FCFC0000.
+        let direction = SrtpDirection {
+            encryption_key: [0; 16],
+            authentication_key: [0; 20],
+            session_salt: [0; 14],
+            rtcp_encryption_key: [
+                0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6, 0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf,
+                0x4f, 0x3c,
+            ],
+            rtcp_authentication_key: [0; 20],
+            rtcp_session_salt: [
+                0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8, 0xf9, 0xfa, 0xfb, 0xfc, 0xfd,
+            ],
+        };
+        let session = SrtpSession::new([0; 16], [0; 14]);
+        let mut packet = [0; 32];
+        packet[..8].copy_from_slice(&[0x81, 201, 0, 7, 0, 0, 0, 0]);
+        for (index, byte) in packet[8..32].iter_mut().enumerate() {
+            *byte = index as u8;
+        }
+
+        // Act
+        session.crypt_rtcp_payload(&direction, &mut packet, 8, 32, 0, 1);
+
+        // Assert
+        assert_eq!(
+            &packet[8..32],
+            &[
+                0x41, 0xd3, 0xba, 0xb1, 0x1e, 0x1f, 0xe0, 0x7a, 0x77, 0xdf, 0xca, 0x06, 0x16, 0xf7,
+                0xe1, 0x75, 0x30, 0x69, 0xe1, 0xcd, 0x0a, 0x31, 0x52, 0x34,
+            ]
+        );
     }
 
     #[test]
