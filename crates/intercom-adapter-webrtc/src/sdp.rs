@@ -155,7 +155,9 @@ pub fn parse_sdp_offer(sdp: &str) -> Result<ParsedSdpOffer<'_>, SdpError> {
             }
         } else if let Some(attribute) = value.strip_prefix("rtpmap:") {
             if in_audio {
-                audio_opus_payload_type = parse_opus_mapping(attribute, audio_formats);
+                if let Some(payload_type) = parse_opus_mapping(attribute, audio_formats) {
+                    audio_opus_payload_type = Some(payload_type);
+                }
             }
         } else if let Some(direction) = parse_direction(value) {
             if in_audio {
@@ -413,8 +415,8 @@ mod tests {
     extern crate std;
 
     use super::{
-        DtlsSetupRole, LocalSdpParams, SdpError, SdpMediaDirection, parse_sdp_offer,
-        write_sdp_answer, write_sdp_offer,
+        parse_sdp_offer, write_sdp_answer, write_sdp_offer, DtlsSetupRole, LocalSdpParams,
+        SdpError, SdpMediaDirection,
     };
 
     const CONTROLLER_OFFER: &str = "v=0\r\n\
@@ -431,6 +433,17 @@ a=setup:actpass\r\n\
 a=sendrecv\r\n\
 a=rtcp-mux\r\n\
 a=rtpmap:111 opus/48000/2\r\n";
+
+    #[test]
+    fn home_assistant_opus_mapping_is_found_in_audio_payload_list() {
+        assert_eq!(
+            super::parse_opus_mapping(
+                "111 opus/48000/2",
+                Some("audio 9 UDP/TLS/RTP/SAVPF 111 63 9 0 8 13 110 126"),
+            ),
+            Some(111)
+        );
+    }
 
     fn sample_local_params() -> LocalSdpParams<'static> {
         LocalSdpParams {
@@ -620,11 +633,8 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n",
 
         // Assert
         assert!(offer.contains("a=candidate:1 1 UDP 2130706431 192.168.1.142 50000 typ host\r\n"));
-        assert!(
-            offer.contains(
-                "a=candidate:2 1 UDP 2130706430 2001:db8:1:2:0:0:0:142 50000 typ host\r\n"
-            )
-        );
+        assert!(offer
+            .contains("a=candidate:2 1 UDP 2130706430 2001:db8:1:2:0:0:0:142 50000 typ host\r\n"));
     }
 
     #[test]

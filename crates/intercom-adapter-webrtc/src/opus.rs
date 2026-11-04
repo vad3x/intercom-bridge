@@ -4,7 +4,7 @@ use core::ffi::{c_int, c_uchar, c_void};
 use intercom_media::{PcmFrame, AUDIO_FRAME_SAMPLES, AUDIO_SAMPLE_RATE_HZ};
 
 pub const MAX_OPUS_PACKET_BYTES: usize = 128;
-const OPUS_ARENA_U64_WORDS: usize = 3584; // 28,672 B (8-byte aligned, > opus_encoder_get_size(1))
+const OPUS_ARENA_U64_WORDS: usize = 3_077; // 24,616 B, 8-byte aligned.
 
 const OPUS_OK: c_int = 0;
 const OPUS_APPLICATION_VOIP: c_int = 2048;

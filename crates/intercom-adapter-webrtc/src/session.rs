@@ -1,7 +1,6 @@
 //! Half-duplex WebRTC turn-taking policy and active media session runner.
 
-use alloc::boxed::Box;
-use embassy_net::{IpEndpoint, IpListenEndpoint, Stack, udp::PacketMetadata};
+use embassy_net::{udp::PacketMetadata, IpEndpoint, IpListenEndpoint, Stack};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::{Channel, Receiver, Sender};
 use embassy_time::{Instant, Timer};
@@ -9,9 +8,9 @@ use intercom_core::domain::intercom::SessionOwner;
 use intercom_core::ports::IntercomControllerHandle;
 use intercom_media::{RxAudioReceiver, TxAudioSender};
 
-use crate::dtls::{DtlsRole, DtlsSrtpEngine};
+use crate::dtls::{DtlsError, DtlsRole, DtlsSrtpEngine, DtlsSrtpResourceCell};
 use crate::ice::IceLiteAgent;
-use crate::mux::{DemuxedPacket, classify_rfc7983_packet};
+use crate::mux::{classify_rfc7983_packet, DemuxedPacket};
 use crate::opus::{HalfDuplexOpusCodec, MAX_OPUS_PACKET_BYTES};
 use crate::srtp::SrtpSession;
 
@@ -27,6 +26,9 @@ pub const MEDIA_UDP_PORT: u16 = 50_000;
 const UDP_RX_PACKET_BYTES: usize = 2_048;
 const UDP_TX_PACKET_BYTES: usize = 2_048;
 const UDP_METADATA_SLOTS: usize = 4;
+const DTLS_PENDING_DATAGRAMS: usize = 2;
+const DTLS_DATAGRAM_MAX_BYTES: usize = 1_500;
+const MBEDTLS_ERR_SSL_WANT_READ: i32 = -0x6900;
 const RTP_HEADER_BYTES: usize = 12;
 const MEDIA_POLL_MS: u64 = 20;
 const TURN_HANGOVER_MS: u64 = 400;
@@ -203,13 +205,97 @@ impl MediaBenchmarkStats {
     }
 }
 
-/// Runs one active media session at a time; codec, DTLS, and UDP storage is allocated after a request.
+/// Shared media working buffers kept outside the general-purpose heap.
+pub struct WebRtcMediaResources {
+    codec: HalfDuplexOpusCodec,
+    rx_metadata: [PacketMetadata; UDP_METADATA_SLOTS],
+    tx_metadata: [PacketMetadata; UDP_METADATA_SLOTS],
+    rx_buffer: [u8; UDP_RX_PACKET_BYTES],
+    tx_buffer: [u8; UDP_TX_PACKET_BYTES],
+    packet: [u8; UDP_RX_PACKET_BYTES],
+    outbound: [u8; UDP_TX_PACKET_BYTES],
+    pending_dtls: PendingDtlsDatagrams,
+}
+
+struct PendingDtlsDatagrams {
+    packets: [[u8; DTLS_DATAGRAM_MAX_BYTES]; DTLS_PENDING_DATAGRAMS],
+    lengths: [u16; DTLS_PENDING_DATAGRAMS],
+    head: u8,
+    count: u8,
+}
+
+impl PendingDtlsDatagrams {
+    const fn new() -> Self {
+        Self {
+            packets: [[0; DTLS_DATAGRAM_MAX_BYTES]; DTLS_PENDING_DATAGRAMS],
+            lengths: [0; DTLS_PENDING_DATAGRAMS],
+            head: 0,
+            count: 0,
+        }
+    }
+
+    fn push(&mut self, datagram: &[u8]) -> bool {
+        if datagram.is_empty()
+            || datagram.len() > DTLS_DATAGRAM_MAX_BYTES
+            || usize::from(self.count) == DTLS_PENDING_DATAGRAMS
+        {
+            return false;
+        }
+        let index = (usize::from(self.head) + usize::from(self.count)) % DTLS_PENDING_DATAGRAMS;
+        self.packets[index][..datagram.len()].copy_from_slice(datagram);
+        self.lengths[index] = datagram.len() as u16;
+        self.count += 1;
+        true
+    }
+
+    fn front(&self) -> Option<&[u8]> {
+        (self.count != 0).then(|| {
+            let index = usize::from(self.head);
+            &self.packets[index][..usize::from(self.lengths[index])]
+        })
+    }
+
+    fn pop(&mut self) {
+        if self.count == 0 {
+            return;
+        }
+        let index = usize::from(self.head);
+        self.lengths[index] = 0;
+        self.head = ((index + 1) % DTLS_PENDING_DATAGRAMS) as u8;
+        self.count -= 1;
+    }
+
+    fn clear(&mut self) {
+        self.head = 0;
+        self.count = 0;
+        self.lengths = [0; DTLS_PENDING_DATAGRAMS];
+    }
+}
+
+impl WebRtcMediaResources {
+    pub const fn new() -> Self {
+        Self {
+            codec: HalfDuplexOpusCodec::new(),
+            rx_metadata: [PacketMetadata::EMPTY; UDP_METADATA_SLOTS],
+            tx_metadata: [PacketMetadata::EMPTY; UDP_METADATA_SLOTS],
+            rx_buffer: [0; UDP_RX_PACKET_BYTES],
+            tx_buffer: [0; UDP_TX_PACKET_BYTES],
+            packet: [0; UDP_RX_PACKET_BYTES],
+            outbound: [0; UDP_TX_PACKET_BYTES],
+            pending_dtls: PendingDtlsDatagrams::new(),
+        }
+    }
+}
+
+/// Runs one active media session at a time using preallocated codec and packet storage.
 pub struct WebRtcMediaEngine<'a> {
     requests: Receiver<'a, CriticalSectionRawMutex, WebRtcSessionConfig, 1>,
     intercom: IntercomControllerHandle<'a>,
     rx_audio: RxAudioReceiver<'a>,
     tx_audio: TxAudioSender<'a>,
     state: &'a portable_atomic::AtomicU8,
+    resources: &'a mut WebRtcMediaResources,
+    dtls_resources: &'a DtlsSrtpResourceCell<'a>,
     benchmark_stats: MediaBenchmarkStats,
 }
 
@@ -220,6 +306,8 @@ impl<'a> WebRtcMediaEngine<'a> {
         intercom: IntercomControllerHandle<'a>,
         rx_audio: RxAudioReceiver<'a>,
         tx_audio: TxAudioSender<'a>,
+        resources: &'a mut WebRtcMediaResources,
+        dtls_resources: &'a DtlsSrtpResourceCell<'a>,
     ) -> (Self, WebRtcSessionHandle<'a>) {
         (
             Self {
@@ -228,6 +316,8 @@ impl<'a> WebRtcMediaEngine<'a> {
                 rx_audio,
                 tx_audio,
                 state,
+                resources,
+                dtls_resources,
                 benchmark_stats: MediaBenchmarkStats::default(),
             },
             WebRtcSessionHandle {
@@ -289,10 +379,18 @@ impl<'a> WebRtcMediaEngine<'a> {
         config: WebRtcSessionConfig,
         free_heap_bytes: fn() -> u32,
     ) -> Result<(), WebRtcMediaError> {
-        let mut rx_metadata = Box::new([PacketMetadata::EMPTY; UDP_METADATA_SLOTS]);
-        let mut tx_metadata = Box::new([PacketMetadata::EMPTY; UDP_METADATA_SLOTS]);
-        let mut rx_buffer = Box::new([0; UDP_RX_PACKET_BYTES]);
-        let mut tx_buffer = Box::new([0; UDP_TX_PACKET_BYTES]);
+        let mut dtls_resources = self.dtls_resources.borrow_mut().await;
+        let WebRtcMediaResources {
+            codec,
+            rx_metadata,
+            tx_metadata,
+            rx_buffer,
+            tx_buffer,
+            packet,
+            outbound,
+            pending_dtls,
+        } = &mut *self.resources;
+        pending_dtls.clear();
         let mut socket = embassy_net::udp::UdpSocket::new(
             stack,
             &mut rx_metadata[..],
@@ -307,11 +405,15 @@ impl<'a> WebRtcMediaEngine<'a> {
             })
             .map_err(|_| WebRtcMediaError::UdpBind)?;
 
-        let mut codec = Box::new(HalfDuplexOpusCodec::new());
-        let mut dtls = Box::new(
-            DtlsSrtpEngine::new(config.local_dtls_role, config.dtls_seed)
-                .map_err(|_| WebRtcMediaError::Dtls)?,
-        );
+        let mut dtls = DtlsSrtpEngine::new(
+            config.local_dtls_role,
+            config.dtls_seed,
+            &mut dtls_resources,
+        )
+        .map_err(|error| {
+            log::warn!("WebRTC DTLS initialization failed: {:?}", error);
+            WebRtcMediaError::Dtls
+        })?;
         let mut ice = IceLiteAgent::new(
             &config.local_ufrag,
             &config.remote_ufrag,
@@ -321,8 +423,6 @@ impl<'a> WebRtcMediaEngine<'a> {
         let mut srtp = None;
         let mut dtls_peer_transport_set = false;
         let mut turn = TurnTakingPolicy::new(TURN_HANGOVER_MS);
-        let mut packet = Box::new([0u8; UDP_RX_PACKET_BYTES]);
-        let mut outbound = Box::new([0u8; UDP_TX_PACKET_BYTES]);
         let mut sequence = 0u16;
         let mut timestamp = 0u32;
         let ssrc = 0x5349_4e54u32;
@@ -341,9 +441,30 @@ impl<'a> WebRtcMediaEngine<'a> {
                 return Err(WebRtcMediaError::SessionTimeout);
             }
             if ice.verified_peer_addr().is_some() && srtp.is_none() {
-                if let Some(out_length) = step_dtls_and_pop(&mut dtls, now_ms, &mut outbound[..])
-                    .map_err(|_| WebRtcMediaError::Dtls)?
-                {
+                let dtls_output =
+                    step_dtls_and_pop(&mut dtls, now_ms, &mut outbound[..]).map_err(|error| {
+                        let (export_called, export_type, export_prf, export_error) =
+                            dtls.export_diagnostic();
+                        let (debug_level, debug_line, debug_message, debug_length) =
+                            dtls.debug_diagnostic();
+                        let debug_message = core::str::from_utf8(
+                            &debug_message[..debug_length.min(debug_message.len())],
+                        )
+                        .unwrap_or("<invalid UTF-8>");
+                        log::warn!(
+                            "WebRTC DTLS handshake step failed: {:?}; key_export called={} type={} prf={} error={}; mbedtls level={} line={} message={}",
+                            error,
+                            export_called,
+                            export_type,
+                            export_prf,
+                            export_error,
+                            debug_level,
+                            debug_line,
+                            debug_message,
+                        );
+                        WebRtcMediaError::Dtls
+                    })?;
+                if let Some(out_length) = dtls_output {
                     if let Some(peer) = ice.verified_peer_addr() {
                         socket
                             .send_to(&outbound[..out_length], peer)
@@ -352,10 +473,25 @@ impl<'a> WebRtcMediaEngine<'a> {
                     }
                 }
                 if dtls.peer_cert_sha256() == Some(config.remote_fingerprint_sha256) {
-                    let keys = dtls.exported_srtp_keys().ok_or(WebRtcMediaError::Dtls)?;
+                    let keys = dtls.exported_srtp_keys().ok_or_else(|| {
+                        log::warn!("WebRTC DTLS completed without SRTP keys");
+                        WebRtcMediaError::Dtls
+                    })?;
                     srtp = Some(SrtpSession::from_dtls_keys(keys, config.local_dtls_role));
                 } else if dtls.peer_cert_sha256().is_some() {
                     return Err(WebRtcMediaError::FingerprintMismatch);
+                }
+                if srtp.is_none() {
+                    while let Some(datagram) = pending_dtls.front() {
+                        match dtls.push_inbound_datagram(datagram) {
+                            Ok(()) => pending_dtls.pop(),
+                            Err(DtlsError::InputFailed(MBEDTLS_ERR_SSL_WANT_READ)) => break,
+                            Err(error) => {
+                                log::warn!("WebRTC queued DTLS datagram input failed: {:?}", error);
+                                return Err(WebRtcMediaError::Dtls);
+                            }
+                        }
+                    }
                 }
             }
             let receive = socket.recv_from(&mut packet[..]);
@@ -384,7 +520,13 @@ impl<'a> WebRtcMediaEngine<'a> {
                             {
                                 if previously_nominated.is_none() {
                                     dtls.set_peer_transport_id(&remote_peer_id(remote))
-                                        .map_err(|_| WebRtcMediaError::Dtls)?;
+                                        .map_err(|error| {
+                                            log::warn!(
+                                                "WebRTC DTLS peer binding failed: {:?}",
+                                                error
+                                            );
+                                            WebRtcMediaError::Dtls
+                                        })?;
                                     dtls_peer_transport_set = true;
                                 }
                             }
@@ -395,8 +537,19 @@ impl<'a> WebRtcMediaEngine<'a> {
                         if ice.verified_peer_addr() != Some(remote) {
                             continue;
                         }
-                        dtls.push_inbound_datagram(&packet[..length])
-                            .map_err(|_| WebRtcMediaError::Dtls)?;
+                        match dtls.push_inbound_datagram(&packet[..length]) {
+                            Ok(()) => {}
+                            Err(DtlsError::InputFailed(MBEDTLS_ERR_SSL_WANT_READ)) => {
+                                if !pending_dtls.push(&packet[..length]) {
+                                    log::warn!("WebRTC pending DTLS datagram queue is full");
+                                    return Err(WebRtcMediaError::Dtls);
+                                }
+                            }
+                            Err(error) => {
+                                log::warn!("WebRTC DTLS datagram input failed: {:?}", error);
+                                return Err(WebRtcMediaError::Dtls);
+                            }
+                        }
                     }
                     DemuxedPacket::RtpOrRtcp => {
                         if ice.verified_peer_addr() != Some(remote) {
@@ -664,12 +817,39 @@ impl TurnTakingPolicy {
 #[cfg(test)]
 mod tests {
     use super::{
-        DtlsRole, MediaBenchmarkStats, OPUS_DTX_MAX_BYTES, RtpPayloadRange, SESSION_ACTIVE,
-        SESSION_IDLE, SESSION_STOP_ACTIVE, SESSION_STOP_QUEUED, SessionLiveness, TurnAction,
-        TurnTakingPolicy, WebRtcSessionConfig, WebRtcSessionHandle, WebRtcSessionRequestError,
+        DtlsRole, MediaBenchmarkStats, PendingDtlsDatagrams, RtpPayloadRange, SessionLiveness,
+        TurnAction, TurnTakingPolicy, WebRtcSessionConfig, WebRtcSessionHandle,
+        WebRtcSessionRequestError, OPUS_DTX_MAX_BYTES, SESSION_ACTIVE, SESSION_IDLE,
+        SESSION_STOP_ACTIVE, SESSION_STOP_QUEUED,
     };
     use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
     use embassy_sync::channel::Channel;
+
+    #[test]
+    fn media_resources_stay_within_main_stack_reserve() {
+        assert!(core::mem::size_of::<super::WebRtcMediaResources>() <= 36 * 1024);
+    }
+
+    #[test]
+    fn pending_dtls_datagram_queue_preserves_fifo_and_applies_backpressure() {
+        // Arrange
+        let mut queue = PendingDtlsDatagrams::new();
+
+        // Act
+        let first_queued = queue.push(b"first");
+        let second_queued = queue.push(b"second");
+        let full_queue_rejected = !queue.push(b"third");
+        assert_eq!(queue.front(), Some(&b"first"[..]));
+        queue.pop();
+        assert_eq!(queue.front(), Some(&b"second"[..]));
+        queue.pop();
+
+        // Assert
+        assert!(first_queued);
+        assert!(second_queued);
+        assert!(full_queue_rejected);
+        assert_eq!(queue.front(), None);
+    }
 
     #[test]
     fn session_liveness_expires_after_five_seconds_without_valid_packets() {
@@ -704,8 +884,10 @@ mod tests {
         let _guard = crate::dtls::DTLS_TEST_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut dtls = crate::dtls::DtlsSrtpEngine::new(DtlsRole::Client, [0x42; 32])
-            .expect("client DTLS init");
+        let mut resources = crate::dtls::DtlsSrtpResources::new();
+        let mut dtls =
+            crate::dtls::DtlsSrtpEngine::new(DtlsRole::Client, [0x42; 32], &mut resources)
+                .expect("client DTLS init");
         let mut datagram = [0; 1500];
 
         // Act

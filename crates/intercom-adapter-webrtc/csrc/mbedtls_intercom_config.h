@@ -3,10 +3,13 @@
 #define MBEDTLS_MEMORY_BUFFER_ALLOC_C
 #define MBEDTLS_PLATFORM_C
 #define MBEDTLS_PLATFORM_NO_STD_FUNCTIONS
+#define MBEDTLS_PLATFORM_PRINTF_MACRO intercom_mbedtls_printf
+int intercom_mbedtls_printf(const char *format, ...);
 #define MBEDTLS_PLATFORM_EXIT_MACRO(status) do { (void) (status); __builtin_trap(); } while (0)
 #define MBEDTLS_PLATFORM_SNPRINTF_ALT
 #define MBEDTLS_PLATFORM_MEMORY
 #define MBEDTLS_SSL_TLS_C
+#define MBEDTLS_DEBUG_C
 #define MBEDTLS_SSL_CLI_C
 #define MBEDTLS_SSL_SRV_C
 #define MBEDTLS_SSL_PROTO_TLS1_2
