@@ -116,14 +116,30 @@ export function App() {
             { label: 'Chime / Ring', propertyKey: 'ring_sensor_subscribed' },
           ]}
           endpointIcon={(endpoint) => {
-            switch (endpoint.cluster) {
-              case 'DoorLock':
-                return '🔒 ';
-              case 'Switch':
-              case 'AudioDoorbell':
-                return '🔔 ';
+            switch (endpoint.id) {
+              case 1:
+                return <span class="text-sm">🔔</span>;
+              case 2:
+                return <span class="text-sm">🔒</span>;
               default:
-                return '';
+                return undefined;
+            }
+          }}
+          clusterIcon={(cluster) => {
+            switch (cluster.name) {
+              case 'Door Lock':
+              case 'DoorLock':
+                return <span class="text-xs">🔒</span>;
+              case 'Switch':
+                return <span class="text-xs">🔔</span>;
+              case 'Camera AV Stream':
+                return <span class="text-xs">📹</span>;
+              case 'WebRTC Provider':
+                return <span class="text-xs">🎙️</span>;
+              case 'Chime':
+                return <span class="text-xs">🔊</span>;
+              default:
+                return undefined;
             }
           }}
           onResetMatter={handleResetMatter}

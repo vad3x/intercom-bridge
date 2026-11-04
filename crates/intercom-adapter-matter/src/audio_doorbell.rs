@@ -13,6 +13,7 @@ use intercom_core::domain::policy::{
     TxDacGain,
 };
 use intercom_core::ports::inbound::IntercomControllerHandle;
+use log::{info, warn};
 use rs_matter::dm::clusters::app::audio_av_stream::{
     AllocatedAudioStream, AudioAvStreamHandler, AudioAvStreamHooks, AudioEndpointCapabilities,
     HandlerAsyncAdaptor as AudioAvAdaptor,
@@ -108,20 +109,38 @@ pub const fn volume_percent_to_tx_gain(muted: bool, level: u8) -> TxDacGain {
 /// Bridges `AudioAvStreamHandler` volume/mute attributes to `IntercomControllerHandle::set_audio_gain`.
 pub struct IntercomAudioHooks<'a> {
     intercom: IntercomControllerHandle<'a>,
+    last_allocated_stream_id: AtomicU16,
 }
 
 impl<'a> IntercomAudioHooks<'a> {
     pub const fn new(intercom: IntercomControllerHandle<'a>) -> Self {
-        Self { intercom }
+        Self {
+            intercom,
+            last_allocated_stream_id: AtomicU16::new(0),
+        }
     }
 }
 
 impl AudioAvStreamHooks for IntercomAudioHooks<'_> {
-    fn on_audio_allocated(&self, _stream: &AllocatedAudioStream) -> Result<(), Error> {
+    fn on_audio_allocated(&self, stream: &AllocatedAudioStream) -> Result<(), Error> {
+        info!(
+            "AudioAV: on_audio_allocated stream_id={}, codec={:?}, rate={}, bitrate={}",
+            stream.audio_stream_id, stream.audio_codec, stream.sample_rate, stream.bit_rate
+        );
+        self.last_allocated_stream_id
+            .store(stream.audio_stream_id, Ordering::Release);
         Ok(())
     }
 
-    fn on_audio_deallocated(&self, _stream_id: u16) {}
+    fn on_audio_deallocated(&self, stream_id: u16) {
+        info!("AudioAV: on_audio_deallocated stream_id={}", stream_id);
+        let _ = self.last_allocated_stream_id.compare_exchange(
+            stream_id,
+            0,
+            Ordering::AcqRel,
+            Ordering::Relaxed,
+        );
+    }
 
     fn on_volume_or_mute_changed(
         &self,
@@ -158,6 +177,15 @@ impl<'a> IntercomAudioAvCluster<'a> {
 
     pub const fn handler(&self) -> &AudioAvStreamHandler<IntercomAudioHooks<'a>, 2> {
         &self.0.0
+    }
+
+    pub fn last_allocated_stream(&self) -> Option<u16> {
+        let id = self.0.0.hooks().last_allocated_stream_id.load(Ordering::Acquire);
+        if id != 0 {
+            Some(id)
+        } else {
+            None
+        }
     }
 }
 
@@ -238,14 +266,20 @@ impl<'a, M: MediaSessionPort> IntercomWebRtcHooks<'a, M> {
         }
     }
 
-    fn resolve_audio_stream_id(params: &OfferParams) -> Result<u16, WebRtcError> {
+    fn resolve_audio_stream_id(&self, params: &OfferParams) -> Result<u16, WebRtcError> {
         if let Some(Some(_)) = params.video_stream_id {
-            return Err(WebRtcError::DynamicConstraint);
+            info!("WebRTC: video requested on audio-only doorbell, proceeding without video");
         }
-        match params.audio_stream_id {
-            Some(Some(id)) => Ok(id),
-            _ => Err(WebRtcError::InvalidCommand),
+        if let Some(Some(id)) = params.audio_stream_id {
+            info!("WebRTC: using requested audio_stream_id={}", id);
+            return Ok(id);
         }
+        if let Some(id) = self.audio_av.last_allocated_stream() {
+            info!("WebRTC: fallback to last allocated audio_stream_id={}", id);
+            return Ok(id);
+        }
+        warn!("WebRTC: no audio stream specified and none allocated");
+        Err(WebRtcError::InvalidCommand)
     }
 
     pub fn active_session(&self) -> Option<u16> {
@@ -295,9 +329,14 @@ impl<M: MediaSessionPort> WebRtcHooks for IntercomWebRtcHooks<'_, M> {
         session_id: u16,
         params: &OfferParams,
     ) -> Result<SolicitOutcome, WebRtcError> {
-        let audio_id = Self::resolve_audio_stream_id(params)?;
+        info!(
+            "WebRTC: on_solicit_offer session={}, usage={:?}, orig_ep={}, audio={:?}, video={:?}",
+            session_id, params.stream_usage, params.originating_endpoint_id, params.audio_stream_id, params.video_stream_id
+        );
+        let audio_id = self.resolve_audio_stream_id(params)?;
         self.gate.try_acquire(session_id)?;
         if self.audio_av.handler().acquire_audio(audio_id).is_err() {
+            warn!("WebRTC: acquire_audio failed for stream {}", audio_id);
             self.gate.release(session_id);
             return Err(WebRtcError::DynamicConstraint);
         }
@@ -306,16 +345,22 @@ impl<M: MediaSessionPort> WebRtcHooks for IntercomWebRtcHooks<'_, M> {
         let offer_len = match self.media.build_local_offer(&mut offer_buf) {
             Ok(len) => len,
             Err(err) => {
+                warn!("WebRTC: build_local_offer failed: {:?}", err);
                 self.rollback_offer(session_id, audio_id).await;
                 return Err(err);
             }
         };
 
         if offer_len == 0 || offer_len > offer_buf.len() {
+            warn!("WebRTC: invalid offer length {}", offer_len);
             self.rollback_offer(session_id, audio_id).await;
             return Err(WebRtcError::ResourceExhausted);
         }
 
+        info!(
+            "WebRTC: local offer created ({} bytes), enqueuing outbound offer for session {}",
+            offer_len, session_id
+        );
         let queued = self.state.lock(|cell| {
             let mut s = cell.borrow_mut();
             s.outbound_queue.push(OutboundWork::Offer { session_id })?;
@@ -325,6 +370,7 @@ impl<M: MediaSessionPort> WebRtcHooks for IntercomWebRtcHooks<'_, M> {
             Ok::<(), OutboundWork>(())
         });
         if queued.is_err() {
+            warn!("WebRTC: outbound queue full for session {}", session_id);
             self.rollback_offer(session_id, audio_id).await;
             return Err(WebRtcError::ResourceExhausted);
         }
@@ -343,9 +389,14 @@ impl<M: MediaSessionPort> WebRtcHooks for IntercomWebRtcHooks<'_, M> {
         sdp: &str,
         params: &OfferParams,
     ) -> Result<AnswerOutcome, WebRtcError> {
-        let audio_id = Self::resolve_audio_stream_id(params)?;
+        info!(
+            "WebRTC: on_offer session={}, sdp_len={}, audio={:?}, video={:?}",
+            session_id, sdp.len(), params.audio_stream_id, params.video_stream_id
+        );
+        let audio_id = self.resolve_audio_stream_id(params)?;
         self.gate.try_acquire(session_id)?;
         if self.audio_av.handler().acquire_audio(audio_id).is_err() {
+            warn!("WebRTC: acquire_audio failed for stream {}", audio_id);
             self.gate.release(session_id);
             return Err(WebRtcError::DynamicConstraint);
         }
@@ -354,12 +405,14 @@ impl<M: MediaSessionPort> WebRtcHooks for IntercomWebRtcHooks<'_, M> {
         let answer_len = match self.media.accept_remote_offer(sdp, &mut answer_buf) {
             Ok(len) => len,
             Err(err) => {
+                warn!("WebRTC: accept_remote_offer failed: {:?}", err);
                 self.rollback_offer(session_id, audio_id).await;
                 return Err(err);
             }
         };
 
         if answer_len == 0 || answer_len > answer_buf.len() {
+            warn!("WebRTC: invalid answer length {}", answer_len);
             self.rollback_offer(session_id, audio_id).await;
             return Err(WebRtcError::ResourceExhausted);
         }
@@ -375,9 +428,11 @@ impl<M: MediaSessionPort> WebRtcHooks for IntercomWebRtcHooks<'_, M> {
             Ok::<(), OutboundWork>(())
         });
         if queued.is_err() {
+            warn!("WebRTC: outbound queue full for answer session {}", session_id);
             self.rollback_offer(session_id, audio_id).await;
             return Err(WebRtcError::ResourceExhausted);
         }
+        info!("WebRTC: accepted offer -> starting listen on intercom bus");
         self.intercom.start_listen(SessionOwner::MatterCall);
         self.outbound_signal.signal(());
 
@@ -388,12 +443,15 @@ impl<M: MediaSessionPort> WebRtcHooks for IntercomWebRtcHooks<'_, M> {
     }
 
     async fn on_answer(&self, session_id: u16, sdp: &str) -> Result<(), WebRtcError> {
+        info!("WebRTC: on_answer session={}, sdp_len={}", session_id, sdp.len());
         if self.gate.active_session() != Some(session_id) {
+            warn!("WebRTC: on_answer called for inactive session {}", session_id);
             return Err(WebRtcError::InvalidInState);
         }
         self.media.accept_remote_answer(sdp)?;
         self.state
             .lock(|cell| cell.borrow_mut().media_started = true);
+        info!("WebRTC: answer accepted -> starting listen on intercom bus");
         self.intercom.start_listen(SessionOwner::MatterCall);
         self.outbound_signal.signal(());
         Ok(())
@@ -404,7 +462,9 @@ impl<M: MediaSessionPort> WebRtcHooks for IntercomWebRtcHooks<'_, M> {
         session_id: u16,
         candidates: &TLVArray<'_, ICECandidateStruct<'_>>,
     ) -> Result<(), WebRtcError> {
+        info!("WebRTC: on_ice_candidates session={}", session_id);
         if self.gate.active_session() != Some(session_id) {
+            warn!("WebRTC: on_ice_candidates for inactive session {}", session_id);
             return Err(WebRtcError::InvalidInState);
         }
         for item in candidates.iter() {
@@ -418,8 +478,9 @@ impl<M: MediaSessionPort> WebRtcHooks for IntercomWebRtcHooks<'_, M> {
     async fn on_end_session(
         &self,
         session_id: u16,
-        _reason: WebRTCEndReasonEnum,
+        reason: WebRTCEndReasonEnum,
     ) -> Result<(), WebRtcError> {
+        info!("WebRTC: on_end_session session={}, reason={:?}", session_id, reason);
         self.cleanup_session(session_id).await;
         Ok(())
     }
@@ -493,6 +554,7 @@ impl<M: MediaSessionPort> WebRtcHooks for IntercomWebRtcHooks<'_, M> {
         session_id: u16,
         sdp_out: &mut [u8],
     ) -> Result<usize, WebRtcError> {
+        info!("WebRTC: take_offer_sdp session={}", session_id);
         self.take_answer_sdp(session_id, sdp_out).await
     }
 }

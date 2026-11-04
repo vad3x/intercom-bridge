@@ -2,8 +2,10 @@ import type { SystemDiagnosticsBase } from '@embedded-device-foundation/dashboar
 
 export type {
   ActiveEcosystem,
+  ClusterInfo,
   EndpointInfo,
   FabricInfo,
+  FabricSubscription,
 } from '@embedded-device-foundation/dashboard-core';
 
 export const MIN_DOOR_UNLOCK_DURATION_SEC = 1;

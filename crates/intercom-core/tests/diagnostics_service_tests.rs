@@ -281,21 +281,21 @@ fn ecosystem_status_property_lookup_and_overwrite() {
 #[test]
 fn ecosystem_status_fabric_addition_and_iteration() {
     // Arrange
-    let fab1 = intercom_core::domain::ecosystem::FabricInfo {
-        fab_idx: 1,
-        vendor_id: 4996,
-        fabric_id: 0x1122334455667788,
-        node_id: 0x0000000000000002,
-        label: intercom_core::domain::ecosystem::FabricLabel::from_str("Apple HomePod"),
-    };
+    let fab1 = intercom_core::domain::ecosystem::FabricInfo::new(
+        1,
+        4996,
+        0x1122334455667788,
+        0x0000000000000002,
+        intercom_core::domain::ecosystem::FabricLabel::from_str("Apple HomePod"),
+    );
 
-    let fab2 = intercom_core::domain::ecosystem::FabricInfo {
-        fab_idx: 2,
-        vendor_id: 4877,
-        fabric_id: 0xAABBCCDDEEFF0011,
-        node_id: 0x0000000000000005,
-        label: intercom_core::domain::ecosystem::FabricLabel::from_str("Home Assistant"),
-    };
+    let fab2 = intercom_core::domain::ecosystem::FabricInfo::new(
+        2,
+        4877,
+        0xAABBCCDDEEFF0011,
+        0x0000000000000005,
+        intercom_core::domain::ecosystem::FabricLabel::from_str("Home Assistant"),
+    );
 
     // Act
     let status = EcosystemStatus::new(EcosystemId::new("Matter"), true)
@@ -319,13 +319,13 @@ fn ecosystem_status_fabric_capacity_limit() {
 
     // Act - add MAX_ECOSYSTEM_FABRICS + 2
     for i in 1..=7 {
-        status = status.with_fabric(intercom_core::domain::ecosystem::FabricInfo {
-            fab_idx: i as u8,
-            vendor_id: 0x1000 + i,
-            fabric_id: i as u64,
-            node_id: i as u64,
-            label: intercom_core::domain::ecosystem::FabricLabel::from_str("Hub"),
-        });
+        status = status.with_fabric(intercom_core::domain::ecosystem::FabricInfo::new(
+            i as u8,
+            0x1000 + i,
+            i as u64,
+            i as u64,
+            intercom_core::domain::ecosystem::FabricLabel::from_str("Hub"),
+        ));
     }
 
     // Assert - only MAX_ECOSYSTEM_FABRICS (5) retained without crashing
