@@ -5,7 +5,7 @@
 
 #define INTERCOM_DTLS_STATE_BYTES 6144
 #define INTERCOM_DTLS_DATAGRAM_MAX 1500
-#define INTERCOM_DTLS_ARENA_BYTES 28672
+#define INTERCOM_DTLS_ARENA_BYTES 26624
 
 int intercom_dtls_heap_init(unsigned char *buffer, size_t length);
 void intercom_dtls_heap_free(void);

@@ -7,7 +7,7 @@ use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::mutex::{Mutex, MutexGuard};
 
-pub const DTLS_ARENA_BYTES: usize = 28_672;
+pub const DTLS_ARENA_BYTES: usize = 26 * 1024;
 const STATE_STORAGE_WORDS: usize = 768;
 const DATAGRAM_MAX_BYTES: usize = 1_500;
 const DTLS_ARENA_WORDS: usize = DTLS_ARENA_BYTES / core::mem::size_of::<u64>();
@@ -349,6 +349,7 @@ fn free_new_heap(owns_heap: bool) {
 
 #[cfg(test)]
 fn heap_buffer() -> (*mut u8, usize) {
+    // Host handshake tests keep both client and server engines alive concurrently.
     static mut HOST_MBEDTLS_HEAP: [u64; 8_192] = [0; 8_192];
     let buffer = core::ptr::addr_of_mut!(HOST_MBEDTLS_HEAP).cast::<u8>();
     (buffer, 8_192 * core::mem::size_of::<u64>())

@@ -1,6 +1,6 @@
 //! Half-duplex WebRTC turn-taking policy and active media session runner.
 
-use embassy_net::{IpEndpoint, IpListenEndpoint, Stack, udp::PacketMetadata};
+use embassy_net::{udp::PacketMetadata, IpEndpoint, IpListenEndpoint, Stack};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::{Channel, Receiver, Sender};
 use embassy_time::{Instant, Timer};
@@ -10,7 +10,7 @@ use intercom_media::{RxAudioReceiver, TxAudioSender};
 
 use crate::dtls::{DtlsError, DtlsRole, DtlsSrtpEngine, DtlsSrtpResourceCell};
 use crate::ice::IceLiteAgent;
-use crate::mux::{DemuxedPacket, classify_rfc7983_packet};
+use crate::mux::{classify_rfc7983_packet, DemuxedPacket};
 use crate::opus::{HalfDuplexOpusCodec, MAX_OPUS_PACKET_BYTES};
 use crate::srtp::SrtpSession;
 
@@ -439,6 +439,8 @@ impl<'a> WebRtcMediaEngine<'a> {
         .map_err(|_| WebRtcMediaError::Ice)?;
         let mut srtp = None;
         let mut dtls_peer_transport_set = false;
+        let mut ice_peer_logged = false;
+        let mut first_audio_packet_logged = false;
         let mut turn = TurnTakingPolicy::new(TURN_HANGOVER_MS);
         let mut sequence = 0u16;
         let mut timestamp = 0u32;
@@ -497,6 +499,7 @@ impl<'a> WebRtcMediaEngine<'a> {
                         WebRtcMediaError::Dtls
                     })?;
                     srtp = Some(SrtpSession::from_dtls_keys(keys, config.local_dtls_role));
+                    log::info!("WebRTC: DTLS fingerprint verified; SRTP ready");
                 } else if dtls.peer_cert_sha256().is_some() {
                     return Err(WebRtcMediaError::FingerprintMismatch);
                 }
@@ -532,6 +535,10 @@ impl<'a> WebRtcMediaEngine<'a> {
                                 .send_to(&response[..response_length], remote)
                                 .await
                                 .map_err(|_| WebRtcMediaError::UdpSend)?;
+                            if !ice_peer_logged && ice.verified_peer_addr() == Some(remote) {
+                                log::info!("WebRTC: ICE nominated peer {:?}", remote);
+                                ice_peer_logged = true;
+                            }
                             if config.local_dtls_role == DtlsRole::Server
                                 && !dtls_peer_transport_set
                                 && ice.verified_peer_addr() == Some(remote)
@@ -657,6 +664,13 @@ impl<'a> WebRtcMediaEngine<'a> {
                             .send_to(&outbound[..protected_length], peer)
                             .await
                             .map_err(|_| WebRtcMediaError::UdpSend)?;
+                        if !first_audio_packet_logged {
+                            log::info!(
+                                "WebRTC: first outbound SRTP audio packet sent ({} bytes)",
+                                protected_length
+                            );
+                            first_audio_packet_logged = true;
+                        }
                     }
                     sequence = sequence.wrapping_add(1);
                     timestamp = timestamp.wrapping_add(OPUS_RTP_CLOCK_INCREMENT);
@@ -837,10 +851,10 @@ impl TurnTakingPolicy {
 #[cfg(test)]
 mod tests {
     use super::{
-        DtlsRole, MediaBenchmarkStats, OPUS_DTX_MAX_BYTES, PendingDtlsDatagrams, RtpPayloadRange,
-        SESSION_ACTIVE, SESSION_IDLE, SESSION_IDLE_TIMEOUT_MS, SESSION_STOP_ACTIVE,
-        SESSION_STOP_QUEUED, SessionLiveness, TurnAction, TurnTakingPolicy, WebRtcSessionConfig,
-        WebRtcSessionHandle, WebRtcSessionRequestError,
+        DtlsRole, MediaBenchmarkStats, PendingDtlsDatagrams, RtpPayloadRange, SessionLiveness,
+        TurnAction, TurnTakingPolicy, WebRtcSessionConfig, WebRtcSessionHandle,
+        WebRtcSessionRequestError, OPUS_DTX_MAX_BYTES, SESSION_ACTIVE, SESSION_IDLE,
+        SESSION_IDLE_TIMEOUT_MS, SESSION_STOP_ACTIVE, SESSION_STOP_QUEUED,
     };
     use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
     use embassy_sync::channel::Channel;

@@ -107,6 +107,12 @@ If the listed owner is a stale `scripts/monitor.py` process, stop that specific 
 
 Wait until the bridge has joined Wi-Fi and `/api/status` reports `state: Operational` before treating a missing `_matter._tcp.local.` TCP-server bit as a firmware defect. Run `python3 scripts/test_matter_tcp.py --ip <device-ip>` while the Matter TCP listener is free, before starting Home Assistant's Listen stream: the listener accepts one inbound peer, so HA's active Matter connection can prevent the smoke test from connecting. The script closes its test peer and reconnects itself; leave the HA stream running for the separate sustained WebRTC test after the smoke test passes.
 
+### Sustained Matter WebRTC Listen verification
+
+`WebRTC: accepted offer -> starting listen` only confirms signaling was accepted. Confirm the media path in serial logs with `WebRTC: ICE nominated peer`, `WebRTC: DTLS fingerprint verified; SRTP ready`, and `WebRTC: first outbound SRTP audio packet sent`. The DevKit has no microphone/codec input; its `devkit` build feeds a generated 1 kHz tone into the WebRTC receive-audio channel. `/api/status` should report roughly `rx_rms_dbfs: -6` and `rx_peak_dbfs: -3`; `tone_active` is for the separate local playback test tone.
+
+Do not apply `DEFAULT_MAX_LISTEN_DURATION_MS` to `SessionOwner::MatterCall`: the 180-second cap makes the bridge bus report `idle` while Home Assistant still shows the stream's End/Mute controls. Matter WebRTC has its own ICE consent timeout and sends core heartbeats while active. Verify a live Listen call remains active past 180 seconds, and verify it returns to idle after the WebRTC session ends or heartbeats stop. After ending a sustained call, read `WebRTC media benchmark ... min_free_heap_bytes=...` from serial and require at least 32,768 bytes.
+
 ### Viewing Commissioning QR & Pairing Codes
 
 Display the Matter commissioning QR code and manual pairing codes from the connected ESP32-C6 device:

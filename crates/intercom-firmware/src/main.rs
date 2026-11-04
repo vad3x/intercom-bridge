@@ -506,6 +506,11 @@ async fn main(_spawner: Spawner) {
     #[cfg(feature = "devkit")]
     let audio_input_future = async {
         let mut tone = intercom_media::BenchToneGenerator::new();
+        let levels = intercom_media::compute_frame_levels_dbfs(&tone.next_frame());
+        intercom_core::domain::diagnostics::update_rx_levels_dbfs(
+            levels.rms_dbfs,
+            levels.peak_dbfs,
+        );
         info!("DevKit audio input: synthetic 1 kHz test tone");
         loop {
             let _ = RX_AUDIO_CHANNEL.try_send(tone.next_frame());
