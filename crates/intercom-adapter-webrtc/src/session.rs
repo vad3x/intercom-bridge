@@ -1,6 +1,6 @@
 //! Half-duplex WebRTC turn-taking policy and active media session runner.
 
-use embassy_net::{udp::PacketMetadata, IpEndpoint, IpListenEndpoint, Stack};
+use embassy_net::{IpEndpoint, IpListenEndpoint, Stack, udp::PacketMetadata};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::{Channel, Receiver, Sender};
 use embassy_time::{Instant, Timer};
@@ -10,7 +10,7 @@ use intercom_media::{RxAudioReceiver, TxAudioSender};
 
 use crate::dtls::{DtlsError, DtlsRole, DtlsSrtpEngine, DtlsSrtpResourceCell};
 use crate::ice::IceLiteAgent;
-use crate::mux::{classify_rfc7983_packet, DemuxedPacket};
+use crate::mux::{DemuxedPacket, classify_rfc7983_packet};
 use crate::opus::{HalfDuplexOpusCodec, MAX_OPUS_PACKET_BYTES};
 use crate::srtp::SrtpSession;
 
@@ -32,7 +32,24 @@ const MBEDTLS_ERR_SSL_WANT_READ: i32 = -0x6900;
 const RTP_HEADER_BYTES: usize = 12;
 const MEDIA_POLL_MS: u64 = 20;
 const TURN_HANGOVER_MS: u64 = 400;
-const SESSION_IDLE_TIMEOUT_MS: u64 = 5_000;
+const CORE_SESSION_HEARTBEAT_INTERVAL_MS: u64 = 1_000;
+// Keep ICE-lite sessions alive for RFC 7675 consent freshness expiry.
+const SESSION_IDLE_TIMEOUT_MS: u64 = 30_000;
+
+fn maybe_send_core_session_heartbeat(
+    intercom: &IntercomControllerHandle<'_>,
+    last_heartbeat_ms: &mut u64,
+    now_ms: u64,
+) {
+    if now_ms.saturating_sub(*last_heartbeat_ms) >= CORE_SESSION_HEARTBEAT_INTERVAL_MS {
+        intercom.session_heartbeat(SessionOwner::MatterCall);
+        *last_heartbeat_ms = now_ms;
+    }
+}
+
+fn should_process_dtls_datagram(peer_is_verified: bool, srtp_established: bool) -> bool {
+    peer_is_verified && !srtp_established
+}
 
 /// Inputs from the Matter WebRTC signaling hook, copied into bounded storage.
 #[derive(Clone, Debug)]
@@ -428,6 +445,7 @@ impl<'a> WebRtcMediaEngine<'a> {
         let ssrc = 0x5349_4e54u32;
         let mut liveness =
             SessionLiveness::new(Instant::now().as_millis(), SESSION_IDLE_TIMEOUT_MS);
+        let mut last_core_heartbeat_ms = Instant::now().as_millis();
 
         self.intercom.start_listen(SessionOwner::MatterCall);
         self.benchmark_stats.observe_free_heap(free_heap_bytes());
@@ -440,6 +458,7 @@ impl<'a> WebRtcMediaEngine<'a> {
             if liveness.is_expired(now_ms) {
                 return Err(WebRtcMediaError::SessionTimeout);
             }
+            maybe_send_core_session_heartbeat(&self.intercom, &mut last_core_heartbeat_ms, now_ms);
             if ice.verified_peer_addr().is_some() && srtp.is_none() {
                 let dtls_output =
                     step_dtls_and_pop(&mut dtls, now_ms, &mut outbound[..]).map_err(|error| {
@@ -513,7 +532,6 @@ impl<'a> WebRtcMediaEngine<'a> {
                                 .send_to(&response[..response_length], remote)
                                 .await
                                 .map_err(|_| WebRtcMediaError::UdpSend)?;
-                            self.intercom.session_heartbeat(SessionOwner::MatterCall);
                             if config.local_dtls_role == DtlsRole::Server
                                 && !dtls_peer_transport_set
                                 && ice.verified_peer_addr() == Some(remote)
@@ -534,7 +552,12 @@ impl<'a> WebRtcMediaEngine<'a> {
                         }
                     }
                     DemuxedPacket::Dtls => {
-                        if ice.verified_peer_addr() != Some(remote) {
+                        if !should_process_dtls_datagram(
+                            ice.verified_peer_addr() == Some(remote),
+                            srtp.is_some(),
+                        ) {
+                            // DTLS drives the handshake; late retransmits and close notifications
+                            // are irrelevant once the fingerprint-bound SRTP session exists.
                             continue;
                         }
                         match dtls.push_inbound_datagram(&packet[..length]) {
@@ -557,15 +580,13 @@ impl<'a> WebRtcMediaEngine<'a> {
                         }
                         if is_receiver_report_candidate(&packet[..length]) {
                             if let Some(srtp) = srtp.as_mut() {
-                                if accept_srtcp_receiver_report(
+                                let _ = accept_srtcp_receiver_report(
                                     srtp,
                                     &mut packet[..],
                                     length,
                                     &mut liveness,
                                     now_ms,
-                                ) {
-                                    self.intercom.session_heartbeat(SessionOwner::MatterCall);
-                                }
+                                );
                             }
                             continue;
                         }
@@ -578,7 +599,6 @@ impl<'a> WebRtcMediaEngine<'a> {
                         let Ok(plain_length) = srtp.unprotect_rtp(&mut packet[..], length) else {
                             continue;
                         };
-                        self.intercom.session_heartbeat(SessionOwner::MatterCall);
                         let range = rtp_payload_range(&packet[..plain_length])?;
                         let payload = &packet[range.start..range.end];
                         liveness.refresh(now_ms);
@@ -817,13 +837,22 @@ impl TurnTakingPolicy {
 #[cfg(test)]
 mod tests {
     use super::{
-        DtlsRole, MediaBenchmarkStats, PendingDtlsDatagrams, RtpPayloadRange, SessionLiveness,
-        TurnAction, TurnTakingPolicy, WebRtcSessionConfig, WebRtcSessionHandle,
-        WebRtcSessionRequestError, OPUS_DTX_MAX_BYTES, SESSION_ACTIVE, SESSION_IDLE,
-        SESSION_STOP_ACTIVE, SESSION_STOP_QUEUED,
+        DtlsRole, MediaBenchmarkStats, OPUS_DTX_MAX_BYTES, PendingDtlsDatagrams, RtpPayloadRange,
+        SESSION_ACTIVE, SESSION_IDLE, SESSION_IDLE_TIMEOUT_MS, SESSION_STOP_ACTIVE,
+        SESSION_STOP_QUEUED, SessionLiveness, TurnAction, TurnTakingPolicy, WebRtcSessionConfig,
+        WebRtcSessionHandle, WebRtcSessionRequestError,
     };
     use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
     use embassy_sync::channel::Channel;
+    use intercom_core::domain::intercom::{IntercomAction, SessionOwner};
+    use intercom_core::ports::{CommandChannel, IntercomControllerHandle};
+
+    #[test]
+    fn established_srtp_ignores_late_dtls_datagrams() {
+        assert!(!super::should_process_dtls_datagram(true, true));
+        assert!(super::should_process_dtls_datagram(true, false));
+        assert!(!super::should_process_dtls_datagram(false, false));
+    }
 
     #[test]
     fn media_resources_stay_within_main_stack_reserve() {
@@ -849,6 +878,45 @@ mod tests {
         assert!(second_queued);
         assert!(full_queue_rejected);
         assert_eq!(queue.front(), None);
+    }
+
+    #[test]
+    fn active_webrtc_session_refreshes_core_heartbeat_before_timeout() {
+        // Arrange
+        let commands = CommandChannel::new();
+        let intercom = IntercomControllerHandle::new(commands.sender());
+        let mut last_heartbeat_ms = 0;
+
+        // Act
+        super::maybe_send_core_session_heartbeat(&intercom, &mut last_heartbeat_ms, 999);
+        let before_deadline = commands.receiver().try_receive();
+        super::maybe_send_core_session_heartbeat(&intercom, &mut last_heartbeat_ms, 1_000);
+        let at_deadline = commands.receiver().try_receive();
+        super::maybe_send_core_session_heartbeat(&intercom, &mut last_heartbeat_ms, 1_999);
+        let before_next_deadline = commands.receiver().try_receive();
+        super::maybe_send_core_session_heartbeat(&intercom, &mut last_heartbeat_ms, 2_000);
+        let at_next_deadline = commands.receiver().try_receive();
+
+        // Assert
+        assert!(before_deadline.is_err());
+        assert!(matches!(
+            at_deadline,
+            Ok(IntercomAction::SessionHeartbeat(SessionOwner::MatterCall))
+        ));
+        assert!(before_next_deadline.is_err());
+        assert!(matches!(
+            at_next_deadline,
+            Ok(IntercomAction::SessionHeartbeat(SessionOwner::MatterCall))
+        ));
+    }
+
+    #[test]
+    fn session_liveness_tolerates_webrtc_ice_consent_interval() {
+        // ICE consent freshness can legitimately leave longer gaps than the old five-second timeout.
+        let liveness = SessionLiveness::new(0, SESSION_IDLE_TIMEOUT_MS);
+
+        assert!(!liveness.is_expired(15_000));
+        assert!(liveness.is_expired(30_000));
     }
 
     #[test]
