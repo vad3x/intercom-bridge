@@ -38,6 +38,20 @@ Open the worktree directory itself in the editor. Merge or remove completed work
 
 ## Build, Test & Flash
 
+### Cargo from a nested worktree
+
+This repository's feature worktrees may live under `.worktrees/<name>` inside the primary checkout. When Cargo runs from that nested worktree, it discovers `.cargo/config.toml` in both the worktree and its containing checkout. Cargo then applies aliases and linker flags twice. Symptoms include `cargo build-devkit` reporting `unexpected argument 'build' found` and the ESP linker reporting `region 'RAM' already defined` because `linkall.x` was passed twice.
+
+Run Cargo from the primary checkout root, point it at the worktree manifest, and keep build artifacts in the worktree's target directory. For a worktree named `matter-over-tcp`, use:
+
+```bash
+CARGO_TARGET_DIR="$PWD/.worktrees/matter-over-tcp/target" mise exec -- cargo test --manifest-path .worktrees/matter-over-tcp/Cargo.toml -p intercom-core -p intercom-adapter-http -p intercom-firmware --lib --target x86_64-apple-darwin
+CARGO_TARGET_DIR="$PWD/.worktrees/matter-over-tcp/target" mise exec -- cargo build --manifest-path .worktrees/matter-over-tcp/Cargo.toml -p intercom-firmware --release
+CARGO_TARGET_DIR="$PWD/.worktrees/matter-over-tcp/target" mise exec -- cargo build-devkit --manifest-path .worktrees/matter-over-tcp/Cargo.toml
+```
+
+This loads the primary checkout's Cargo config once while compiling the worktree's source. Avoid changing `.cargo/config.toml` to work around the duplicate load.
+
 ```bash
 # Run host-capable tests on macOS without hardware
 mise exec -- cargo test -p intercom-core -p intercom-adapter-http -p intercom-pairing-tool --target x86_64-apple-darwin
