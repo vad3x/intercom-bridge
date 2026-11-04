@@ -117,6 +117,14 @@ def is_intercom_bridge(ip: str, timeout: float) -> bool:
             connection.close()
 
 
+def advertises_tcp_server(txt: dict[str, str]) -> bool:
+    """Matter T is a bitmap: value 4 is the TCP server bit (T=6 also includes client)."""
+    try:
+        return bool(int(txt.get("T", "0")) & 4)
+    except ValueError:
+        return False
+
+
 def choose_bridge(services: list[MatterService], preferred_ip: str | None, timeout: float) -> MatterService:
     candidates = [service for service in services if service.port == MATTER_PORT]
     if preferred_ip:
@@ -124,7 +132,7 @@ def choose_bridge(services: list[MatterService], preferred_ip: str | None, timeo
     if not candidates:
         raise RuntimeError(f"No {SERVICE_TYPE} service on port {MATTER_PORT} was found")
 
-    supported = [service for service in candidates if service.txt.get("T") in {"4", "6"}]
+    supported = [service for service in candidates if advertises_tcp_server(service.txt)]
     for service in supported:
         for ip in service.addresses:
             if is_intercom_bridge(ip, timeout):
@@ -132,7 +140,7 @@ def choose_bridge(services: list[MatterService], preferred_ip: str | None, timeo
     # Some firmware profiles do not expose the HTTP API; retain mDNS as a fallback.
     if supported:
         return supported[0]
-    raise RuntimeError("Matter TCP service found, but no record advertised TCP support (T=4 or T=6)")
+    raise RuntimeError("Matter TCP service found, but no record advertised the TCP server bit in T")
 
 
 def connect(ip: str, timeout: float) -> socket.socket:
@@ -161,15 +169,17 @@ def run(timeout: float, preferred_ip: str | None) -> None:
 
     service = choose_bridge(services, preferred_ip, min(timeout, 2.0))
     tcp_flag = service.txt.get("T")
-    if tcp_flag not in {"4", "6"}:
-        raise RuntimeError(f"{service.name} TXT record has T={tcp_flag!r}, expected T=4 or T=6")
+    if not advertises_tcp_server(service.txt):
+        raise RuntimeError(
+            f"{service.name} TXT record has T={tcp_flag!r}, expected the TCP server bit (4)"
+        )
     addresses = [address for address in service.addresses if ":" not in address]
     if preferred_ip:
         addresses = [address for address in addresses if address == preferred_ip]
     if not addresses:
         raise RuntimeError(f"{service.name} has no usable IPv4 address: {service.addresses}")
     ip = addresses[0]
-    checks.append(("mDNS TXT", f"{service.name} at {ip}, T={tcp_flag}"))
+    checks.append(("mDNS TXT", f"{service.name} at {ip}, T={tcp_flag} (TCP server bit set)"))
 
     first = connect(ip, timeout)
     checks.append(("TCP handshake", f"connected to {ip}:{MATTER_PORT}"))
