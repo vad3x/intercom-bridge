@@ -506,8 +506,10 @@ async fn main(_spawner: Spawner) {
     #[cfg(feature = "devkit")]
     let audio_input_future = async {
         let mut tone = intercom_media::BenchToneGenerator::new();
-        let mut frames_in_window = 0u8;
-        let mut queue_drops = 0u8;
+        let mut schedule =
+            intercom_media::AudioCaptureSchedule::new(embassy_time::Instant::now().as_millis());
+        let mut drop_window = intercom_media::AudioFrameDropWindow::new();
+        let mut simulated_dma_overruns = 0u64;
         let levels = intercom_media::compute_frame_levels_dbfs(&tone.next_frame());
         intercom_core::domain::diagnostics::update_rx_levels_dbfs(
             levels.rms_dbfs,
@@ -515,16 +517,21 @@ async fn main(_spawner: Spawner) {
         );
         info!("DevKit audio input: synthetic 1 kHz test tone");
         loop {
-            if RX_AUDIO_CHANNEL.try_send(tone.next_frame()).is_err() {
-                queue_drops += 1;
+            let now_ms = embassy_time::Instant::now().as_millis();
+            embassy_time::Timer::after_millis(schedule.delay_until_next_ms(now_ms)).await;
+            let batch = schedule.take_due_frames(embassy_time::Instant::now().as_millis());
+            simulated_dma_overruns = simulated_dma_overruns.saturating_add(batch.overruns);
+
+            for _ in 0..batch.frames {
+                let queue_dropped = RX_AUDIO_CHANNEL.try_send(tone.next_frame()).is_err();
+                if let Some(queue_drops) = drop_window.record(queue_dropped) {
+                    info!(
+                        "DevKit audio capture frames=50 simulated_dma_overruns={} queue_drops={}",
+                        simulated_dma_overruns, queue_drops,
+                    );
+                    simulated_dma_overruns = 0;
+                }
             }
-            frames_in_window += 1;
-            if frames_in_window >= 50 {
-                info!("DevKit audio input cadence frames=50 queue_drops={}", queue_drops);
-                frames_in_window = 0;
-                queue_drops = 0;
-            }
-            embassy_time::Timer::after_millis(20).await;
         }
     };
 

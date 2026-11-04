@@ -173,4 +173,4 @@ impl I2sAudioPipeline {
     }
 }
 
-const DMA_STREAM_BYTES: usize = DMA_FRAME_BYTES * 4;
+const DMA_STREAM_BYTES: usize = DMA_FRAME_BYTES * intercom_media::AUDIO_DMA_BUFFER_FRAMES as usize;
