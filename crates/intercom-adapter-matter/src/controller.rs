@@ -266,7 +266,7 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
     ///
     /// # Panics
     /// Panics if the Matter stack encounters a fatal error.
-    pub async fn run(self, clock_driver: &'static dyn ClockSyncDriver) {
+    pub async fn run<D: ClockSyncDriver + 'static>(self, clock_driver: &'static D) {
         let config = self.config;
         // Build the Node descriptor from registered endpoints.
         let grouped = group_endpoint_clusters(&self.endpoint_metas);
@@ -439,15 +439,19 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
 /// Uses `NetifDiag` to check if any interface is operational, and
 /// `NetChangeNotif` to wait for state changes. Signals `wifi_connecting`/`commissioning`
 /// or `ecosystem_connecting`/`operational` when connectivity or pairing state changes.
-struct ConnectionMonitor<'a, R: SystemResetDriver> {
+struct ConnectionMonitor<'a, R: SystemResetDriver, D: ClockSyncDriver + 'static> {
     state_sender: SystemStateSender<'static>,
     readiness: &'static ClusterReadinessBarrier,
     reset: R,
     matter: &'a rs_matter::Matter<'a>,
-    clock_driver: &'static dyn ClockSyncDriver,
+    clock_driver: &'static D,
 }
 
-impl<R: SystemResetDriver> UserTask for ConnectionMonitor<'_, R> {
+impl<R, D> UserTask for ConnectionMonitor<'_, R, D>
+where
+    R: SystemResetDriver,
+    D: ClockSyncDriver + 'static,
+{
     async fn run<S, N>(&mut self, _net_stack: S, netif: N) -> Result<(), rs_matter::error::Error>
     where
         S: rs_matter_embassy::stack::nal::NetStack,

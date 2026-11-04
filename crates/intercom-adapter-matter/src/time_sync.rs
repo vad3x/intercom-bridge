@@ -3,7 +3,7 @@ use rs_matter::dm::clusters::time_sync::UtcTime;
 use rs_matter::Matter;
 
 /// Polls Matter's RTC without exposing its state or synchronization primitives outside this adapter.
-pub(super) fn poll_time_sync(matter: &Matter<'_>, clock: &dyn ClockSyncDriver) {
+pub(super) fn poll_time_sync<D: ClockSyncDriver>(matter: &Matter<'_>, clock: &D) {
     let utc_time = matter.with_state(|state| state.rtc.utc_time());
     if let Some(unix_ms) = reliable_matter_time_to_unix_ms(utc_time) {
         clock.set_epoch_time(unix_ms);
