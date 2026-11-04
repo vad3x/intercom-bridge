@@ -506,6 +506,8 @@ async fn main(_spawner: Spawner) {
     #[cfg(feature = "devkit")]
     let audio_input_future = async {
         let mut tone = intercom_media::BenchToneGenerator::new();
+        let mut frames_in_window = 0u8;
+        let mut queue_drops = 0u8;
         let levels = intercom_media::compute_frame_levels_dbfs(&tone.next_frame());
         intercom_core::domain::diagnostics::update_rx_levels_dbfs(
             levels.rms_dbfs,
@@ -513,7 +515,15 @@ async fn main(_spawner: Spawner) {
         );
         info!("DevKit audio input: synthetic 1 kHz test tone");
         loop {
-            let _ = RX_AUDIO_CHANNEL.try_send(tone.next_frame());
+            if RX_AUDIO_CHANNEL.try_send(tone.next_frame()).is_err() {
+                queue_drops += 1;
+            }
+            frames_in_window += 1;
+            if frames_in_window >= 50 {
+                info!("DevKit audio input cadence frames=50 queue_drops={}", queue_drops);
+                frames_in_window = 0;
+                queue_drops = 0;
+            }
             embassy_time::Timer::after_millis(20).await;
         }
     };

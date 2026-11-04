@@ -40,6 +40,7 @@ struct PendingOffer {
     local_ufrag: String<32>,
     local_password: String<64>,
     dtls_seed: [u8; 32],
+    ssrc: u32,
 }
 
 struct SessionMaterial {
@@ -188,6 +189,7 @@ impl<'a, R: SecureRandom> WebRtcSignalingFacade<'a, R> {
             remote.sha256_fingerprint,
             role,
             material.dtls_seed,
+            material.ssrc,
             remote.opus_payload_type,
         )
         .map_err(|_| SignalingError::InvalidSdp)?;
@@ -209,6 +211,7 @@ impl<'a, R: SecureRandom> WebRtcSignalingFacade<'a, R> {
                 local_ufrag: material.local_ufrag,
                 local_password: material.local_password,
                 dtls_seed: material.dtls_seed,
+                ssrc: material.ssrc,
             });
         });
         Ok(len)
@@ -237,6 +240,7 @@ impl<'a, R: SecureRandom> WebRtcSignalingFacade<'a, R> {
                 remote.sha256_fingerprint,
                 role,
                 local.dtls_seed,
+                local.ssrc,
                 remote.opus_payload_type,
             )
             .map_err(|_| SignalingError::InvalidSdp)?;
@@ -513,6 +517,17 @@ a=ssrc:3210117597 msid:- 621af9a1-27a2-4ec8-9433-d9f87063ac7f\r\n";
         assert!(answer.contains("a=ice-ufrag:"));
         assert_eq!(config.remote_ufrag.as_str(), "ctrlUfrag");
         assert_eq!(config.payload_type, 111);
+        let answer_ssrc = answer
+            .lines()
+            .find_map(|line| {
+                line.strip_prefix("a=ssrc:")?
+                    .split_ascii_whitespace()
+                    .next()?
+                    .parse::<u32>()
+                    .ok()
+            })
+            .expect("answer should advertise the local RTP SSRC");
+        assert_eq!(config.local_ssrc, answer_ssrc);
         assert!(!handle.is_idle());
     }
 

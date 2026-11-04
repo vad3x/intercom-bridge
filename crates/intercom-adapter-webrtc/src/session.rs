@@ -31,10 +31,55 @@ const DTLS_DATAGRAM_MAX_BYTES: usize = 1_500;
 const MBEDTLS_ERR_SSL_WANT_READ: i32 = -0x6900;
 const RTP_HEADER_BYTES: usize = 12;
 const MEDIA_POLL_MS: u64 = 20;
+const AUDIO_STATS_LOG_PACKET_INTERVAL: u32 = 50;
 const TURN_HANGOVER_MS: u64 = 400;
 const CORE_SESSION_HEARTBEAT_INTERVAL_MS: u64 = 1_000;
 // Keep ICE-lite sessions alive for RFC 7675 consent freshness expiry.
 const SESSION_IDLE_TIMEOUT_MS: u64 = 30_000;
+
+struct AudioSendPacer {
+    next_send_ms: u64,
+}
+
+impl AudioSendPacer {
+    fn new(now_ms: u64) -> Self {
+        Self {
+            next_send_ms: now_ms.saturating_add(MEDIA_POLL_MS),
+        }
+    }
+
+    fn delay_until_next_ms(&self, now_ms: u64) -> u64 {
+        self.next_send_ms.saturating_sub(now_ms)
+    }
+
+    fn advance_if_due(&mut self, now_ms: u64) -> bool {
+        if now_ms < self.next_send_ms {
+            return false;
+        }
+
+        let missed_intervals = now_ms.saturating_sub(self.next_send_ms) / MEDIA_POLL_MS;
+        let intervals_to_advance = missed_intervals.saturating_add(1);
+        self.next_send_ms = self
+            .next_send_ms
+            .saturating_add(intervals_to_advance.saturating_mul(MEDIA_POLL_MS));
+        true
+    }
+}
+
+fn build_rtp_header(
+    payload_type: u8,
+    sequence: u16,
+    timestamp: u32,
+    ssrc: u32,
+) -> [u8; RTP_HEADER_BYTES] {
+    let mut header = [0u8; RTP_HEADER_BYTES];
+    header[0] = 0x80;
+    header[1] = payload_type & 0x7f;
+    header[2..4].copy_from_slice(&sequence.to_be_bytes());
+    header[4..8].copy_from_slice(&timestamp.to_be_bytes());
+    header[8..12].copy_from_slice(&ssrc.to_be_bytes());
+    header
+}
 
 fn maybe_send_core_session_heartbeat(
     intercom: &IntercomControllerHandle<'_>,
@@ -60,6 +105,7 @@ pub struct WebRtcSessionConfig {
     pub remote_fingerprint_sha256: [u8; 32],
     pub local_dtls_role: DtlsRole,
     pub dtls_seed: [u8; 32],
+    pub local_ssrc: u32,
     pub payload_type: u8,
     pub local_port: u16,
 }
@@ -72,6 +118,7 @@ impl WebRtcSessionConfig {
         remote_fingerprint_sha256: [u8; 32],
         local_dtls_role: DtlsRole,
         dtls_seed: [u8; 32],
+        local_ssrc: u32,
         payload_type: u8,
     ) -> Result<Self, WebRtcSessionConfigError> {
         let mut local_ufrag_storage = heapless::String::new();
@@ -100,6 +147,7 @@ impl WebRtcSessionConfig {
             remote_fingerprint_sha256,
             local_dtls_role,
             dtls_seed,
+            local_ssrc,
             payload_type,
             local_port: MEDIA_UDP_PORT,
         })
@@ -441,10 +489,14 @@ impl<'a> WebRtcMediaEngine<'a> {
         let mut dtls_peer_transport_set = false;
         let mut ice_peer_logged = false;
         let mut first_audio_packet_logged = false;
+        let mut audio_packets_in_window = 0u32;
+        let mut dtx_packets_in_window = 0u32;
+        let mut last_audio_packet_ms = None;
+        let mut max_audio_gap_ms = 0u64;
+        let mut audio_pacer = AudioSendPacer::new(Instant::now().as_millis());
         let mut turn = TurnTakingPolicy::new(TURN_HANGOVER_MS);
         let mut sequence = 0u16;
         let mut timestamp = 0u32;
-        let ssrc = 0x5349_4e54u32;
         let mut liveness =
             SessionLiveness::new(Instant::now().as_millis(), SESSION_IDLE_TIMEOUT_MS);
         let mut last_core_heartbeat_ms = Instant::now().as_millis();
@@ -517,7 +569,7 @@ impl<'a> WebRtcMediaEngine<'a> {
                 }
             }
             let receive = socket.recv_from(&mut packet[..]);
-            let poll = Timer::after_millis(MEDIA_POLL_MS);
+            let poll = Timer::after_millis(audio_pacer.delay_until_next_ms(now_ms));
             let selected = embassy_futures::select::select(receive, poll).await;
             if let embassy_futures::select::Either::First(Ok((length, metadata))) = selected {
                 let remote = metadata.endpoint;
@@ -635,7 +687,8 @@ impl<'a> WebRtcMediaEngine<'a> {
             if turn.poll_hangover(now_ms) == Some(TurnAction::StopTalk) {
                 self.intercom.stop_talk(SessionOwner::MatterCall);
             }
-            if !turn.is_talking() && srtp.is_some() {
+            let audio_due = audio_pacer.advance_if_due(now_ms);
+            if audio_due && !turn.is_talking() && srtp.is_some() {
                 if let Some(frame) = self.rx_audio.try_receive().ok() {
                     let Some(srtp) = srtp.as_mut() else {
                         continue;
@@ -649,11 +702,13 @@ impl<'a> WebRtcMediaEngine<'a> {
                         encode_start.elapsed().as_micros().min(u64::from(u32::MAX)) as u32,
                     );
                     let packet_length = RTP_HEADER_BYTES + encoded_length;
-                    outbound[0] = 0x80;
-                    outbound[1] = config.payload_type & 0x7f;
-                    outbound[2..4].copy_from_slice(&sequence.to_be_bytes());
-                    outbound[4..8].copy_from_slice(&timestamp.to_be_bytes());
-                    outbound[8..12].copy_from_slice(&ssrc.to_be_bytes());
+                    let header = build_rtp_header(
+                        config.payload_type,
+                        sequence,
+                        timestamp,
+                        config.local_ssrc,
+                    );
+                    outbound[..RTP_HEADER_BYTES].copy_from_slice(&header);
                     outbound[RTP_HEADER_BYTES..packet_length]
                         .copy_from_slice(&encoded[..encoded_length]);
                     let protected_length = srtp
@@ -670,6 +725,28 @@ impl<'a> WebRtcMediaEngine<'a> {
                                 protected_length
                             );
                             first_audio_packet_logged = true;
+                        }
+                        let sent_at_ms = Instant::now().as_millis();
+                        if let Some(previous_ms) = last_audio_packet_ms {
+                            max_audio_gap_ms =
+                                max_audio_gap_ms.max(sent_at_ms.saturating_sub(previous_ms));
+                        }
+                        last_audio_packet_ms = Some(sent_at_ms);
+                        audio_packets_in_window += 1;
+                        if encoded_length <= OPUS_DTX_MAX_BYTES {
+                            dtx_packets_in_window += 1;
+                        }
+                        if audio_packets_in_window >= AUDIO_STATS_LOG_PACKET_INTERVAL {
+                            log::info!(
+                                "WebRTC audio cadence packets={} dtx={} max_gap_ms={} encode_max_us={}",
+                                audio_packets_in_window,
+                                dtx_packets_in_window,
+                                max_audio_gap_ms,
+                                self.benchmark_stats.max_encode_us,
+                            );
+                            audio_packets_in_window = 0;
+                            dtx_packets_in_window = 0;
+                            max_audio_gap_ms = 0;
                         }
                     }
                     sequence = sequence.wrapping_add(1);
@@ -851,10 +928,10 @@ impl TurnTakingPolicy {
 #[cfg(test)]
 mod tests {
     use super::{
-        DtlsRole, MediaBenchmarkStats, PendingDtlsDatagrams, RtpPayloadRange, SessionLiveness,
-        TurnAction, TurnTakingPolicy, WebRtcSessionConfig, WebRtcSessionHandle,
-        WebRtcSessionRequestError, OPUS_DTX_MAX_BYTES, SESSION_ACTIVE, SESSION_IDLE,
-        SESSION_IDLE_TIMEOUT_MS, SESSION_STOP_ACTIVE, SESSION_STOP_QUEUED,
+        build_rtp_header, AudioSendPacer, DtlsRole, MediaBenchmarkStats, PendingDtlsDatagrams,
+        RtpPayloadRange, SessionLiveness, TurnAction, TurnTakingPolicy, WebRtcSessionConfig,
+        WebRtcSessionHandle, WebRtcSessionRequestError, OPUS_DTX_MAX_BYTES, SESSION_ACTIVE,
+        SESSION_IDLE, SESSION_IDLE_TIMEOUT_MS, SESSION_STOP_ACTIVE, SESSION_STOP_QUEUED,
     };
     use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
     use embassy_sync::channel::Channel;
@@ -871,6 +948,29 @@ mod tests {
     #[test]
     fn media_resources_stay_within_main_stack_reserve() {
         assert!(core::mem::size_of::<super::WebRtcMediaResources>() <= 36 * 1024);
+    }
+
+    #[test]
+    fn outbound_rtp_header_uses_the_configured_ssrc() {
+        let header = build_rtp_header(111, 7, 960, 0x1234_5678);
+
+        assert_eq!(
+            u32::from_be_bytes(header[8..12].try_into().unwrap()),
+            0x1234_5678
+        );
+    }
+
+    #[test]
+    fn audio_send_pacer_ignores_early_network_activity() {
+        let mut pacer = AudioSendPacer::new(100);
+
+        assert_eq!(pacer.delay_until_next_ms(105), 15);
+        assert!(!pacer.advance_if_due(105));
+        assert_eq!(pacer.delay_until_next_ms(105), 15);
+        assert!(pacer.advance_if_due(120));
+        assert_eq!(pacer.delay_until_next_ms(120), 20);
+        assert!(!pacer.advance_if_due(139));
+        assert!(pacer.advance_if_due(140));
     }
 
     #[test]
@@ -1100,7 +1200,14 @@ mod tests {
 
         // Act
         let config = WebRtcSessionConfig::new(
-            inputs.0, inputs.1, inputs.2, inputs.3, inputs.4, inputs.5, 72,
+            inputs.0,
+            inputs.1,
+            inputs.2,
+            inputs.3,
+            inputs.4,
+            inputs.5,
+            0x1234_5678,
+            72,
         );
 
         // Assert
@@ -1120,6 +1227,7 @@ mod tests {
             [0x5a; 32],
             DtlsRole::Server,
             [0x42; 32],
+            0x1234_5678,
             111,
         )
         .expect("valid config");
@@ -1166,6 +1274,7 @@ mod tests {
             [0x5a; 32],
             DtlsRole::Server,
             [0x42; 32],
+            0x1234_5678,
             111,
         )
         .expect("valid session config");
@@ -1180,6 +1289,7 @@ mod tests {
                 [0x5a; 32],
                 DtlsRole::Server,
                 [0x42; 32],
+                0x1234_5678,
                 111,
             )
             .expect("valid session config"),

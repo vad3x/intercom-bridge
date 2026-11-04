@@ -225,4 +225,22 @@ mod tests {
         );
         assert_ne!(plc_frame.samples, PcmFrame::SILENCE.samples);
     }
+
+    #[test]
+    fn sustained_test_tone_is_not_suppressed_as_opus_dtx() {
+        let mut codec = HalfDuplexOpusCodec::new();
+        let mut tone = BenchToneGenerator::new();
+        let mut encoded = [0u8; MAX_OPUS_PACKET_BYTES];
+        let mut dtx_packets = 0;
+
+        for _ in 0..100 {
+            let pcm = tone.next_frame();
+            let length = codec
+                .encode_listen_frame(&pcm, &mut encoded)
+                .expect("opus encode");
+            dtx_packets += usize::from(length <= 3);
+        }
+
+        assert_eq!(dtx_packets, 0, "continuous tone produced DTX packets");
+    }
 }
