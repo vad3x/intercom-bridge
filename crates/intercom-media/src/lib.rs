@@ -11,7 +11,51 @@ pub const AUDIO_FRAME_SAMPLES: usize = 320;
 pub const RX_AUDIO_QUEUE_CAP: usize = 2;
 pub const TX_AUDIO_QUEUE_CAP: usize = 3;
 pub const AUDIO_FRAME_DROP_WINDOW_FRAMES: u8 = 50;
+pub const AUDIO_CAPTURE_INTERVAL_MS: u64 = 20;
+pub const AUDIO_DMA_BUFFER_FRAMES: u8 = 4;
 pub const SILENCE_DBFS: i8 = -96;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AudioCaptureBatch {
+    pub frames: u8,
+    pub overruns: u64,
+}
+
+pub struct AudioCaptureSchedule {
+    next_frame_ms: u64,
+}
+
+impl AudioCaptureSchedule {
+    pub const fn new(now_ms: u64) -> Self {
+        Self {
+            next_frame_ms: now_ms + AUDIO_CAPTURE_INTERVAL_MS,
+        }
+    }
+
+    pub fn delay_until_next_ms(&self, now_ms: u64) -> u64 {
+        self.next_frame_ms.saturating_sub(now_ms)
+    }
+
+    pub fn take_due_frames(&mut self, now_ms: u64) -> AudioCaptureBatch {
+        if now_ms < self.next_frame_ms {
+            return AudioCaptureBatch {
+                frames: 0,
+                overruns: 0,
+            };
+        }
+
+        let elapsed_intervals =
+            now_ms.saturating_sub(self.next_frame_ms) / AUDIO_CAPTURE_INTERVAL_MS + 1;
+        self.next_frame_ms = self.next_frame_ms.saturating_add(
+            elapsed_intervals.saturating_mul(AUDIO_CAPTURE_INTERVAL_MS),
+        );
+        let capacity = u64::from(AUDIO_DMA_BUFFER_FRAMES);
+        AudioCaptureBatch {
+            frames: elapsed_intervals.min(capacity) as u8,
+            overruns: elapsed_intervals.saturating_sub(capacity),
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PcmFrame {
@@ -385,5 +429,41 @@ mod tests {
         let copied = frame;
         // Assert
         assert_eq!(copied, PcmFrame::SILENCE);
+    }
+
+    #[test]
+    fn audio_capture_schedule_uses_absolute_20ms_deadlines() {
+        // Arrange
+        let mut schedule = AudioCaptureSchedule::new(0);
+
+        // Act
+        let early = schedule.take_due_frames(19);
+        let first = schedule.take_due_frames(20);
+        let late = schedule.take_due_frames(50);
+
+        // Assert
+        assert_eq!(early, AudioCaptureBatch { frames: 0, overruns: 0 });
+        assert_eq!(schedule.delay_until_next_ms(50), 10);
+        assert_eq!(first, AudioCaptureBatch { frames: 1, overruns: 0 });
+        assert_eq!(late, AudioCaptureBatch { frames: 1, overruns: 0 });
+    }
+
+    #[test]
+    fn audio_capture_schedule_caps_backlog_at_dma_capacity_and_counts_overruns() {
+        // Arrange
+        let mut schedule = AudioCaptureSchedule::new(0);
+
+        // Act
+        let batch = schedule.take_due_frames(100);
+
+        // Assert
+        assert_eq!(
+            batch,
+            AudioCaptureBatch {
+                frames: 4,
+                overruns: 1,
+            }
+        );
+        assert_eq!(schedule.delay_until_next_ms(100), 20);
     }
 }
