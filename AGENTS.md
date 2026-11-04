@@ -36,6 +36,10 @@ git status -sb
 
 Open the worktree directory itself in the editor. Merge or remove completed worktrees at task boundaries so the primary checkout and the active branch do not drift.
 
+### Verify the active worktree before editing
+
+When a task uses multiple repositories or worktrees, run `git rev-parse --show-toplevel`, `git status -sb`, and `git worktree list --porcelain` in the repository named by the task before editing. `.worktrees` entries can be symlinks to sibling repositories rather than Git worktrees; inspect them with `ls -la` and confirm the registered checkout path with `git worktree list`. Do not move a worktree with `mv`; if relocation is necessary, use `git worktree move <old-path> <new-path>` so Git updates its administrative metadata. Prefer a sibling worktree outside the primary checkout when the task allows it, avoiding nested Cargo config discovery; otherwise follow the nested-worktree Cargo commands below.
+
 ## Build, Test & Flash
 
 ### Cargo from a nested worktree
@@ -88,6 +92,20 @@ espflash flash target/riscv32imac-unknown-none-elf/release/intercom-bridge \
     --partition-table partitions-4mb.csv \
     --monitor
 ```
+
+### Avoid serial-port contention during flashing
+
+Before invoking `espflash`, check whether a monitor already owns the board port:
+
+```bash
+lsof -nP /dev/cu.usbmodem14201
+```
+
+If the listed owner is a stale `scripts/monitor.py` process, stop that specific PID with `kill -INT <PID>`, then repeat `lsof` and confirm the port is free before flashing. Do not repeatedly retry a flash that is stuck at 0%; first check for another serial-port owner. After flashing finishes, restart logging with `python3 scripts/monitor.py --no-reset --port /dev/cu.usbmodem14201` so monitoring does not reset the board.
+
+### Matter-over-TCP smoke-test timing
+
+Wait until the bridge has joined Wi-Fi and `/api/status` reports `state: Operational` before treating a missing `_matter._tcp.local.` TCP-server bit as a firmware defect. Run `python3 scripts/test_matter_tcp.py --ip <device-ip>` while the Matter TCP listener is free, before starting Home Assistant's Listen stream: the listener accepts one inbound peer, so HA's active Matter connection can prevent the smoke test from connecting. The script closes its test peer and reconnects itself; leave the HA stream running for the separate sustained WebRTC test after the smoke test passes.
 
 ### Viewing Commissioning QR & Pairing Codes
 
