@@ -23,4 +23,5 @@ pub use domain::{
     WifiSsid, MAX_ECOSYSTEM_PROPERTIES,
 };
 pub use events::{SystemState, SystemStateReceiver, SystemStateSender, SystemStateWatch};
+pub use ports::ClockSyncDriver;
 pub use service::{DiagnosticsService, IntercomController};

@@ -69,9 +69,6 @@ use intercom_core::service::DiagnosticsService;
 #[cfg(not(feature = "ota-disabled"))]
 use edf_ota::driver::FlashOtaDriver;
 #[cfg(target_arch = "riscv32")]
-#[cfg(feature = "ota-disabled")]
-use intercom_firmware::disabled_ota::DisabledOtaDriver;
-#[cfg(target_arch = "riscv32")]
 use intercom_adapter_http::{HttpAudioMedia, HttpServer, HttpServerConfig};
 #[cfg(target_arch = "riscv32")]
 use intercom_adapter_webrtc::session::{
@@ -79,6 +76,9 @@ use intercom_adapter_webrtc::session::{
 };
 #[cfg(target_arch = "riscv32")]
 use intercom_adapter_webrtc::signaling::{SecureRandom, SignalingError, WebRtcSignalingFacade};
+#[cfg(target_arch = "riscv32")]
+#[cfg(feature = "ota-disabled")]
+use intercom_firmware::disabled_ota::DisabledOtaDriver;
 
 #[cfg(target_arch = "riscv32")]
 use intercom_adapter_gpio::boot_button::{GpioBootButtonConfig, GpioBootButtonDriver};
@@ -345,8 +345,8 @@ async fn main(_spawner: Spawner) {
     static DEVKIT_INDICATOR: StaticCell<intercom_firmware::devkit_led::DevKitLedDriver> =
         StaticCell::new();
     #[cfg(feature = "led-smartled")]
-    let indicator: &'static intercom_firmware::devkit_led::DevKitLedDriver =
-        &*DEVKIT_INDICATOR.init(intercom_firmware::devkit_led::DevKitLedDriver::new(
+    let indicator: &'static intercom_firmware::devkit_led::DevKitLedDriver = &*DEVKIT_INDICATOR
+        .init(intercom_firmware::devkit_led::DevKitLedDriver::new(
             peripherals.RMT,
             peripherals.GPIO8,
         ));
@@ -397,7 +397,9 @@ async fn main(_spawner: Spawner) {
     // ========================================================================
 
     let app_future = app.run(state_sender, &command_receiver, access_handle);
-    let matter_future = pin!(matter.run());
+    static CLOCK_SYNC_DRIVER: utils::uptime_logger::FirmwareClockSyncDriver =
+        utils::uptime_logger::FirmwareClockSyncDriver;
+    let matter_future = pin!(matter.run(&CLOCK_SYNC_DRIVER));
     let led_future = indicator.run(state_receiver);
     let http_future = async {
         let stack = rs_matter_embassy::enet::wait_global_stack().await;

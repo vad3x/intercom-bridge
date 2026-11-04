@@ -1,5 +1,6 @@
 //! Outbound port traits for Smart Intercom core.
 
+pub mod clock;
 pub mod diagnostics;
 pub mod ecosystem;
 pub mod inbound;
@@ -9,6 +10,7 @@ pub mod reset;
 
 use crate::domain::intercom::{AudioDirection, BusLineState};
 
+pub use clock::ClockSyncDriver;
 pub use diagnostics::HardwareInfoDriver;
 pub use ecosystem::EcosystemInfoDriver;
 pub use edf_core::ports::ota as ota_edf;

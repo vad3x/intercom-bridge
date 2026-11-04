@@ -22,6 +22,7 @@ mod controller;
 mod door_lock;
 mod doorbell_switch;
 pub mod readiness;
+mod time_sync;
 
 use rs_matter::dm::{AsyncHandler, Cluster, DeviceType};
 

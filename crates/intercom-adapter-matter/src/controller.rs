@@ -43,7 +43,7 @@ use rs_matter_embassy::wireless::esp::EspWifiDriver;
 use rs_matter_embassy::wireless::{EmbassyWifi, EmbassyWifiMatterStack};
 
 use intercom_core::events::SystemStateSender;
-use intercom_core::ports::{ResetScope, SystemResetDriver};
+use intercom_core::ports::{ClockSyncDriver, ResetScope, SystemResetDriver};
 
 use super::{commissioning, ClusterReadinessBarrier, MatterCluster, BUMP_SIZE};
 
@@ -162,6 +162,7 @@ impl Matcher for ClusterMatcher {
 /// A dataver counter used to give each descriptor handler a unique seed.
 /// Starts above the cluster handler datavers (which use 1, 2, …).
 static DESC_DATAVER_COUNTER: portable_atomic::AtomicU32 = portable_atomic::AtomicU32::new(100);
+const ROOT_ENDPOINT: Endpoint<'static> = rs_matter::root_endpoint!(wifi, time_sync());
 
 pub struct MatterController<S: KvBlobStore, R: SystemResetDriver, H = EmptyHandler> {
     handler: H,
@@ -265,12 +266,12 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
     ///
     /// # Panics
     /// Panics if the Matter stack encounters a fatal error.
-    pub async fn run(self) {
+    pub async fn run(self, clock_driver: &'static dyn ClockSyncDriver) {
         let config = self.config;
         // Build the Node descriptor from registered endpoints.
         let grouped = group_endpoint_clusters(&self.endpoint_metas);
         let mut endpoints: Vec<Endpoint> = Vec::with_capacity(1 + grouped.len());
-        endpoints.push(EmbassyWifiMatterStack::<0, ()>::root_endpoint());
+        endpoints.push(ROOT_ENDPOINT);
         for g in &grouped {
             endpoints.push(Endpoint::new_with_clients(
                 g.id,
@@ -397,6 +398,7 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
             readiness: self.readiness,
             reset: self.reset,
             matter: stack.matter(),
+            clock_driver,
         };
         let wifi = EmbassyWifi::new(
             EspWifiDriver::new(config.peripherals.wifi, config.peripherals.bt),
@@ -442,6 +444,7 @@ struct ConnectionMonitor<'a, R: SystemResetDriver> {
     readiness: &'static ClusterReadinessBarrier,
     reset: R,
     matter: &'a rs_matter::Matter<'a>,
+    clock_driver: &'static dyn ClockSyncDriver,
 }
 
 impl<R: SystemResetDriver> UserTask for ConnectionMonitor<'_, R> {
@@ -462,6 +465,8 @@ impl<R: SystemResetDriver> UserTask for ConnectionMonitor<'_, R> {
         }
 
         let mut state = ConnectionState::new(initially_commissioned);
+
+        super::time_sync::poll_time_sync(self.matter, self.clock_driver);
 
         loop {
             // Check if any network interface is operational
@@ -495,6 +500,7 @@ impl<R: SystemResetDriver> UserTask for ConnectionMonitor<'_, R> {
             let tick = pin!(Timer::after(Duration::from_secs(3)));
 
             select(net_changed, tick).await;
+            super::time_sync::poll_time_sync(self.matter, self.clock_driver);
         }
     }
 }
