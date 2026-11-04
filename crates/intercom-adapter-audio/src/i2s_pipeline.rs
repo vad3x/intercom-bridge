@@ -20,8 +20,9 @@ use esp_hal::time::Rate;
 use esp_hal::Async;
 use intercom_core::domain::diagnostics::{is_tone_active, update_rx_levels_dbfs};
 use intercom_media::{
-    compute_frame_levels_dbfs, AudioFrameSink, AudioFrameSource, BenchToneGenerator, PcmFrame,
-    RxAudioSender, TxAudioReceiver, AUDIO_SAMPLE_RATE_HZ,
+    compute_frame_levels_dbfs, AudioFrameDropWindow, AudioFrameSink, AudioFrameSource,
+    BenchToneGenerator, PcmFrame, RxAudioSender, TxAudioReceiver, AUDIO_FRAME_DROP_WINDOW_FRAMES,
+    AUDIO_SAMPLE_RATE_HZ,
 };
 
 use crate::pcm_slots::{decode_frame, encode_frame, DMA_FRAME_BYTES};
@@ -109,10 +110,15 @@ impl I2sAudioPipeline {
         transfer: &mut I2sRxDmaTransfer<'static, Async, DmaRxStreamBuf>,
         mut sender: RxAudioSender<'_>,
     ) -> Result<(), DmaError> {
+        let mut input_window = AudioFrameDropWindow::new();
+        let mut max_dma_backlog_frames = 0usize;
+
         loop {
             while transfer.available_bytes() < DMA_FRAME_BYTES {
                 transfer.wait_for_available_async().await?;
             }
+            let available_frames = transfer.available_bytes() / DMA_FRAME_BYTES;
+            max_dma_backlog_frames = max_dma_backlog_frames.max(available_frames);
             // One complete frame per descriptor keeps every read aligned and
             // avoids retaining an expanded raw frame in the async task storage.
             let raw = transfer
@@ -123,7 +129,16 @@ impl I2sAudioPipeline {
             transfer.consume(DMA_FRAME_BYTES);
             let levels = compute_frame_levels_dbfs(&frame);
             update_rx_levels_dbfs(levels.rms_dbfs, levels.peak_dbfs);
-            let _ = sender.try_send_frame(frame);
+            let queue_dropped = sender.try_send_frame(frame).is_err();
+            if let Some(queue_drops) = input_window.record(queue_dropped) {
+                log::info!(
+                    "I2S audio input window frames={} queue_drops={} max_dma_backlog_frames={}",
+                    AUDIO_FRAME_DROP_WINDOW_FRAMES,
+                    queue_drops,
+                    max_dma_backlog_frames,
+                );
+                max_dma_backlog_frames = 0;
+            }
         }
     }
 

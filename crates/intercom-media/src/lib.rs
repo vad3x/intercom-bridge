@@ -10,6 +10,7 @@ pub const AUDIO_SAMPLE_RATE_HZ: u32 = 16_000;
 pub const AUDIO_FRAME_SAMPLES: usize = 320;
 pub const RX_AUDIO_QUEUE_CAP: usize = 2;
 pub const TX_AUDIO_QUEUE_CAP: usize = 3;
+pub const AUDIO_FRAME_DROP_WINDOW_FRAMES: u8 = 50;
 pub const SILENCE_DBFS: i8 = -96;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,6 +45,34 @@ pub type RxAudioReceiver<'a> = Receiver<'a, CriticalSectionRawMutex, PcmFrame, R
 pub type TxAudioChannel = Channel<CriticalSectionRawMutex, PcmFrame, TX_AUDIO_QUEUE_CAP>;
 pub type TxAudioSender<'a> = Sender<'a, CriticalSectionRawMutex, PcmFrame, TX_AUDIO_QUEUE_CAP>;
 pub type TxAudioReceiver<'a> = Receiver<'a, CriticalSectionRawMutex, PcmFrame, TX_AUDIO_QUEUE_CAP>;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AudioFrameDropWindow {
+    frames: u8,
+    drops: u8,
+}
+
+impl AudioFrameDropWindow {
+    pub const fn new() -> Self {
+        Self {
+            frames: 0,
+            drops: 0,
+        }
+    }
+
+    pub fn record(&mut self, dropped: bool) -> Option<u8> {
+        self.frames += 1;
+        self.drops += u8::from(dropped);
+
+        if self.frames == AUDIO_FRAME_DROP_WINDOW_FRAMES {
+            let drops = self.drops;
+            *self = Self::new();
+            Some(drops)
+        } else {
+            None
+        }
+    }
+}
 
 impl<const N: usize> AudioFrameSource for Receiver<'_, CriticalSectionRawMutex, PcmFrame, N> {
     async fn receive_frame(&mut self) -> PcmFrame {
@@ -163,6 +192,22 @@ const DBFS_FRACTION_HUNDREDTHS: [u16; 17] = [
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn audio_frame_drop_window_reports_and_resets_every_50_frames() {
+        // Arrange
+        let mut window = AudioFrameDropWindow::new();
+        let mut reported_drops = None;
+
+        // Act
+        for frame_index in 0..50 {
+            reported_drops = window.record(frame_index % 10 == 0);
+        }
+
+        // Assert
+        assert_eq!(reported_drops, Some(5));
+        assert_eq!(window.record(false), None);
+    }
 
     #[test]
     fn silence_frame_measures_minus_96_dbfs() {
