@@ -125,7 +125,7 @@ def advertises_tcp_server(txt: dict[str, str]) -> bool:
         return False
 
 
-def choose_bridge(services: list[MatterService], preferred_ip: str | None, timeout: float) -> MatterService:
+def choose_bridge(services: list[MatterService], preferred_ip: str | None, timeout: float) -> tuple[MatterService, str]:
     candidates = [service for service in services if service.port == MATTER_PORT]
     if preferred_ip:
         candidates = [service for service in candidates if preferred_ip in service.addresses]
@@ -133,14 +133,38 @@ def choose_bridge(services: list[MatterService], preferred_ip: str | None, timeo
         raise RuntimeError(f"No {SERVICE_TYPE} service on port {MATTER_PORT} was found")
 
     supported = [service for service in candidates if advertises_tcp_server(service.txt)]
+    if preferred_ip and supported:
+        return supported[0], preferred_ip
     for service in supported:
         for ip in service.addresses:
-            if is_intercom_bridge(ip, timeout):
-                return service
-    # Some firmware profiles do not expose the HTTP API; retain mDNS as a fallback.
-    if supported:
-        return supported[0]
-    raise RuntimeError("Matter TCP service found, but no record advertised the TCP server bit in T")
+            if ":" not in ip and is_intercom_bridge(ip, timeout):
+                return service, ip
+    if not supported:
+        raise RuntimeError("Matter TCP service found, but no record advertised the TCP server bit in T")
+    raise RuntimeError("Could not identify the Intercom Bridge; specify its address with --ip")
+
+
+def read_device_logs(ip: str, timeout: float) -> set[str]:
+    connection = http.client.HTTPConnection(ip, 8080, timeout=timeout)
+    try:
+        connection.request("GET", "/api/logs")
+        response = connection.getresponse()
+        if response.status != 200:
+            raise RuntimeError(f"Device logs returned HTTP {response.status}")
+        return set(response.read().decode("utf-8", errors="replace").splitlines())
+    finally:
+        connection.close()
+
+
+def verify_accepted(ip: str, port: int, previous_logs: set[str], timeout: float) -> None:
+    deadline = time.monotonic() + timeout
+    marker = f"Matter TCP accepted peer "
+    while time.monotonic() < deadline:
+        for line in read_device_logs(ip, min(timeout, 2.0)) - previous_logs:
+            if marker in line and line.rstrip().endswith(f":{port}"):
+                return
+        time.sleep(0.1)
+    raise RuntimeError(f"Device did not log acceptance of TCP peer port {port}")
 
 
 def connect(ip: str, timeout: float) -> socket.socket:
@@ -167,18 +191,14 @@ def run(timeout: float, preferred_ip: str | None) -> None:
     if not services:
         raise RuntimeError(f"No services found for {SERVICE_TYPE}")
 
-    service = choose_bridge(services, preferred_ip, min(timeout, 2.0))
+    service, ip = choose_bridge(services, preferred_ip, min(timeout, 2.0))
     tcp_flag = service.txt.get("T")
     if not advertises_tcp_server(service.txt):
         raise RuntimeError(
             f"{service.name} TXT record has T={tcp_flag!r}, expected the TCP server bit (4)"
         )
-    addresses = [address for address in service.addresses if ":" not in address]
-    if preferred_ip:
-        addresses = [address for address in addresses if address == preferred_ip]
-    if not addresses:
-        raise RuntimeError(f"{service.name} has no usable IPv4 address: {service.addresses}")
-    ip = addresses[0]
+    if ":" in ip:
+        raise RuntimeError(f"IPv6 addresses are not supported for this smoke test: {ip}")
     checks.append(("mDNS TXT", f"{service.name} at {ip}, T={tcp_flag} (TCP server bit set)"))
 
     first = connect(ip, timeout)
@@ -196,9 +216,13 @@ def run(timeout: float, preferred_ip: str | None) -> None:
         first.close()
 
     time.sleep(0.2)
+    previous_logs = read_device_logs(ip, min(timeout, 2.0))
     second = connect(ip, timeout)
     try:
-        checks.append(("Reconnect", f"second TCP handshake to {ip}:{MATTER_PORT} succeeded"))
+        second.sendall(frame)
+        verify_accepted(ip, second.getsockname()[1], previous_logs, timeout)
+        verify_socket_stays_open(second)
+        checks.append(("Reconnect", "device accepted the second connection and remained open after a framed message"))
     finally:
         second.close()
 
