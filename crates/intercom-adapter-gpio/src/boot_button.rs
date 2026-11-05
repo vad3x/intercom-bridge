@@ -41,7 +41,10 @@ impl GpioBootButtonConfig {
     }
 
     /// Attach any custom hold feedback provider.
-    pub fn with_hold_feedback<I: edf_gpio::led::HoldFeedback + 'static>(mut self, feedback: &'static I) -> Self {
+    pub fn with_hold_feedback<I: edf_gpio::led::HoldFeedback + 'static>(
+        mut self,
+        feedback: &'static I,
+    ) -> Self {
         self.inner = self.inner.with_indicator(feedback);
         self
     }

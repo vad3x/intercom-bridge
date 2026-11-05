@@ -8,6 +8,7 @@ use core::sync::atomic::Ordering;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::blocking_mutex::Mutex;
 use heapless::String;
+use intercom_core::domain::intercom::SessionOwner;
 use portable_atomic::AtomicU32;
 
 use crate::dtls::{DtlsRole, DtlsSrtpEngine, DtlsSrtpResourceCell, DtlsSrtpResources};
@@ -41,6 +42,7 @@ struct PendingOffer {
     local_password: String<64>,
     dtls_seed: [u8; 32],
     ssrc: u32,
+    owner: SessionOwner,
 }
 
 struct SessionMaterial {
@@ -169,6 +171,15 @@ impl<'a, R: SecureRandom> WebRtcSignalingFacade<'a, R> {
         offer: &str,
         answer_out: &mut [u8],
     ) -> Result<usize, SignalingError> {
+        self.accept_offer_for_owner(offer, answer_out, SessionOwner::MatterCall)
+    }
+
+    pub fn accept_offer_for_owner(
+        &self,
+        offer: &str,
+        answer_out: &mut [u8],
+        owner: SessionOwner,
+    ) -> Result<usize, SignalingError> {
         let ipv4 = self.local_ipv4()?;
         if !self.handle.is_idle() || self.pending.lock(|p| p.borrow().is_some()) {
             return Err(SignalingError::Busy);
@@ -182,7 +193,7 @@ impl<'a, R: SecureRandom> WebRtcSignalingFacade<'a, R> {
         let fingerprint = self.local_fingerprint(material.dtls_seed, role)?;
         let params = Self::local_params(ipv4, &material, fingerprint);
         let len = write_sdp_answer(&remote, &params, answer_out).map_err(map_sdp_error)?;
-        let config = WebRtcSessionConfig::new(
+        let config = WebRtcSessionConfig::new_for_owner(
             &material.local_ufrag,
             remote.ice_ufrag,
             &material.local_password,
@@ -191,6 +202,7 @@ impl<'a, R: SecureRandom> WebRtcSignalingFacade<'a, R> {
             material.dtls_seed,
             material.ssrc,
             remote.opus_payload_type,
+            owner,
         )
         .map_err(|_| SignalingError::InvalidSdp)?;
         self.handle.start(config).map_err(map_request_error)?;
@@ -212,6 +224,7 @@ impl<'a, R: SecureRandom> WebRtcSignalingFacade<'a, R> {
                 local_password: material.local_password,
                 dtls_seed: material.dtls_seed,
                 ssrc: material.ssrc,
+                owner: SessionOwner::MatterCall,
             });
         });
         Ok(len)
@@ -233,7 +246,7 @@ impl<'a, R: SecureRandom> WebRtcSignalingFacade<'a, R> {
         self.pending.lock(|pending| {
             let pending = pending.borrow();
             let local = pending.as_ref().ok_or(SignalingError::InvalidInState)?;
-            let config = WebRtcSessionConfig::new(
+            let config = WebRtcSessionConfig::new_for_owner(
                 &local.local_ufrag,
                 remote.ice_ufrag,
                 &local.local_password,
@@ -242,6 +255,7 @@ impl<'a, R: SecureRandom> WebRtcSignalingFacade<'a, R> {
                 local.dtls_seed,
                 local.ssrc,
                 remote.opus_payload_type,
+                local.owner,
             )
             .map_err(|_| SignalingError::InvalidSdp)?;
             self.handle.start(config).map_err(map_request_error)
@@ -258,8 +272,20 @@ impl<'a, R: SecureRandom> WebRtcSignalingFacade<'a, R> {
     }
 
     pub fn stop(&self) {
-        self.pending.lock(|pending| *pending.borrow_mut() = None);
-        let _ = self.handle.stop();
+        self.stop_for_owner(SessionOwner::MatterCall);
+    }
+
+    pub fn stop_for_owner(&self, owner: SessionOwner) {
+        self.pending.lock(|pending| {
+            if pending
+                .borrow()
+                .as_ref()
+                .is_some_and(|offer| offer.owner == owner)
+            {
+                *pending.borrow_mut() = None;
+            }
+        });
+        let _ = self.handle.stop_for_owner(owner);
     }
 
     pub fn is_idle(&self) -> bool {
@@ -374,6 +400,7 @@ mod tests {
 
     use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
     use embassy_sync::channel::Channel;
+    use intercom_core::domain::intercom::SessionOwner;
     use intercom_core::ports::inbound::{AccessControllerHandle, CommandChannel};
     use intercom_media::{RxAudioChannel, TxAudioChannel};
     use portable_atomic::AtomicU8;
@@ -529,6 +556,47 @@ a=ssrc:3210117597 msid:- 621af9a1-27a2-4ec8-9433-d9f87063ac7f\r\n";
             .expect("answer should advertise the local RTP SSRC");
         assert_eq!(config.local_ssrc, answer_ssrc);
         assert!(!handle.is_idle());
+    }
+
+    #[test]
+    fn debug_offer_uses_the_shared_media_engine_and_owner_scoped_stop() {
+        let _guard = crate::dtls::DTLS_TEST_LOCK.lock().expect("DTLS lock");
+        let commands = CommandChannel::new();
+        let requests = Channel::<CriticalSectionRawMutex, WebRtcSessionConfig, 1>::new();
+        let state = AtomicU8::new(0);
+        let rx = RxAudioChannel::new();
+        let tx = TxAudioChannel::new();
+        let mut dtls_storage = DtlsSrtpResources::new();
+        let dtls_resources = crate::dtls::DtlsSrtpResourceCell::new(&mut dtls_storage);
+        let mut resources = crate::session::WebRtcMediaResources::new();
+        let (_engine, handle) = WebRtcMediaEngine::new(
+            &requests,
+            &state,
+            AccessControllerHandle::new(commands.sender()),
+            rx.receiver(),
+            tx.sender(),
+            &mut resources,
+            &dtls_resources,
+        );
+        let random = SecureRandomMock(Cell::new(0));
+        let facade = WebRtcSignalingFacade::new_with_resources(handle, &random, &dtls_resources);
+        facade.set_local_ipv4([192, 168, 1, 50]);
+        let mut answer = [0u8; 2048];
+
+        let result = facade.accept_offer_for_owner(
+            CONTROLLER_OFFER,
+            &mut answer,
+            SessionOwner::HttpDebug,
+        );
+        let config = requests.receiver().try_receive().expect("shared engine queued");
+
+        assert!(result.is_ok());
+        assert_eq!(config.owner, SessionOwner::HttpDebug);
+        assert_eq!(
+            handle.stop_for_owner(SessionOwner::MatterCall),
+            Err(crate::session::WebRtcSessionRequestError::NotActive)
+        );
+        assert_eq!(handle.stop_for_owner(SessionOwner::HttpDebug), Ok(()));
     }
 
     #[test]

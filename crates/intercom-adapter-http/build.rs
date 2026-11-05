@@ -1,10 +1,10 @@
+use flate2::write::GzEncoder;
+use flate2::Compression;
 use std::env;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use flate2::write::GzEncoder;
-use flate2::Compression;
 
 fn main() {
     println!("cargo:rerun-if-changed=assets/dashboard.html");
@@ -36,7 +36,5 @@ fn main() {
     encoder
         .write_all(&html_bytes)
         .expect("Failed to compress dashboard.html");
-    encoder
-        .finish()
-        .expect("Failed to finish gzip compression");
+    encoder.finish().expect("Failed to finish gzip compression");
 }

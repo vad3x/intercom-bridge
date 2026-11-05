@@ -14,4 +14,3 @@ pub mod hardware_info;
 pub mod reset;
 pub mod utils;
 pub mod version;
-

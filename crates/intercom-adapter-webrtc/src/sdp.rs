@@ -281,7 +281,7 @@ a=fingerprint:sha-256 ",
         cursor,
         "\r\na=setup:{setup}\r\na={direction}\r\na=rtcp-mux\r\n\
 a=rtpmap:{payload_type} opus/48000/2\r\n\
-a=fmtp:{payload_type} minptime=20;maxplaybackrate=16000;sprop-maxcapturerate=16000;stereo=0;sprop-stereo=0;useinbandfec=1;usedtx=1\r\n\
+a=fmtp:{payload_type} minptime=20;maxplaybackrate=16000;sprop-maxcapturerate=8000;stereo=0;sprop-stereo=0;useinbandfec=1;usedtx=1\r\n\
 a=ptime:20\r\na=ssrc:{} cname:intercom-v2\r\na=candidate:1 1 UDP 2130706431 {a}.{b}.{c}.{d} {} typ host\r\n",
         local.ssrc,
         local.port
@@ -415,8 +415,8 @@ mod tests {
     extern crate std;
 
     use super::{
-        parse_sdp_offer, write_sdp_answer, write_sdp_offer, DtlsSetupRole, LocalSdpParams,
-        SdpError, SdpMediaDirection,
+        DtlsSetupRole, LocalSdpParams, SdpError, SdpMediaDirection, parse_sdp_offer,
+        write_sdp_answer, write_sdp_offer,
     };
 
     const CONTROLLER_OFFER: &str = "v=0\r\n\
@@ -475,9 +475,10 @@ a=rtpmap:111 opus/48000/2\r\n";
         assert_eq!(parsed.setup, DtlsSetupRole::ActPass);
         assert!(length < 900);
         assert!(answer.contains("a=ice-lite\r\n"));
+        assert!(answer.contains("a=ptime:20\r\n"));
         assert!(answer.contains("a=rtpmap:111 opus/48000/2\r\n"));
         assert!(answer.contains(
-            "maxplaybackrate=16000;sprop-maxcapturerate=16000;stereo=0;sprop-stereo=0;useinbandfec=1"
+            "maxplaybackrate=16000;sprop-maxcapturerate=8000;stereo=0;sprop-stereo=0;useinbandfec=1"
         ));
     }
 
@@ -633,8 +634,11 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n",
 
         // Assert
         assert!(offer.contains("a=candidate:1 1 UDP 2130706431 192.168.1.142 50000 typ host\r\n"));
-        assert!(offer
-            .contains("a=candidate:2 1 UDP 2130706430 2001:db8:1:2:0:0:0:142 50000 typ host\r\n"));
+        assert!(
+            offer.contains(
+                "a=candidate:2 1 UDP 2130706430 2001:db8:1:2:0:0:0:142 50000 typ host\r\n"
+            )
+        );
     }
 
     #[test]

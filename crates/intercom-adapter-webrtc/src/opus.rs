@@ -1,19 +1,33 @@
-//! Zero-malloc fixed-point Opus 16 kHz SILK half-duplex encoder/decoder (`RV32IMAC`).
+//! Zero-malloc fixed-point Opus 8 kHz listen encoder and 16 kHz talk decoder (`RV32IMAC`).
 
 use core::ffi::{c_int, c_uchar, c_void};
-use intercom_media::{PcmFrame, AUDIO_FRAME_SAMPLES, AUDIO_SAMPLE_RATE_HZ};
+use intercom_media::{AUDIO_FRAME_SAMPLES, AUDIO_SAMPLE_RATE_HZ, PcmFrame};
 
-pub const MAX_OPUS_PACKET_BYTES: usize = 128;
+pub const MAX_OPUS_PACKET_BYTES: usize = 256;
 const OPUS_ARENA_U64_WORDS: usize = 3_077; // 24,616 B, 8-byte aligned.
 
 const OPUS_OK: c_int = 0;
 const OPUS_APPLICATION_VOIP: c_int = 2048;
 const OPUS_SIGNAL_VOICE: c_int = 3001;
 const OPUS_SET_BITRATE_REQUEST: c_int = 4002;
+#[cfg(test)]
+const OPUS_GET_BITRATE_REQUEST: c_int = 4003;
 const OPUS_SET_COMPLEXITY_REQUEST: c_int = 4010;
+#[cfg(test)]
+const OPUS_GET_COMPLEXITY_REQUEST: c_int = 4011;
 const OPUS_SET_INBAND_FEC_REQUEST: c_int = 4012;
+#[cfg(test)]
+const OPUS_GET_INBAND_FEC_REQUEST: c_int = 4013;
+#[cfg(test)]
+const OPUS_GET_SAMPLE_RATE_REQUEST: c_int = 4029;
 const OPUS_SET_DTX_REQUEST: c_int = 4016;
 const OPUS_SET_SIGNAL_REQUEST: c_int = 4024;
+const LISTEN_OPUS_COMPLEXITY: c_int = 0;
+const LISTEN_OPUS_BITRATE_BPS: c_int = 16_000;
+const LISTEN_OPUS_INBAND_FEC: c_int = 1;
+const LISTEN_OPUS_SAMPLE_RATE_HZ: u32 = 8_000;
+const LISTEN_OPUS_SOURCE_FRAME_SAMPLES: usize =
+    (AUDIO_FRAME_SAMPLES * LISTEN_OPUS_SAMPLE_RATE_HZ as usize) / AUDIO_SAMPLE_RATE_HZ as usize;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OpusError {
@@ -41,12 +55,24 @@ impl HalfDuplexOpusCodec {
         out: &mut [u8; MAX_OPUS_PACKET_BYTES],
     ) -> Result<usize, OpusError> {
         self.ensure_encoder()?;
+        let mut downsampled = [0i16; LISTEN_OPUS_SOURCE_FRAME_SAMPLES];
+        for (index, output) in downsampled.iter_mut().enumerate() {
+            let base = index * 2;
+            let before = base.saturating_sub(1);
+            let after = (base + 1).min(AUDIO_FRAME_SAMPLES - 1);
+            let after_after = (base + 2).min(AUDIO_FRAME_SAMPLES - 1);
+            let filtered = i32::from(pcm.samples[before])
+                + 3 * i32::from(pcm.samples[base])
+                + 3 * i32::from(pcm.samples[after])
+                + i32::from(pcm.samples[after_after]);
+            *output = (filtered / 8) as i16;
+        }
         let enc_ptr = self.arena.as_mut_ptr() as *mut OpusEncoder;
         let rc = unsafe {
             opus_encode(
                 enc_ptr,
-                pcm.samples.as_ptr(),
-                AUDIO_FRAME_SAMPLES as c_int,
+                downsampled.as_ptr(),
+                LISTEN_OPUS_SOURCE_FRAME_SAMPLES as c_int,
                 out.as_mut_ptr(),
                 MAX_OPUS_PACKET_BYTES as c_int,
             )
@@ -58,10 +84,13 @@ impl HalfDuplexOpusCodec {
         }
     }
 
-    pub fn decode_talk_frame(&mut self, packet: Option<&[u8]>) -> Result<PcmFrame, OpusError> {
+    pub fn decode_talk_frames(
+        &mut self,
+        packet: Option<&[u8]>,
+    ) -> Result<([PcmFrame; 2], usize), OpusError> {
         self.ensure_decoder()?;
         let dec_ptr = self.arena.as_mut_ptr() as *mut OpusDecoder;
-        let mut frame = PcmFrame::SILENCE;
+        let mut decoded_samples = [0i16; AUDIO_FRAME_SAMPLES * 2];
         let (ptr, len) = match packet {
             Some(bytes) => (bytes.as_ptr(), bytes.len() as c_int),
             None => (core::ptr::null(), 0),
@@ -71,15 +100,29 @@ impl HalfDuplexOpusCodec {
                 dec_ptr,
                 ptr,
                 len,
-                frame.samples.as_mut_ptr(),
-                AUDIO_FRAME_SAMPLES as c_int,
+                decoded_samples.as_mut_ptr(),
+                (AUDIO_FRAME_SAMPLES * 2) as c_int,
                 0,
             )
         };
-        if rc != AUDIO_FRAME_SAMPLES as c_int {
-            Err(OpusError::CodecFailed(rc))
-        } else {
-            Ok(frame)
+        let mut frames = [PcmFrame::SILENCE; 2];
+        match rc as usize {
+            AUDIO_FRAME_SAMPLES => {
+                frames[0]
+                    .samples
+                    .copy_from_slice(&decoded_samples[..AUDIO_FRAME_SAMPLES]);
+                Ok((frames, 1))
+            }
+            samples if samples == AUDIO_FRAME_SAMPLES * 2 => {
+                frames[0]
+                    .samples
+                    .copy_from_slice(&decoded_samples[..AUDIO_FRAME_SAMPLES]);
+                frames[1]
+                    .samples
+                    .copy_from_slice(&decoded_samples[AUDIO_FRAME_SAMPLES..]);
+                Ok((frames, 2))
+            }
+            _ => Err(OpusError::CodecFailed(rc)),
         }
     }
 
@@ -95,17 +138,17 @@ impl HalfDuplexOpusCodec {
         unsafe {
             let err = opus_encoder_init(
                 enc_ptr,
-                AUDIO_SAMPLE_RATE_HZ as i32,
+                LISTEN_OPUS_SAMPLE_RATE_HZ as i32,
                 1,
                 OPUS_APPLICATION_VOIP,
             );
             if err != OPUS_OK {
                 return Err(OpusError::InitFailed(err));
             }
-            let _ = opus_encoder_ctl(enc_ptr, OPUS_SET_BITRATE_REQUEST, 24_000 as c_int);
-            let _ = opus_encoder_ctl(enc_ptr, OPUS_SET_COMPLEXITY_REQUEST, 1 as c_int);
+            let _ = opus_encoder_ctl(enc_ptr, OPUS_SET_BITRATE_REQUEST, LISTEN_OPUS_BITRATE_BPS);
+            let _ = opus_encoder_ctl(enc_ptr, OPUS_SET_COMPLEXITY_REQUEST, LISTEN_OPUS_COMPLEXITY);
             let _ = opus_encoder_ctl(enc_ptr, OPUS_SET_SIGNAL_REQUEST, OPUS_SIGNAL_VOICE);
-            let _ = opus_encoder_ctl(enc_ptr, OPUS_SET_INBAND_FEC_REQUEST, 1 as c_int);
+            let _ = opus_encoder_ctl(enc_ptr, OPUS_SET_INBAND_FEC_REQUEST, LISTEN_OPUS_INBAND_FEC);
             let _ = opus_encoder_ctl(enc_ptr, OPUS_SET_DTX_REQUEST, 1 as c_int);
         }
         self.mode = ActiveCodecMode::Encoder;
@@ -186,10 +229,11 @@ const _: *const c_void = core::ptr::null();
 #[cfg(test)]
 mod tests {
     use super::*;
-    use intercom_media::{compute_frame_levels_dbfs, BenchToneGenerator};
+
+    use intercom_media::{BenchToneGenerator, compute_frame_levels_dbfs};
 
     #[test]
-    fn fixed_point_opus_encodes_16khz_frame_under_80_bytes_and_decodes_cleanly() {
+    fn fixed_point_opus_encodes_20ms_8khz_listen_packet_and_decodes_one_frame() {
         // Arrange
         let mut codec = HalfDuplexOpusCodec::new();
         let mut tone = BenchToneGenerator::new();
@@ -204,26 +248,29 @@ mod tests {
                 .expect("opus encode");
         }
         let last_len = lengths[4];
-        let mut decoded = PcmFrame::SILENCE;
+        let mut decoded = [PcmFrame::SILENCE; 2];
         for i in 0..5 {
-            decoded = codec
-                .decode_talk_frame(Some(&encoded_frames[i][..lengths[i]]))
+            let (frames, count) = codec
+                .decode_talk_frames(Some(&encoded_frames[i][..lengths[i]]))
                 .expect("opus decode");
+            assert_eq!(count, 1);
+            decoded = frames;
         }
-        let plc_frame = codec.decode_talk_frame(None).expect("opus plc");
+        let (plc_frames, plc_count) = codec.decode_talk_frames(None).expect("opus plc");
 
         // Assert
         assert!(
-            last_len > 0 && last_len <= 80,
+            last_len > 0 && last_len <= 160,
             "unexpected packet len: {last_len}"
         );
-        let levels = compute_frame_levels_dbfs(&decoded);
+        let levels = compute_frame_levels_dbfs(&decoded[0]);
         assert!(
             levels.rms_dbfs > -20,
             "decoded signal too quiet: {:?}",
             levels
         );
-        assert_ne!(plc_frame.samples, PcmFrame::SILENCE.samples);
+        assert_eq!(plc_count, 2);
+        assert_ne!(plc_frames[0].samples, PcmFrame::SILENCE.samples);
     }
 
     #[test]
@@ -242,5 +289,86 @@ mod tests {
         }
 
         assert_eq!(dtx_packets, 0, "continuous tone produced DTX packets");
+    }
+
+    #[test]
+    fn listen_encoder_uses_16kbps_bitrate() {
+        let mut codec = HalfDuplexOpusCodec::new();
+        codec.ensure_encoder().expect("initialize Opus encoder");
+        let enc_ptr = codec.arena.as_mut_ptr() as *mut OpusEncoder;
+        let mut bitrate = -1;
+
+        let result = unsafe {
+            opus_encoder_ctl(
+                enc_ptr,
+                OPUS_GET_BITRATE_REQUEST,
+                &mut bitrate as *mut c_int,
+            )
+        };
+
+        assert_eq!(result, OPUS_OK);
+        assert_eq!(bitrate, 16_000);
+    }
+
+    #[test]
+    fn listen_encoder_uses_lowest_opus_complexity() {
+        let mut codec = HalfDuplexOpusCodec::new();
+        codec.ensure_encoder().expect("initialize Opus encoder");
+        let enc_ptr = codec.arena.as_mut_ptr() as *mut OpusEncoder;
+        let mut complexity = -1;
+
+        let result = unsafe {
+            opus_encoder_ctl(
+                enc_ptr,
+                OPUS_GET_COMPLEXITY_REQUEST,
+                &mut complexity as *mut c_int,
+            )
+        };
+
+        assert_eq!(result, OPUS_OK);
+        assert_eq!(complexity, 0);
+    }
+
+    #[test]
+    fn listen_encoder_enables_inband_fec_for_loss_resilience() {
+        let mut codec = HalfDuplexOpusCodec::new();
+        codec.ensure_encoder().expect("initialize Opus encoder");
+        let enc_ptr = codec.arena.as_mut_ptr() as *mut OpusEncoder;
+        let mut inband_fec = -1;
+
+        let result = unsafe {
+            opus_encoder_ctl(
+                enc_ptr,
+                OPUS_GET_INBAND_FEC_REQUEST,
+                &mut inband_fec as *mut c_int,
+            )
+        };
+
+        assert_eq!(result, OPUS_OK);
+        assert_eq!(inband_fec, 1);
+    }
+
+    #[test]
+    fn listen_encoder_uses_8khz_mono_input() {
+        let mut codec = HalfDuplexOpusCodec::new();
+        codec.ensure_encoder().expect("initialize Opus encoder");
+        let enc_ptr = codec.arena.as_mut_ptr() as *mut OpusEncoder;
+        let mut sample_rate = 0;
+
+        let result = unsafe {
+            opus_encoder_ctl(
+                enc_ptr,
+                OPUS_GET_SAMPLE_RATE_REQUEST,
+                &mut sample_rate as *mut c_int,
+            )
+        };
+
+        assert_eq!(result, OPUS_OK);
+        assert_eq!(sample_rate, 8_000);
+    }
+
+    #[test]
+    fn listen_opus_packet_carries_20ms_of_audio() {
+        assert_eq!(LISTEN_OPUS_SOURCE_FRAME_SAMPLES, 160);
     }
 }

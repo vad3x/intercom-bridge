@@ -1,6 +1,6 @@
 //! Half-duplex WebRTC turn-taking policy and active media session runner.
 
-use embassy_net::{udp::PacketMetadata, IpEndpoint, IpListenEndpoint, Stack};
+use embassy_net::{IpEndpoint, IpListenEndpoint, Stack, udp::PacketMetadata};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::{Channel, Receiver, Sender};
 use embassy_time::{Instant, Timer};
@@ -10,21 +10,45 @@ use intercom_media::{RxAudioReceiver, TxAudioSender};
 
 use crate::dtls::{DtlsError, DtlsRole, DtlsSrtpEngine, DtlsSrtpResourceCell};
 use crate::ice::IceLiteAgent;
-use crate::mux::{classify_rfc7983_packet, DemuxedPacket};
+use crate::mux::{DemuxedPacket, classify_rfc7983_packet};
 use crate::opus::{HalfDuplexOpusCodec, MAX_OPUS_PACKET_BYTES};
 use crate::srtp::SrtpSession;
 
 const SESSION_IDLE: u8 = 0;
-const SESSION_QUEUED: u8 = 1;
-const SESSION_ACTIVE: u8 = 2;
-const SESSION_STOP_QUEUED: u8 = 3;
-const SESSION_STOP_ACTIVE: u8 = 4;
+const SESSION_PHASE_MASK: u8 = 0b111;
+const SESSION_PHASE_QUEUED: u8 = 1;
+const SESSION_PHASE_ACTIVE: u8 = 2;
+const SESSION_PHASE_STOP_QUEUED: u8 = 3;
+const SESSION_PHASE_STOP_ACTIVE: u8 = 4;
+
+const fn session_state(owner: SessionOwner, phase: u8) -> u8 {
+    ((owner as u8) << 3) | phase
+}
+
+fn session_owner(state: u8) -> Option<SessionOwner> {
+    match state >> 3 {
+        1 => Some(SessionOwner::BenchTone),
+        2 => Some(SessionOwner::HttpDebug),
+        3 => Some(SessionOwner::MatterCall),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+const SESSION_ACTIVE: u8 = session_state(SessionOwner::MatterCall, SESSION_PHASE_ACTIVE);
+#[cfg(test)]
+const SESSION_STOP_QUEUED: u8 =
+    session_state(SessionOwner::MatterCall, SESSION_PHASE_STOP_QUEUED);
+#[cfg(test)]
+const SESSION_STOP_ACTIVE: u8 =
+    session_state(SessionOwner::MatterCall, SESSION_PHASE_STOP_ACTIVE);
 
 pub const OPUS_DTX_MAX_BYTES: usize = 3;
 pub const OPUS_RTP_CLOCK_INCREMENT: u32 = 960;
 pub const MEDIA_UDP_PORT: u16 = 50_000;
-const UDP_RX_PACKET_BYTES: usize = 2_048;
-const UDP_TX_PACKET_BYTES: usize = 2_048;
+const UDP_MAX_PACKET_BYTES: usize = 1_536;
+const UDP_RX_PACKET_BYTES: usize = UDP_MAX_PACKET_BYTES;
+const UDP_TX_PACKET_BYTES: usize = UDP_MAX_PACKET_BYTES;
 const UDP_METADATA_SLOTS: usize = 4;
 const DTLS_PENDING_DATAGRAMS: usize = 2;
 const DTLS_DATAGRAM_MAX_BYTES: usize = 1_500;
@@ -83,11 +107,12 @@ fn build_rtp_header(
 
 fn maybe_send_core_session_heartbeat(
     intercom: &IntercomControllerHandle<'_>,
+    owner: SessionOwner,
     last_heartbeat_ms: &mut u64,
     now_ms: u64,
 ) {
     if now_ms.saturating_sub(*last_heartbeat_ms) >= CORE_SESSION_HEARTBEAT_INTERVAL_MS {
-        intercom.session_heartbeat(SessionOwner::MatterCall);
+        intercom.session_heartbeat(owner);
         *last_heartbeat_ms = now_ms;
     }
 }
@@ -108,6 +133,7 @@ pub struct WebRtcSessionConfig {
     pub local_ssrc: u32,
     pub payload_type: u8,
     pub local_port: u16,
+    pub owner: SessionOwner,
 }
 
 impl WebRtcSessionConfig {
@@ -120,6 +146,30 @@ impl WebRtcSessionConfig {
         dtls_seed: [u8; 32],
         local_ssrc: u32,
         payload_type: u8,
+    ) -> Result<Self, WebRtcSessionConfigError> {
+        Self::new_for_owner(
+            local_ufrag,
+            remote_ufrag,
+            local_password,
+            remote_fingerprint_sha256,
+            local_dtls_role,
+            dtls_seed,
+            local_ssrc,
+            payload_type,
+            SessionOwner::MatterCall,
+        )
+    }
+
+    pub fn new_for_owner(
+        local_ufrag: &str,
+        remote_ufrag: &str,
+        local_password: &str,
+        remote_fingerprint_sha256: [u8; 32],
+        local_dtls_role: DtlsRole,
+        dtls_seed: [u8; 32],
+        local_ssrc: u32,
+        payload_type: u8,
+        owner: SessionOwner,
     ) -> Result<Self, WebRtcSessionConfigError> {
         let mut local_ufrag_storage = heapless::String::new();
         let mut remote_ufrag_storage = heapless::String::new();
@@ -150,6 +200,7 @@ impl WebRtcSessionConfig {
             local_ssrc,
             payload_type,
             local_port: MEDIA_UDP_PORT,
+            owner,
         })
     }
 }
@@ -175,10 +226,11 @@ pub struct WebRtcSessionHandle<'a> {
 
 impl WebRtcSessionHandle<'_> {
     pub fn start(&self, config: WebRtcSessionConfig) -> Result<(), WebRtcSessionRequestError> {
+        let queued_state = session_state(config.owner, SESSION_PHASE_QUEUED);
         self.state
             .compare_exchange(
                 SESSION_IDLE,
-                SESSION_QUEUED,
+                queued_state,
                 portable_atomic::Ordering::AcqRel,
                 portable_atomic::Ordering::Acquire,
             )
@@ -194,12 +246,31 @@ impl WebRtcSessionHandle<'_> {
 
     /// Requests teardown of the active call, releasing all session-owned buffers.
     pub fn stop(&self) -> Result<(), WebRtcSessionRequestError> {
+        self.request_stop(None)
+    }
+
+    pub fn stop_for_owner(
+        &self,
+        owner: SessionOwner,
+    ) -> Result<(), WebRtcSessionRequestError> {
+        self.request_stop(Some(owner))
+    }
+
+    fn request_stop(
+        &self,
+        expected_owner: Option<SessionOwner>,
+    ) -> Result<(), WebRtcSessionRequestError> {
         loop {
             let current = self.state.load(portable_atomic::Ordering::Acquire);
-            let requested = match current {
-                SESSION_QUEUED => SESSION_STOP_QUEUED,
-                SESSION_ACTIVE => SESSION_STOP_ACTIVE,
-                SESSION_STOP_QUEUED | SESSION_STOP_ACTIVE => return Ok(()),
+            let owner = session_owner(current).ok_or(WebRtcSessionRequestError::NotActive)?;
+            if expected_owner.is_some_and(|expected| expected != owner) {
+                return Err(WebRtcSessionRequestError::NotActive);
+            }
+            let phase = current & SESSION_PHASE_MASK;
+            let requested = match phase {
+                SESSION_PHASE_QUEUED => session_state(owner, SESSION_PHASE_STOP_QUEUED),
+                SESSION_PHASE_ACTIVE => session_state(owner, SESSION_PHASE_STOP_ACTIVE),
+                SESSION_PHASE_STOP_QUEUED | SESSION_PHASE_STOP_ACTIVE => return Ok(()),
                 _ => return Err(WebRtcSessionRequestError::NotActive),
             };
             if self
@@ -237,8 +308,8 @@ impl WebRtcSessionHandle<'_> {
 
     pub fn is_stopping(&self) -> bool {
         matches!(
-            self.state.load(portable_atomic::Ordering::Acquire),
-            SESSION_STOP_QUEUED | SESSION_STOP_ACTIVE
+            self.state.load(portable_atomic::Ordering::Acquire) & SESSION_PHASE_MASK,
+            SESSION_PHASE_STOP_QUEUED | SESSION_PHASE_STOP_ACTIVE
         )
     }
 }
@@ -400,19 +471,18 @@ impl<'a> WebRtcMediaEngine<'a> {
     pub async fn run(&mut self, stack: Stack<'static>, free_heap_bytes: fn() -> u32) {
         loop {
             let config = self.requests.receive().await;
+            let owner = config.owner;
             match self.state.compare_exchange(
-                SESSION_QUEUED,
-                SESSION_ACTIVE,
+                session_state(owner, SESSION_PHASE_QUEUED),
+                session_state(owner, SESSION_PHASE_ACTIVE),
                 portable_atomic::Ordering::AcqRel,
                 portable_atomic::Ordering::Acquire,
             ) {
                 Ok(_) => {}
-                Err(SESSION_STOP_QUEUED) => {
+                Err(state) if state == session_state(owner, SESSION_PHASE_STOP_QUEUED) => {
                     self.state
                         .store(SESSION_IDLE, portable_atomic::Ordering::Release);
-                    self.intercom
-                        .end_session_wait(SessionOwner::MatterCall)
-                        .await;
+                    self.intercom.end_session_wait(owner).await;
                     continue;
                 }
                 Err(_) => continue,
@@ -422,9 +492,7 @@ impl<'a> WebRtcMediaEngine<'a> {
             let result = self.run_session(stack, config, free_heap_bytes).await;
             self.state
                 .store(SESSION_IDLE, portable_atomic::Ordering::Release);
-            self.intercom
-                .end_session_wait(SessionOwner::MatterCall)
-                .await;
+            self.intercom.end_session_wait(owner).await;
             self.benchmark_stats.observe_free_heap(free_heap_bytes());
             log::info!(
                 "WebRTC media benchmark encode_max_us={} decode_max_us={} min_free_heap_bytes={}",
@@ -493,6 +561,7 @@ impl<'a> WebRtcMediaEngine<'a> {
         let mut dtx_packets_in_window = 0u32;
         let mut last_audio_packet_ms = None;
         let mut max_audio_gap_ms = 0u64;
+        let mut max_audio_send_us = 0u32;
         let mut audio_pacer = AudioSendPacer::new(Instant::now().as_millis());
         let mut turn = TurnTakingPolicy::new(TURN_HANGOVER_MS);
         let mut sequence = 0u16;
@@ -501,18 +570,25 @@ impl<'a> WebRtcMediaEngine<'a> {
             SessionLiveness::new(Instant::now().as_millis(), SESSION_IDLE_TIMEOUT_MS);
         let mut last_core_heartbeat_ms = Instant::now().as_millis();
 
-        self.intercom.start_listen(SessionOwner::MatterCall);
+        self.intercom.start_listen(config.owner);
         self.benchmark_stats.observe_free_heap(free_heap_bytes());
 
         loop {
-            if self.state.load(portable_atomic::Ordering::Acquire) == SESSION_STOP_ACTIVE {
+            if self.state.load(portable_atomic::Ordering::Acquire)
+                == session_state(config.owner, SESSION_PHASE_STOP_ACTIVE)
+            {
                 return Ok(());
             }
             let now_ms = Instant::now().as_millis();
             if liveness.is_expired(now_ms) {
                 return Err(WebRtcMediaError::SessionTimeout);
             }
-            maybe_send_core_session_heartbeat(&self.intercom, &mut last_core_heartbeat_ms, now_ms);
+            maybe_send_core_session_heartbeat(
+                &self.intercom,
+                config.owner,
+                &mut last_core_heartbeat_ms,
+                now_ms,
+            );
             if ice.verified_peer_addr().is_some() && srtp.is_none() {
                 let dtls_output =
                     step_dtls_and_pop(&mut dtls, now_ms, &mut outbound[..]).map_err(|error| {
@@ -663,18 +739,20 @@ impl<'a> WebRtcMediaEngine<'a> {
                         liveness.refresh(now_ms);
                         match turn.on_inbound_rtp(payload.len(), now_ms) {
                             Some(TurnAction::StartTalk) => {
-                                self.intercom.start_talk(SessionOwner::MatterCall)
+                                self.intercom.start_talk(config.owner)
                             }
                             Some(TurnAction::StopTalk) | None => {}
                         }
                         let decode_start = Instant::now();
-                        let frame = codec
-                            .decode_talk_frame(Some(payload))
+                        let (frames, frame_count) = codec
+                            .decode_talk_frames(Some(payload))
                             .map_err(|_| WebRtcMediaError::Opus)?;
                         self.benchmark_stats.observe_decode(
                             decode_start.elapsed().as_micros().min(u64::from(u32::MAX)) as u32,
                         );
-                        let _ = self.tx_audio.try_send(frame);
+                        for frame in frames.iter().take(frame_count) {
+                            let _ = self.tx_audio.try_send(*frame);
+                        }
                     }
                     DemuxedPacket::Unknown => {}
                 }
@@ -685,7 +763,7 @@ impl<'a> WebRtcMediaEngine<'a> {
                 return Err(WebRtcMediaError::SessionTimeout);
             }
             if turn.poll_hangover(now_ms) == Some(TurnAction::StopTalk) {
-                self.intercom.stop_talk(SessionOwner::MatterCall);
+                self.intercom.stop_talk(config.owner);
             }
             let audio_due = audio_pacer.advance_if_due(now_ms);
             if audio_due && !turn.is_talking() && srtp.is_some() {
@@ -715,10 +793,17 @@ impl<'a> WebRtcMediaEngine<'a> {
                         .protect_rtp(&mut outbound[..], packet_length)
                         .map_err(|_| WebRtcMediaError::Srtp)?;
                     if let Some(peer) = ice.verified_peer_addr() {
+                        let send_start = Instant::now();
                         socket
                             .send_to(&outbound[..protected_length], peer)
                             .await
                             .map_err(|_| WebRtcMediaError::UdpSend)?;
+                        max_audio_send_us = max_audio_send_us.max(
+                            send_start
+                                .elapsed()
+                                .as_micros()
+                                .min(u64::from(u32::MAX)) as u32,
+                        );
                         if !first_audio_packet_logged {
                             log::info!(
                                 "WebRTC: first outbound SRTP audio packet sent ({} bytes)",
@@ -737,12 +822,17 @@ impl<'a> WebRtcMediaEngine<'a> {
                             dtx_packets_in_window += 1;
                         }
                         if audio_packets_in_window >= AUDIO_STATS_LOG_PACKET_INTERVAL {
+                            let free_heap_bytes = free_heap_bytes();
+                            self.benchmark_stats.observe_free_heap(free_heap_bytes);
                             log::info!(
-                                "WebRTC audio cadence packets={} dtx={} max_gap_ms={} encode_max_us={}",
+                                "WebRTC audio cadence packets={} dtx={} max_gap_ms={} encode_max_us={} send_max_us={} free_heap_bytes={} min_free_heap_bytes={}",
                                 audio_packets_in_window,
                                 dtx_packets_in_window,
                                 max_audio_gap_ms,
                                 self.benchmark_stats.max_encode_us,
+                                max_audio_send_us,
+                                free_heap_bytes,
+                                self.benchmark_stats.min_free_heap_bytes,
                             );
                             audio_packets_in_window = 0;
                             dtx_packets_in_window = 0;
@@ -928,10 +1018,12 @@ impl TurnTakingPolicy {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_rtp_header, AudioSendPacer, DtlsRole, MediaBenchmarkStats, PendingDtlsDatagrams,
-        RtpPayloadRange, SessionLiveness, TurnAction, TurnTakingPolicy, WebRtcSessionConfig,
-        WebRtcSessionHandle, WebRtcSessionRequestError, OPUS_DTX_MAX_BYTES, SESSION_ACTIVE,
-        SESSION_IDLE, SESSION_IDLE_TIMEOUT_MS, SESSION_STOP_ACTIVE, SESSION_STOP_QUEUED,
+        AudioSendPacer, DtlsRole, MediaBenchmarkStats, OPUS_DTX_MAX_BYTES, PendingDtlsDatagrams,
+        RtpPayloadRange, SESSION_ACTIVE, SESSION_IDLE, SESSION_IDLE_TIMEOUT_MS,
+        SESSION_PHASE_ACTIVE, SESSION_PHASE_QUEUED, SESSION_STOP_ACTIVE, SESSION_STOP_QUEUED,
+        SessionLiveness,
+        TurnAction, TurnTakingPolicy, session_state,
+        WebRtcSessionConfig, WebRtcSessionHandle, WebRtcSessionRequestError, build_rtp_header,
     };
     use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
     use embassy_sync::channel::Channel;
@@ -948,6 +1040,17 @@ mod tests {
     #[test]
     fn media_resources_stay_within_main_stack_reserve() {
         assert!(core::mem::size_of::<super::WebRtcMediaResources>() <= 36 * 1024);
+    }
+
+    #[test]
+    fn udp_working_buffers_cover_ethernet_payload_without_excess_capacity() {
+        const MAX_IPV4_UDP_PAYLOAD_BYTES: usize = 1_472;
+        const WORKING_BUFFER_LIMIT_BYTES: usize = 1_536;
+
+        assert!(super::UDP_RX_PACKET_BYTES >= MAX_IPV4_UDP_PAYLOAD_BYTES);
+        assert!(super::UDP_TX_PACKET_BYTES >= MAX_IPV4_UDP_PAYLOAD_BYTES);
+        assert!(super::UDP_RX_PACKET_BYTES <= WORKING_BUFFER_LIMIT_BYTES);
+        assert!(super::UDP_TX_PACKET_BYTES <= WORKING_BUFFER_LIMIT_BYTES);
     }
 
     #[test]
@@ -1002,13 +1105,33 @@ mod tests {
         let mut last_heartbeat_ms = 0;
 
         // Act
-        super::maybe_send_core_session_heartbeat(&intercom, &mut last_heartbeat_ms, 999);
+        super::maybe_send_core_session_heartbeat(
+            &intercom,
+            SessionOwner::MatterCall,
+            &mut last_heartbeat_ms,
+            999,
+        );
         let before_deadline = commands.receiver().try_receive();
-        super::maybe_send_core_session_heartbeat(&intercom, &mut last_heartbeat_ms, 1_000);
+        super::maybe_send_core_session_heartbeat(
+            &intercom,
+            SessionOwner::MatterCall,
+            &mut last_heartbeat_ms,
+            1_000,
+        );
         let at_deadline = commands.receiver().try_receive();
-        super::maybe_send_core_session_heartbeat(&intercom, &mut last_heartbeat_ms, 1_999);
+        super::maybe_send_core_session_heartbeat(
+            &intercom,
+            SessionOwner::MatterCall,
+            &mut last_heartbeat_ms,
+            1_999,
+        );
         let before_next_deadline = commands.receiver().try_receive();
-        super::maybe_send_core_session_heartbeat(&intercom, &mut last_heartbeat_ms, 2_000);
+        super::maybe_send_core_session_heartbeat(
+            &intercom,
+            SessionOwner::MatterCall,
+            &mut last_heartbeat_ms,
+            2_000,
+        );
         let at_next_deadline = commands.receiver().try_receive();
 
         // Assert
@@ -1306,6 +1429,56 @@ mod tests {
             SESSION_STOP_QUEUED
         );
         assert!(requests.receiver().try_receive().is_ok());
+    }
+
+    #[test]
+    fn session_handle_refuses_to_stop_a_session_owned_by_another_controller() {
+        let requests = Channel::<CriticalSectionRawMutex, WebRtcSessionConfig, 1>::new();
+        let matter_active = session_state(SessionOwner::MatterCall, SESSION_PHASE_ACTIVE);
+        let state = portable_atomic::AtomicU8::new(matter_active);
+        let handle = WebRtcSessionHandle {
+            sender: requests.sender(),
+            state: &state,
+        };
+
+        let result = handle.stop_for_owner(SessionOwner::HttpDebug);
+
+        assert_eq!(result, Err(WebRtcSessionRequestError::NotActive));
+        assert_eq!(state.load(portable_atomic::Ordering::Acquire), matter_active);
+    }
+
+    #[test]
+    fn session_handle_rejects_a_second_controller_until_the_first_session_ends() {
+        let requests = Channel::<CriticalSectionRawMutex, WebRtcSessionConfig, 1>::new();
+        let state = portable_atomic::AtomicU8::new(SESSION_IDLE);
+        let handle = WebRtcSessionHandle {
+            sender: requests.sender(),
+            state: &state,
+        };
+        let config = |owner| {
+            WebRtcSessionConfig::new_for_owner(
+                "local1",
+                "remote1",
+                "0123456789012345678901",
+                [0x5a; 32],
+                DtlsRole::Server,
+                [0x42; 32],
+                0x1234_5678,
+                111,
+                owner,
+            )
+            .expect("valid session config")
+        };
+
+        assert_eq!(handle.start(config(SessionOwner::MatterCall)), Ok(()));
+        assert_eq!(
+            handle.start(config(SessionOwner::HttpDebug)),
+            Err(WebRtcSessionRequestError::Busy)
+        );
+        assert_eq!(
+            state.load(portable_atomic::Ordering::Acquire),
+            session_state(SessionOwner::MatterCall, SESSION_PHASE_QUEUED)
+        );
     }
 
     #[test]

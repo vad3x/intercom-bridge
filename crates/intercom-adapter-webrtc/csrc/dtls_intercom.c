@@ -328,7 +328,6 @@ static int intercom_make_self_signed_certificate(intercom_dtls_state *state)
 {
     int result;
     mbedtls_x509write_cert writer;
-    uint8_t der[2048];
     uint8_t serial[16];
     memset(&writer, 0, sizeof(writer));
     memcpy(serial, state->seed, sizeof(serial));
@@ -345,6 +344,14 @@ static int intercom_make_self_signed_certificate(intercom_dtls_state *state)
         return result;
     }
 
+    // P-256 certificate generation already has a deep call stack on the C6.
+    // Keep the DER scratch space in the bounded Mbed TLS arena instead of
+    // consuming another 2 KiB of the Embassy main task stack.
+    uint8_t *der = mbedtls_calloc(1, 2048);
+    if (der == NULL) {
+        return MBEDTLS_ERR_X509_ALLOC_FAILED;
+    }
+
     mbedtls_x509write_crt_init(&writer);
     mbedtls_x509write_crt_set_version(&writer, MBEDTLS_X509_CRT_VERSION_3);
     mbedtls_x509write_crt_set_md_alg(&writer, MBEDTLS_MD_SHA256);
@@ -356,23 +363,28 @@ static int intercom_make_self_signed_certificate(intercom_dtls_state *state)
         (result = mbedtls_x509write_crt_set_validity(&writer, "20260101000000", "20360101000000")) != 0 ||
         (result = mbedtls_x509write_crt_set_basic_constraints(&writer, 0, -1)) != 0) {
         mbedtls_x509write_crt_free(&writer);
+        mbedtls_free(der);
         return result;
     }
 
-    const int der_length = mbedtls_x509write_crt_der(&writer, der, sizeof(der),
+    const int der_length = mbedtls_x509write_crt_der(&writer, der, 2048,
                                                      mbedtls_ctr_drbg_random,
                                                      &state->ctr_drbg);
     mbedtls_x509write_crt_free(&writer);
     if (der_length <= 0) {
+        mbedtls_free(der);
         return der_length;
     }
-    const unsigned char *der_start = der + sizeof(der) - (size_t) der_length;
+    const unsigned char *der_start = der + 2048 - (size_t) der_length;
     if ((result = mbedtls_x509_crt_parse_der(&state->local_cert, der_start,
                                              (size_t) der_length)) != 0) {
+        mbedtls_free(der);
         return result;
     }
-    return mbedtls_sha256(der_start, (size_t) der_length,
-                          state->local_fingerprint, 0);
+    result = mbedtls_sha256(der_start, (size_t) der_length,
+                            state->local_fingerprint, 0);
+    mbedtls_free(der);
+    return result;
 }
 
 int intercom_dtls_heap_init(unsigned char *buffer, size_t length)

@@ -1,8 +1,8 @@
 //! Intercom composition for the shared uptime logger.
 
-use core::sync::atomic::{fence, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU32, Ordering, fence};
 use edf_logger::{
-    LogTimestamp, UptimeLogger, DEFAULT_SUPPRESSED_DEBUG_EXACT, DEFAULT_SUPPRESSED_DEBUG_PREFIXES,
+    DEFAULT_SUPPRESSED_DEBUG_EXACT, DEFAULT_SUPPRESSED_DEBUG_PREFIXES, LogTimestamp, UptimeLogger,
 };
 use intercom_core::ports::ClockSyncDriver;
 
@@ -31,7 +31,8 @@ impl ClockOffset {
         // There is one writer: the Matter connection monitor task.
         self.sequence.fetch_add(1, Ordering::AcqRel);
         self.low.store(offset_ms as u32, Ordering::Relaxed);
-        self.high.store((offset_ms as u64 >> 32) as u32, Ordering::Relaxed);
+        self.high
+            .store((offset_ms as u64 >> 32) as u32, Ordering::Relaxed);
         self.sequence.fetch_add(1, Ordering::Release);
     }
 
@@ -154,8 +155,8 @@ fn uart_colors(level: log::Level) -> (&'static str, &'static str) {
 #[cfg(test)]
 mod tests {
     use super::{
-        get_buffered_logs, is_clock_synchronized, log_timestamp, uart_colors, ClockOffset,
-        FirmwareClockSyncDriver, LOGGER,
+        ClockOffset, FirmwareClockSyncDriver, LOGGER, get_buffered_logs, is_clock_synchronized,
+        log_timestamp, uart_colors,
     };
     use edf_logger::{LogTimestamp, UptimeLogger};
     use intercom_core::ports::ClockSyncDriver;

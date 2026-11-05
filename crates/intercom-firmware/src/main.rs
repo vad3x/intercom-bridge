@@ -177,7 +177,9 @@ async fn main(_spawner: Spawner) {
     heap_allocator!(#[ram(reclaimed)] size: RECLAIMED_RAM - core::mem::size_of::<DtlsSrtpResources>());
 
     // Initialize ESP-HAL peripherals
-    let peripherals = esp_hal::init(esp_hal::Config::default());
+    let peripherals = esp_hal::init(
+        esp_hal::Config::default().with_cpu_clock(esp_hal::clock::CpuClock::max()),
+    );
 
     // Initialize Embassy async runtime via esp-rtos
     let timg0 = TimerGroup::new(peripherals.TIMG0);
@@ -484,7 +486,8 @@ async fn main(_spawner: Spawner) {
             state_watch: &STATE_WATCH,
             ws_active: &WS_AUDIO_ACTIVE,
         })
-        .with_webrtc_session(webrtc_session_handle);
+        .with_webrtc_session(webrtc_session_handle)
+        .with_debug_webrtc_signaling(&webrtc_signaling);
         http_server.run().await;
     };
 
@@ -505,17 +508,21 @@ async fn main(_spawner: Spawner) {
     };
     #[cfg(feature = "devkit")]
     let audio_input_future = async {
-        let mut tone = intercom_media::BenchToneGenerator::new();
+        let mut speech = intercom_media::Pcm16LeLoopingSource::new(
+            include_bytes!("../assets/devkit_test_speech_short.pcm"),
+            intercom_media::AUDIO_SAMPLE_RATE_HZ as usize,
+        )
+        .expect("embedded DevKit speech sample must contain complete PCM samples");
         let mut schedule =
             intercom_media::AudioCaptureSchedule::new(embassy_time::Instant::now().as_millis());
         let mut drop_window = intercom_media::AudioFrameDropWindow::new();
         let mut simulated_dma_overruns = 0u64;
-        let levels = intercom_media::compute_frame_levels_dbfs(&tone.next_frame());
+        let levels = intercom_media::compute_frame_levels_dbfs(&speech.next_frame());
         intercom_core::domain::diagnostics::update_rx_levels_dbfs(
             levels.rms_dbfs,
             levels.peak_dbfs,
         );
-        info!("DevKit audio input: synthetic 1 kHz test tone");
+        info!("DevKit audio input: embedded 16 kHz mono speech sample, 1 s repeat pause");
         loop {
             let now_ms = embassy_time::Instant::now().as_millis();
             embassy_time::Timer::after_millis(schedule.delay_until_next_ms(now_ms)).await;
@@ -523,7 +530,7 @@ async fn main(_spawner: Spawner) {
             simulated_dma_overruns = simulated_dma_overruns.saturating_add(batch.overruns);
 
             for _ in 0..batch.frames {
-                let queue_dropped = RX_AUDIO_CHANNEL.try_send(tone.next_frame()).is_err();
+                let queue_dropped = RX_AUDIO_CHANNEL.try_send(speech.next_frame()).is_err();
                 if let Some(queue_drops) = drop_window.record(queue_dropped) {
                     info!(
                         "DevKit audio capture frames=50 simulated_dma_overruns={} queue_drops={}",
