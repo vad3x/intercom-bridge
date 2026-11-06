@@ -124,8 +124,8 @@ See [`docs/matter-tcp-webrtc-architecture-and-target-migration.md`](file:///User
 
 **Target Migration Roadmap:**
 - **ESP32-C6 Limitations:** Single 160 MHz core (Opus encoding takes ~48% CPU per frame), no external PSRAM support, and 4 MB flash on DevKit modules (disabling dual-bank OTA).
-- **ESP32-C61 (Recommended successor):** Adds Quad SPI PSRAM support to the Wi-Fi 6 / BLE 5 RISC-V platform. External PSRAM (2–4 MB) removes all stack/heap trade-offs, allowing stack sizes of 64–128 KiB and paving the way to replace vendored C libraries (`mbedTLS`, `libopus`) with pure-Rust implementations.
-- **ESP32-S3 (Dual-core alternative):** 240 MHz dual-core with SIMD vector extensions and up to 8 MB Octal PSRAM. Allows core isolation (Core 0: Wi-Fi/Matter/TCP; Core 1: audio DSP, Opus, and full-duplex AEC).
+- **ESP32-S31 (Flagship successor):** Dual-core RISC-V SoC (`ProCpu` + `AppCpu`) with hardware branch prediction, L1 D-cache, Wi-Fi 6, and Octal/Hex SPI PSRAM. Allows core isolation (Core 0: Wi-Fi/Matter/TCP; Core 1: audio DSP, Opus, and full-duplex AEC) while sharing the exact same RISC-V `no_std` Rust toolchain.
+- **ESP32-C61 (Cost-effective alternative):** Single-core Wi-Fi 6 / BLE 5 RISC-V with Quad SPI PSRAM support (2–4 MB), removing internal SRAM stack/heap trade-offs.
 
 ### Viewing Commissioning QR & Pairing Codes
 

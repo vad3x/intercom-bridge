@@ -104,23 +104,23 @@ While the ESP32-C6 is currently operational with these tunings, it represents th
 
 ---
 
-## 5. Migration to Next-Gen SoCs (ESP32-C61 / ESP32-S3)
+## 5. Migration to Next-Gen SoCs (ESP32-S31 / ESP32-C61)
 
-Migrating the hardware platform to **ESP32-C61** (or **ESP32-S3**) provides substantial architectural advantages for future development:
+Migrating the hardware platform to **ESP32-S31** (or **ESP32-C61**) provides decisive architectural advantages for future development:
 
-### Why ESP32-C61 is the Ideal Drop-in Successor
-- **Architecture**: Cost-effective single-core RISC-V with Wi-Fi 6 (802.11ax) and BLE 5.
-- **Quad SPI PSRAM Support**: The C61 introduces external PSRAM support (missing on C6). Adding 2 MB or 4 MB of PSRAM completely removes the memory squeeze.
-- **Stack & Heap Freedom**: The main task stack can be expanded to 64–128 KiB without touching internal SRAM. DTLS handshake structures, network packet buffers, and WebRTC queues can be allocated freely in PSRAM.
-- **Pin & Radio Compatibility**: Retains the power profile and 2.4 GHz Wi-Fi 6 performance of the C6 family.
+### Flagship Successor: ESP32-S31 (Dual-Core RISC-V + Wi-Fi 6 + PSRAM)
+The **ESP32-S31** represents the ideal next-generation SoC for this project:
+- **Dual-Core RISC-V Architecture**: Features two high-performance 32-bit RISC-V cores (`ProCpu` and `AppCpu`) with branch prediction (`0x7c1` CSR MHCR), L1 instruction/data caches, and AXI GDMA.
+  - **Identical Toolchain Target**: Unlike the older Xtensa-based ESP32-S3, the S31 shares the exact same modern `riscv32...` Rust target toolchain as the current ESP32-C6 firmware (`no_std`, `build-std`).
+  - **Core Isolation / Separation**: Core 0 runs Wi-Fi/Matter/TCP networking and Embassy event loops, while Core 1 runs dedicated real-time audio DSP, full-duplex Acoustic Echo Cancellation (AEC), and Opus encoding without taking CPU time away from network sockets.
+- **Octal / Hex SPI PSRAM**: Native hardware support for high-bandwidth external PSRAM. Eliminates internal SRAM contention entirely.
+- **Wi-Fi 6 (802.11ax) + Dual-Band (2.4 GHz / 5 GHz) + BLE 5**: Native modern Wi-Fi 6 with OFDMA, target wake time (TWT), and 5 GHz band support for congested RF environments.
 
-### Alternative: ESP32-S3 (High Performance)
-- **Architecture**: Dual-core Xtensa LX7 @ 240 MHz with SIMD/Vector instructions.
-- **Core Partitioning**: Core 0 runs Wi-Fi/Matter/TCP networking; Core 1 runs real-time audio DSP, Opus encoding, and full-duplex Acoustic Echo Cancellation (AEC).
-- **8 MB Octal PSRAM**: Enables full-duplex PCM ring buffers and multi-frame jitter buffers.
+### Alternative Option: ESP32-C61 (Cost-Effective Single-Core Drop-in)
+- **Single-Core RISC-V with Quad SPI PSRAM**: Retains the C6's single-core cost profile but adds external PSRAM support, solving the memory starvation and stack overflow risks.
 
 ### Path Toward Pure Rust
-With 2–8 MB of PSRAM available on ESP32-C61/S3:
+With multi-megabyte PSRAM available on ESP32-S31:
 1. **Eliminate C libopus**: Standard Rust audio codecs or pure-Rust PCM/G.711 streaming can run without extreme fixed-point static arena tuning.
 2. **Eliminate C mbedTLS**: Pure-Rust TLS implementations (such as `rustls` or embedded forks) become viable once the strict 24 KiB static DTLS memory limit is relaxed by PSRAM availability.
 3. **Decoupled Architecture Preserved**: All domain logic (`intercom-core`), Matter endpoints (`intercom-adapter-matter`), and HTTP adapters (`intercom-adapter-http`) remain 100% agnostic to the underlying chip target.
