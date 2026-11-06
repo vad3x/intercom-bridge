@@ -113,6 +113,20 @@ Wait until the bridge has joined Wi-Fi and `/api/status` reports `state: Operati
 
 Do not apply `DEFAULT_MAX_LISTEN_DURATION_MS` to `SessionOwner::MatterCall`: the 180-second cap makes the bridge bus report `idle` while Home Assistant still shows the stream's End/Mute controls. Matter WebRTC has its own ICE consent timeout and sends core heartbeats while active. Verify a live Listen call remains active past 180 seconds, and verify it returns to idle after the WebRTC session ends or heartbeats stop. After ending a sustained call, read `WebRTC media benchmark ... min_free_heap_bytes=...` from serial and require at least 32,768 bytes.
 
+### Memory Tuning & Next-Gen Target Migration (ESP32-C61 / ESP32-S3)
+
+See [`docs/matter-tcp-webrtc-architecture-and-target-migration.md`](file:///Users/vadim/personal/projects/intercom-matter/docs/matter-tcp-webrtc-architecture-and-target-migration.md) for full architecture and memory maps.
+
+**ESP32-C6 Memory Pool Balance:**
+- The ESP32-C6 has 512 KiB SRAM, yielding ~320 KiB usable `RWDATA`. In `esp-hal`, `.stack` receives whatever memory is left after `.data` and `.bss` (which includes the heap buffer).
+- `HEAP_SIZE` is tuned to **120 KiB**, ensuring `.stack` has **48 KiB** (`48,240 bytes`). This provides necessary headroom for Opus Silk fixed-point recursive pitch analysis (`silk_pitch_analysis_core`), which previously overflowed when the stack was limited to 27 KiB with a 140 KiB heap.
+- Peak heap usage with WebRTC DTLS-SRTP and Matter-over-TCP is ~108 KiB, maintaining ~12 KiB of safe free heap headroom.
+
+**Target Migration Roadmap:**
+- **ESP32-C6 Limitations:** Single 160 MHz core (Opus encoding takes ~48% CPU per frame), no external PSRAM support, and 4 MB flash on DevKit modules (disabling dual-bank OTA).
+- **ESP32-C61 (Recommended successor):** Adds Quad SPI PSRAM support to the Wi-Fi 6 / BLE 5 RISC-V platform. External PSRAM (2–4 MB) removes all stack/heap trade-offs, allowing stack sizes of 64–128 KiB and paving the way to replace vendored C libraries (`mbedTLS`, `libopus`) with pure-Rust implementations.
+- **ESP32-S3 (Dual-core alternative):** 240 MHz dual-core with SIMD vector extensions and up to 8 MB Octal PSRAM. Allows core isolation (Core 0: Wi-Fi/Matter/TCP; Core 1: audio DSP, Opus, and full-duplex AEC).
+
 ### Viewing Commissioning QR & Pairing Codes
 
 Display the Matter commissioning QR code and manual pairing codes from the connected ESP32-C6 device:
