@@ -68,7 +68,4 @@ docs/superpowers/
 .agents/skills/speckit-*
 .specify
 
-# openspec
-.agents/skills/openspec-*
-.agents/skills/.openspec-target
 .agents/workflows

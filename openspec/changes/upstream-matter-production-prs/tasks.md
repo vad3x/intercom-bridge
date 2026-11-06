@@ -1,9 +1,9 @@
-# Tasks: Upstream Production PRs for rs-matter and rs-matter-embassy
+# Tasks: Upstream Production PRs for rs-matter and Downstream Adapter Integration
 
 ## 0. Upstream Sync & Clean Feature Branch Setup
 
 - [x] 0.1 In `rs-matter`, fetch `upstream` (`git fetch upstream`) and cut clean feature branches `feat/audio-doorbell-cluster` and `feat/matter-over-tcp` directly from `upstream/main`, verifying the base commit matches `upstream/main`
-- [x] 0.2 In `rs-matter-embassy`, fetch `upstream` (`git fetch upstream`) and cut clean feature branch `feat/embassy-tcp-buffers-and-wifi6` directly from `upstream/master`, verifying the base commit matches `upstream/master`
+- [x] 0.2 Verify `rs-matter-embassy` upstream `master` includes `enet-extra-sockets-2`, confirming no external PR is required for socket pool sizing
 
 ## 1. PR 1: Audio Doorbell Device Type & AudioAvStreamHandler in project-chip/rs-matter
 
@@ -22,22 +22,19 @@
 - [ ] 2.5 Add integration tests covering single-connection concurrency control, idle connection timeouts, and connection teardown
 - [ ] 2.6 Run `cargo clippy` and `cargo test` across `rs-matter-transport` and `rs-matter-stack`, format code, and create PR commit on `feat/matter-over-tcp` ready for upstream review
 
-## 3. PR 3: Embassy Network Sizing, On-Demand Buffers & Wi-Fi 6 in sysgrok/rs-matter-embassy
+## 3. Downstream Adapter Integration & Embassy Zero-Change Wiring
 
-- [ ] 3.1 Implement on-demand allocation of TCP socket RX/TX buffers in `rs-matter-embassy/src/enet.rs`, verifying buffers are allocated on connection initiation and freed on close
-- [ ] 3.2 Add compile-time feature flags `enet-extra-sockets-1` and `enet-extra-sockets-2` to configure socket pool sizes for concurrent REST and WebSocket servers, verifying compilation under each feature
-- [ ] 3.3 Add 802.11ax (Wi-Fi 6) protocol negotiation support and fast channel scan methods in `rs-matter-embassy/src/wifi/esp.rs`
-- [ ] 3.4 Add unit tests and verify compilation for both host target and `riscv32imac-unknown-none-elf` using `cargo check --target riscv32imac-unknown-none-elf`
-- [ ] 3.5 Run `cargo clippy` and `cargo fmt` on `rs-matter-embassy`, and create PR commit on `feat/embassy-tcp-buffers-and-wifi6` ready for upstream review
+- [ ] 3.1 Configure `rs-matter-embassy` dependency to consume upstream `sysgrok/rs-matter-embassy` directly with `features = ["enet-extra-sockets-2"]`, verifying compilation and socket headroom for REST and WebSocket servers
+- [ ] 3.2 Implement `IntercomWifiDriver` in `intercom-adapter-matter/src/wireless.rs` supporting 802.11ax (Wi-Fi 6) negotiation, fast AP scanning (`ScanMethod::Fast`), and RSSI deduplication
+- [ ] 3.3 Implement adapter-level on-demand TCP socket buffer allocation and teardown in `intercom-adapter-matter`, freeing 16–24 KiB of SRAM during idle standby
 
-## 4. Downstream Integration & End-to-End Verification
+## 4. End-to-End Verification & Workspace Cleanup
 
-- [ ] 4.1 Update `intercom-matter` workspace dependencies to point to the new upstream PR branches and verify all 107 host tests pass (`cargo test -p intercom-core -p intercom-adapter-http -p intercom-pairing-tool --target x86_64-apple-darwin`)
+- [ ] 4.1 Update `intercom-matter` workspace dependencies in `Cargo.toml` to point to the new upstream PR branches and verify all host tests pass (`cargo test -p intercom-core -p intercom-adapter-http -p intercom-pairing-tool --target x86_64-apple-darwin`)
 - [ ] 4.2 Build release DevKit firmware with `cargo build-devkit` and verify the binary links cleanly within the 48 KiB stack budget
 
 ## Workflow follow-up
 
 - Submit PR 1 to `project-chip/rs-matter` repository.
 - Submit PR 2 to `project-chip/rs-matter` repository.
-- Submit PR 3 to `sysgrok/rs-matter-embassy` repository.
 - Archive the OpenSpec change with `openspec archive upstream-matter-production-prs` once upstream reviews and local integrations conclude.

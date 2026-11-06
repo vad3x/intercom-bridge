@@ -1,19 +1,22 @@
-# Design: Upstream Production PRs for rs-matter and rs-matter-embassy
+# Design: Upstream Production PRs for rs-matter and Downstream Adapter Integration
 
 ## Context
 
 The Intercom Bridge project developed several core Matter 1.4 capabilities and transport optimizations on local fork branches. Upstream has recently refactored `project-chip/rs-matter` into a modular workspace (`rs-matter-dm`, `rs-matter-dm-clusters`, `rs-matter-transport`, `rs-matter-stack`), and merged the separate `rs-matter-stack` repository in-tree.
 
-To upstream our changes cleanly into `project-chip/rs-matter` and `sysgrok/rs-matter-embassy`, the code must adhere to upstream coding conventions, `no_std` zero-cost abstractions, strict Matter specification compliance (Matter 1.4 Endpoint 1 Audio Doorbell `0x0141`, Cluster `0x0551`, global attributes `0xFFF8`–`0xFFFD`), and defensive resource bounds suitable for microcontrollers.
+To upstream our changes cleanly into `project-chip/rs-matter`, the code must adhere to upstream coding conventions, `no_std` zero-cost abstractions, strict Matter specification compliance (Matter 1.4 Endpoint 1 Audio Doorbell `0x0141`, Cluster `0x0551`, global attributes `0xFFF8`–`0xFFFD`), and defensive resource bounds suitable for microcontrollers.
+
+To avoid cross-repository review lockstep with a second maintainer (`sysgrok/rs-matter-embassy`), upstream `rs-matter-embassy` is consumed as-is directly using its already-merged `enet-extra-sockets-2` feature flag. Hardware-specific Wi-Fi 6 tuning and on-demand TCP buffer lifecycle management are encapsulated cleanly within `intercom-adapter-matter` following Hexagonal Architecture.
 
 ## Goals / Non-Goals
 
 **Goals:**
-- **Modular Upstream Alignment**: Place changes into their respective upstream monorepo crates (`rs-matter-dm-clusters`, `rs-matter-transport`, `rs-matter-stack`, `rs-matter-embassy`).
+- **Modular Upstream Alignment**: Place changes into their respective upstream monorepo crates (`rs-matter-dm-clusters`, `rs-matter-transport`, `rs-matter-stack`).
 - **Zero-Allocation Data Model**: Implement `AudioAvStreamHandler` with fixed-capacity arrays, stack-allocated TLV builders, and zero dynamic heap allocation in steady state.
-- **Microcontroller SRAM Safety**: Reduce baseline memory consumption via on-demand TCP socket buffers (saving 16–24 KiB when inactive) and stack budgeting suitable for 48 KiB execution stacks.
+- **Microcontroller SRAM Safety**: Reduce baseline memory consumption via adapter-managed on-demand TCP socket buffers (saving 16–24 KiB when inactive) and stack budgeting suitable for 48 KiB execution stacks.
 - **Specification Compliance**: Pass Matter standard tests for Audio Doorbell `0x0141`, Camera AV Stream Management `0x0551`, and Matter-over-TCP `T=6` operational discovery.
 - **Test Automation**: Provide unit tests covering all TLV encoders/decoders, stream ID wrapping, reference count saturation, and embedded TCP framing and lifecycle edge cases.
+- **Zero-Change Upstream Embassy**: Eliminate downstream fork patches for `sysgrok/rs-matter-embassy` by isolating Wi-Fi 6 and TCP buffer management to `intercom-adapter-matter`.
 
 **Non-Goals:**
 - Full Camera Video / Snapshot handling (H.264/H.265/MJPEG). Video clusters belong in separate PRs; this design isolates the audio doorbell profile.
@@ -49,10 +52,10 @@ To upstream our changes cleanly into `project-chip/rs-matter` and `sysgrok/rs-ma
 - **Rationale**: The upstream transport already encodes `T=6` from `tcp_supported`; stack integration must advertise it only when the configured device can accept operational TCP connections.
 - **Alternatives Considered**: Reimplementing the mDNS TXT record or advertising TCP server support unconditionally.
 
-### 6. On-Demand Embassy TCP Buffers
-- **Decision**: In `sysgrok/rs-matter-embassy`, allocate TCP socket RX and TX buffers on demand when a connection is established, returning them upon close.
-- **Rationale**: Preserves 16–24 KiB of SRAM during normal idle standby, leaving critical headroom for Opus audio encoding and Wi-Fi drivers on ESP32-C6.
-- **Alternatives Considered**: Static buffer reservation (leaves only ~27 KiB stack on ESP32-C6, risking stack overflow during voiced Opus encoding).
+### 6. Adapter-Level Wi-Fi 6 & On-Demand TCP Buffers (Zero Upstream Changes to `rs-matter-embassy`)
+- **Decision**: Consume upstream `sysgrok/rs-matter-embassy` directly with `features = ["enet-extra-sockets-2"]`. Implement `IntercomWifiDriver` in `intercom-adapter-matter` to configure ESP32-C6 802.11ax and fast scan methods, and manage on-demand TCP buffer allocation within `intercom-adapter-matter` when creating the TCP socket.
+- **Rationale**: Upstream `sysgrok/rs-matter-embassy` already includes `enet-extra-sockets-2` on `master`. Handling Wi-Fi 6 PHY configuration and TCP buffer lifecycles in the adapter layer adheres strictly to Hexagonal Architecture, eliminates multi-repository PR review friction with Ivan Markov, and unblocks tracking upstream `rs-matter-embassy` immediately.
+- **Alternatives Considered**: Opening a 3-PR series to `sysgrok/rs-matter-embassy` (rejected: requires waiting for review from a separate maintainer and introduces upstream CI coupling to PR 2).
 
 ## Risks / Trade-offs
 
@@ -65,7 +68,10 @@ To upstream our changes cleanly into `project-chip/rs-matter` and `sysgrok/rs-ma
 
 ## Migration Plan
 
-1. **Step 1 (PR 1)**: Submit `feat(dm): add DEV_TYPE_AUDIO_DOORBELL (0x0141) and AudioAvStreamHandler (0x0551)` to `project-chip/rs-matter`.
+1. **Step 1 (PR 1)**: Submit `feat(dm): add DEV_TYPE_AUDIO_DOORBELL (0x0141) and AudioAvStreamHandler (0x0551)` to `project-chip/rs-matter` (Complete on `feat/audio-doorbell-cluster`).
 2. **Step 2 (PR 2)**: Submit `feat(transport/stack): add embedded Matter-over-TCP listener and operational runner` to `project-chip/rs-matter`.
-3. **Step 3 (PR 3)**: Submit `feat(enet): on-demand TCP buffer allocation & network sizing features` to `sysgrok/rs-matter-embassy`.
-4. **Step 4 (Intercom Bridge Cleanup)**: Once merged or tagged upstream, update `Cargo.toml` in `intercom-matter` to consume upstream crates, removing local path patches.
+3. **Step 3 (Downstream Adapter Integration)**:
+   - Configure `rs-matter-embassy` with upstream `enet-extra-sockets-2`.
+   - Implement `IntercomWifiDriver` in `intercom-adapter-matter` for 802.11ax and fast scan.
+   - Wire on-demand TCP buffer allocation in `intercom-adapter-matter` for PR 2's TCP listener.
+   - Remove local git/path patches in `Cargo.toml`.
