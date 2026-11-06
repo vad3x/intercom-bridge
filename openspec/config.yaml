@@ -1,32 +1,19 @@
 schema: spec-driven
 
-# Project context (optional)
-# Add only constraints that should guide OpenSpec artifacts and workflows.
-# Include constraints an agent cannot infer by reading the code.
-# Keep general project documentation and discoverable codebase facts out.
-# Example:
-#   context: |
-#     Designs and tasks must cover Windows, macOS, and Linux
-#     Write all artifacts in Spanish
+# Project context
+# Constraints and architectural rules that guide OpenSpec artifacts and workflows.
+context: |
+  Architecture:
+  - Hexagonal Architecture (Ports & Adapters) virtual workspace.
+  - crates/intercom-core is pure no_std with zero async or runtime dependencies. All business logic lives in deterministic state machines (IntercomStateMachine).
+  - Edge adapters (intercom-adapter-gpio, intercom-adapter-matter, intercom-adapter-http) implement outbound port traits or drive Inbound Command Handles (AccessControllerHandle).
+  - Target hardware: ESP32-C6 (RISC-V riscv32imac-unknown-none-elf) running the Embassy async runtime.
 
-# Per-artifact rules (optional)
-# Add custom rules for specific artifacts.
-# Example:
-#   rules:
-#     proposal:
-#       - Keep proposals under 500 words
-#       - Always state what is out of scope
-#     tasks:
-#       - Break tasks into chunks of max 2 hours
+  OTA & System Safety:
+  - Dual-bank A/B partition layout (ota_0 / ota_1). Updates stream exclusively into the inactive slot; the running slot is never touched during OTA.
+  - Cryptographic verification uses Ed25519 before updating otadata. Bootloader watchdog automatically rolls back if newly booted firmware fails self-validation.
 
-# Per-operation guidance (optional)
-# Add advisory guidance for how apply and archive work should be conducted.
-# This is separate from artifact rules above.
-# Example:
-#   operations:
-#     apply:
-#       guidance:
-#         - Keep test summaries concise
-#     archive:
-#       guidance:
-#         - Summarize the archive outcome before finishing
+  Matter Protocol:
+  - Endpoint 1: Audio Doorbell (0x0141) with Switch, Chime, and WebRTC streaming. Audio signaling never unlocks the door.
+  - Endpoint 2: Door Lock (0x000A) for strike unlock actuation.
+  - In rs-matter cluster definitions, always prefix with_attrs with 'system;' to preserve global system attributes (0xFFF8-0xFFFD).
