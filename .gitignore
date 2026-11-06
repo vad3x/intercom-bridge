@@ -45,6 +45,7 @@ target/
 
 # Vendored dependencies (local patches)
 vendor/
+.worktrees
 
 # OTA Firmware Signing Keys
 ota_public_key.bin
@@ -62,3 +63,12 @@ analysis/
 
 # Superpowers specs and implementation plans
 docs/superpowers/
+
+# speckit
+.agents/skills/speckit-*
+.specify
+
+# openspec
+.agents/skills/openspec-*
+.agents/skills/.openspec-target
+.agents/workflows
