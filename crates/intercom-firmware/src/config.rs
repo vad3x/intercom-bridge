@@ -95,7 +95,11 @@ pub const DEFAULT_DOOR_DURATION_SEC: u32 = intercom_core::config::DEFAULT_DOOR_U
 // ============================================================================
 
 /// Total heap size allocated to the esp-alloc runtime, balancing free heap with main task stack space.
-pub const HEAP_SIZE: usize = 140 * 1024;
+///
+/// Peak heap usage with WebRTC DTLS+SRTP and Matter TCP is ~108 KiB.
+/// 120 KiB leaves ~12 KiB free heap margin while giving the main task stack ~48 KiB
+/// of headroom to safely run Opus Silk fixed-point pitch analysis.
+pub const HEAP_SIZE: usize = 120 * 1024;
 
 /// Diagnostic log history (2 KiB), leaving room for two HTTP sockets and audio.
 pub const LOG_BUFFER_CAPACITY: usize = 2048;
