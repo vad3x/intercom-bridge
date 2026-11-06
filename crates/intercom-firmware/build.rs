@@ -28,7 +28,10 @@ fn main() {
     println!("cargo:rustc-env=INTERCOM_IS_DIRTY={}", is_dirty);
 
     // Re-run build.rs when git HEAD, index, or the build script itself changes
-    if let Ok(output) = Command::new("git").args(["rev-parse", "--git-dir"]).output() {
+    if let Ok(output) = Command::new("git")
+        .args(["rev-parse", "--git-dir"])
+        .output()
+    {
         if output.status.success() {
             let git_dir = String::from_utf8_lossy(&output.stdout).trim().to_string();
             println!("cargo:rerun-if-changed={}/HEAD", git_dir);
@@ -60,7 +63,12 @@ fn query_git() -> (String, bool, u64, String) {
         .output()
         .ok()
         .filter(|o| o.status.success())
-        .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<u64>().ok())
+        .and_then(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .trim()
+                .parse::<u64>()
+                .ok()
+        })
         .unwrap_or(0);
 
     let commit_date = Command::new("git")

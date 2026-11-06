@@ -7,6 +7,7 @@ const CTRL_START_TALK = 0x01;
 const CTRL_STOP_TALK = 0x02;
 const MAX_BUFFERED_BYTES = FRAME_SAMPLES * 3;
 const MAX_PLAYBACK_SECONDS = 0.12;
+const TARGET_PLAYOUT_LEAD_SECONDS = 0.06;
 
 export class WsIntercomClient {
   private ws: WebSocket | null = null;
@@ -162,7 +163,7 @@ export class WsIntercomClient {
       this.playback.delete(source);
     };
     this.playback.add(source);
-    this.nextPlayTime = Math.max(this.nextPlayTime, now + 0.02);
+    this.nextPlayTime = Math.max(this.nextPlayTime, now + TARGET_PLAYOUT_LEAD_SECONDS);
     source.start(this.nextPlayTime);
     this.nextPlayTime += pcm.length / SAMPLE_RATE;
   }

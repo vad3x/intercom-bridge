@@ -28,6 +28,8 @@ mod utils;
 mod version;
 
 #[cfg(target_arch = "riscv32")]
+use core::mem::MaybeUninit;
+#[cfg(target_arch = "riscv32")]
 use core::pin::pin;
 
 #[cfg(target_arch = "riscv32")]
@@ -71,8 +73,10 @@ use edf_ota::driver::FlashOtaDriver;
 #[cfg(target_arch = "riscv32")]
 use intercom_adapter_http::{HttpAudioMedia, HttpServer, HttpServerConfig};
 #[cfg(target_arch = "riscv32")]
+use intercom_adapter_webrtc::dtls::{DtlsSrtpResourceCell, DtlsSrtpResources};
+#[cfg(target_arch = "riscv32")]
 use intercom_adapter_webrtc::session::{
-    WebRtcMediaEngine, WebRtcSessionConfig, WebRtcSessionHandle,
+    WebRtcMediaEngine, WebRtcMediaResources, WebRtcSessionConfig, WebRtcSessionHandle,
 };
 #[cfg(target_arch = "riscv32")]
 use intercom_adapter_webrtc::signaling::{SecureRandom, SignalingError, WebRtcSignalingFacade};
@@ -170,10 +174,12 @@ async fn main(_spawner: Spawner) {
     );
 
     heap_allocator!(size: config::HEAP_SIZE - RECLAIMED_RAM);
-    heap_allocator!(#[ram(reclaimed)] size: RECLAIMED_RAM);
+    heap_allocator!(#[ram(reclaimed)] size: RECLAIMED_RAM - core::mem::size_of::<DtlsSrtpResources>());
 
     // Initialize ESP-HAL peripherals
-    let peripherals = esp_hal::init(esp_hal::Config::default());
+    let peripherals = esp_hal::init(
+        esp_hal::Config::default().with_cpu_clock(esp_hal::clock::CpuClock::max()),
+    );
 
     // Initialize Embassy async runtime via esp-rtos
     let timg0 = TimerGroup::new(peripherals.TIMG0);
@@ -199,6 +205,10 @@ async fn main(_spawner: Spawner) {
         Channel::new();
     static WEBRTC_STATE: portable_atomic::AtomicU8 = portable_atomic::AtomicU8::new(0);
     static WEBRTC_HANDLE: StaticCell<WebRtcSessionHandle<'static>> = StaticCell::new();
+    static mut WEBRTC_RESOURCES: WebRtcMediaResources = WebRtcMediaResources::new();
+    #[esp_hal::ram(reclaimed)]
+    static mut WEBRTC_DTLS_RESOURCES: MaybeUninit<DtlsSrtpResources> = MaybeUninit::uninit();
+    static WEBRTC_DTLS_RESOURCE_CELL: StaticCell<DtlsSrtpResourceCell<'static>> = StaticCell::new();
 
     static COMMAND_CHANNEL: CommandChannel = CommandChannel::new();
     let access_handle = AccessControllerHandle::new(COMMAND_CHANNEL.sender());
@@ -207,16 +217,34 @@ async fn main(_spawner: Spawner) {
     static READINESS: StaticCell<ClusterReadinessBarrier> = StaticCell::new();
     let readiness = READINESS.init(ClusterReadinessBarrier::new(state_sender));
 
+    let dtls_resources = unsafe {
+        let storage = core::ptr::addr_of_mut!(WEBRTC_DTLS_RESOURCES);
+        core::ptr::write_bytes(
+            storage.cast::<u8>(),
+            0,
+            core::mem::size_of::<DtlsSrtpResources>(),
+        );
+        (&mut *storage).assume_init_mut()
+    };
+    let dtls_resource_cell =
+        WEBRTC_DTLS_RESOURCE_CELL.init(DtlsSrtpResourceCell::new(dtls_resources));
+    let webrtc_resources = unsafe { &mut *core::ptr::addr_of_mut!(WEBRTC_RESOURCES) };
     let (mut webrtc_engine, webrtc_session_handle) = WebRtcMediaEngine::new(
         &WEBRTC_REQUESTS,
         &WEBRTC_STATE,
         access_handle,
         RX_AUDIO_CHANNEL.receiver(),
         TX_AUDIO_CHANNEL.sender(),
+        webrtc_resources,
+        dtls_resource_cell,
     );
     let webrtc_session_handle = WEBRTC_HANDLE.init(webrtc_session_handle);
     static SECURE_RANDOM: HardwareSecureRandom = HardwareSecureRandom;
-    let webrtc_signaling = WebRtcSignalingFacade::new(*webrtc_session_handle, &SECURE_RANDOM);
+    let webrtc_signaling = WebRtcSignalingFacade::new_with_resources(
+        *webrtc_session_handle,
+        &SECURE_RANDOM,
+        dtls_resource_cell,
+    );
 
     // ========================================================================
     // Persistence & initial configuration
@@ -249,6 +277,13 @@ async fn main(_spawner: Spawner) {
 
     let doorbell_switch = IntercomDoorbellSwitch::new(readiness);
     let audio_av_cluster = IntercomAudioAvCluster::new(access_handle);
+    #[cfg(feature = "devkit")]
+    {
+        let stream_id = audio_av_cluster
+            .allocate_synthetic_audio_stream()
+            .expect("allocate DevKit synthetic audio stream");
+        info!("DevKit synthetic audio stream allocated: {}", stream_id);
+    }
     let webrtc_prov_cluster = IntercomWebRtcProvCluster::new(IntercomWebRtcHooks::new(
         access_handle,
         &audio_av_cluster,
@@ -306,6 +341,7 @@ async fn main(_spawner: Spawner) {
         GpioBusConfig::new(peripherals.GPIO7, peripherals.GPIO10, peripherals.GPIO18),
     ));
     // Start MCLK/BCLK/WS before releasing CODEC_RST_N (GPIO11).
+    #[cfg(not(feature = "devkit"))]
     let i2s_pipeline = intercom_adapter_audio::I2sAudioPipeline::new(
         peripherals.I2S0,
         peripherals.DMA_CH0,
@@ -450,13 +486,15 @@ async fn main(_spawner: Spawner) {
             state_watch: &STATE_WATCH,
             ws_active: &WS_AUDIO_ACTIVE,
         })
-        .with_webrtc_session(webrtc_session_handle);
+        .with_webrtc_session(webrtc_session_handle)
+        .with_debug_webrtc_signaling(&webrtc_signaling);
         http_server.run().await;
     };
 
     info!("Matter Controller Running");
 
-    let i2s_future = async {
+    #[cfg(not(feature = "devkit"))]
+    let audio_input_future = async {
         if let Err(error) = i2s_pipeline
             .run(RX_AUDIO_CHANNEL.sender(), TX_AUDIO_CHANNEL.receiver())
             .await
@@ -466,6 +504,41 @@ async fn main(_spawner: Spawner) {
             custom_halt();
             #[cfg(feature = "devkit")]
             core::future::pending::<()>().await;
+        }
+    };
+    #[cfg(feature = "devkit")]
+    let audio_input_future = async {
+        let mut speech = intercom_media::Pcm16LeLoopingSource::new(
+            include_bytes!("../assets/devkit_test_speech_short.pcm"),
+            intercom_media::AUDIO_SAMPLE_RATE_HZ as usize,
+        )
+        .expect("embedded DevKit speech sample must contain complete PCM samples");
+        let mut schedule =
+            intercom_media::AudioCaptureSchedule::new(embassy_time::Instant::now().as_millis());
+        let mut drop_window = intercom_media::AudioFrameDropWindow::new();
+        let mut simulated_dma_overruns = 0u64;
+        let levels = intercom_media::compute_frame_levels_dbfs(&speech.next_frame());
+        intercom_core::domain::diagnostics::update_rx_levels_dbfs(
+            levels.rms_dbfs,
+            levels.peak_dbfs,
+        );
+        info!("DevKit audio input: embedded 16 kHz mono speech sample, 1 s repeat pause");
+        loop {
+            let now_ms = embassy_time::Instant::now().as_millis();
+            embassy_time::Timer::after_millis(schedule.delay_until_next_ms(now_ms)).await;
+            let batch = schedule.take_due_frames(embassy_time::Instant::now().as_millis());
+            simulated_dma_overruns = simulated_dma_overruns.saturating_add(batch.overruns);
+
+            for _ in 0..batch.frames {
+                let queue_dropped = RX_AUDIO_CHANNEL.try_send(speech.next_frame()).is_err();
+                if let Some(queue_drops) = drop_window.record(queue_dropped) {
+                    info!(
+                        "DevKit audio capture frames=50 simulated_dma_overruns={} queue_drops={}",
+                        simulated_dma_overruns, queue_drops,
+                    );
+                    simulated_dma_overruns = 0;
+                }
+            }
         }
     };
 
@@ -498,7 +571,7 @@ async fn main(_spawner: Spawner) {
         matter_future,
         led_future,
         http_future,
-        embassy_futures::join::join(i2s_future, webrtc_future),
+        embassy_futures::join::join(audio_input_future, webrtc_future),
     )
     .await;
 }

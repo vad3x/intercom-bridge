@@ -155,7 +155,9 @@ pub fn parse_sdp_offer(sdp: &str) -> Result<ParsedSdpOffer<'_>, SdpError> {
             }
         } else if let Some(attribute) = value.strip_prefix("rtpmap:") {
             if in_audio {
-                audio_opus_payload_type = parse_opus_mapping(attribute, audio_formats);
+                if let Some(payload_type) = parse_opus_mapping(attribute, audio_formats) {
+                    audio_opus_payload_type = Some(payload_type);
+                }
             }
         } else if let Some(direction) = parse_direction(value) {
             if in_audio {
@@ -279,7 +281,7 @@ a=fingerprint:sha-256 ",
         cursor,
         "\r\na=setup:{setup}\r\na={direction}\r\na=rtcp-mux\r\n\
 a=rtpmap:{payload_type} opus/48000/2\r\n\
-a=fmtp:{payload_type} minptime=20;maxplaybackrate=16000;sprop-maxcapturerate=16000;stereo=0;sprop-stereo=0;useinbandfec=1;usedtx=1\r\n\
+a=fmtp:{payload_type} minptime=20;maxplaybackrate=16000;sprop-maxcapturerate=8000;stereo=0;sprop-stereo=0;useinbandfec=1;usedtx=1\r\n\
 a=ptime:20\r\na=ssrc:{} cname:intercom-v2\r\na=candidate:1 1 UDP 2130706431 {a}.{b}.{c}.{d} {} typ host\r\n",
         local.ssrc,
         local.port
@@ -432,6 +434,17 @@ a=sendrecv\r\n\
 a=rtcp-mux\r\n\
 a=rtpmap:111 opus/48000/2\r\n";
 
+    #[test]
+    fn home_assistant_opus_mapping_is_found_in_audio_payload_list() {
+        assert_eq!(
+            super::parse_opus_mapping(
+                "111 opus/48000/2",
+                Some("audio 9 UDP/TLS/RTP/SAVPF 111 63 9 0 8 13 110 126"),
+            ),
+            Some(111)
+        );
+    }
+
     fn sample_local_params() -> LocalSdpParams<'static> {
         LocalSdpParams {
             ipv4: [192, 168, 1, 142],
@@ -462,9 +475,10 @@ a=rtpmap:111 opus/48000/2\r\n";
         assert_eq!(parsed.setup, DtlsSetupRole::ActPass);
         assert!(length < 900);
         assert!(answer.contains("a=ice-lite\r\n"));
+        assert!(answer.contains("a=ptime:20\r\n"));
         assert!(answer.contains("a=rtpmap:111 opus/48000/2\r\n"));
         assert!(answer.contains(
-            "maxplaybackrate=16000;sprop-maxcapturerate=16000;stereo=0;sprop-stereo=0;useinbandfec=1"
+            "maxplaybackrate=16000;sprop-maxcapturerate=8000;stereo=0;sprop-stereo=0;useinbandfec=1"
         ));
     }
 

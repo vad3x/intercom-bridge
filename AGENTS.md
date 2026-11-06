@@ -36,7 +36,25 @@ git status -sb
 
 Open the worktree directory itself in the editor. Merge or remove completed worktrees at task boundaries so the primary checkout and the active branch do not drift.
 
+### Verify the active worktree before editing
+
+When a task uses multiple repositories or worktrees, run `git rev-parse --show-toplevel`, `git status -sb`, and `git worktree list --porcelain` in the repository named by the task before editing. `.worktrees` entries can be symlinks to sibling repositories rather than Git worktrees; inspect them with `ls -la` and confirm the registered checkout path with `git worktree list`. Do not move a worktree with `mv`; if relocation is necessary, use `git worktree move <old-path> <new-path>` so Git updates its administrative metadata. Prefer a sibling worktree outside the primary checkout when the task allows it, avoiding nested Cargo config discovery; otherwise follow the nested-worktree Cargo commands below.
+
 ## Build, Test & Flash
+
+### Cargo from a nested worktree
+
+This repository's feature worktrees may live under `.worktrees/<name>` inside the primary checkout. When Cargo runs from that nested worktree, it discovers `.cargo/config.toml` in both the worktree and its containing checkout. Cargo then applies aliases and linker flags twice. Symptoms include `cargo build-devkit` reporting `unexpected argument 'build' found` and the ESP linker reporting `region 'RAM' already defined` because `linkall.x` was passed twice.
+
+Run Cargo from the primary checkout root, point it at the worktree manifest, and keep build artifacts in the worktree's target directory. For a worktree named `matter-over-tcp`, use:
+
+```bash
+CARGO_TARGET_DIR="$PWD/.worktrees/matter-over-tcp/target" mise exec -- cargo test --manifest-path .worktrees/matter-over-tcp/Cargo.toml -p intercom-core -p intercom-adapter-http -p intercom-firmware --lib --target x86_64-apple-darwin
+CARGO_TARGET_DIR="$PWD/.worktrees/matter-over-tcp/target" mise exec -- cargo build --manifest-path .worktrees/matter-over-tcp/Cargo.toml -p intercom-firmware --release
+CARGO_TARGET_DIR="$PWD/.worktrees/matter-over-tcp/target" mise exec -- cargo build-devkit --manifest-path .worktrees/matter-over-tcp/Cargo.toml
+```
+
+This loads the primary checkout's Cargo config once while compiling the worktree's source. Avoid changing `.cargo/config.toml` to work around the duplicate load.
 
 ```bash
 # Run host-capable tests on macOS without hardware
@@ -74,6 +92,26 @@ espflash flash target/riscv32imac-unknown-none-elf/release/intercom-bridge \
     --partition-table partitions-4mb.csv \
     --monitor
 ```
+
+### Avoid serial-port contention during flashing
+
+Before invoking `espflash`, check whether a monitor already owns the board port:
+
+```bash
+lsof -nP /dev/cu.usbmodem14201
+```
+
+If the listed owner is a stale `scripts/monitor.py` process, stop that specific PID with `kill -INT <PID>`, then repeat `lsof` and confirm the port is free before flashing. Do not repeatedly retry a flash that is stuck at 0%; first check for another serial-port owner. After flashing finishes, restart logging with `python3 scripts/monitor.py --no-reset --port /dev/cu.usbmodem14201` so monitoring does not reset the board.
+
+### Matter-over-TCP smoke-test timing
+
+Wait until the bridge has joined Wi-Fi and `/api/status` reports `state: Operational` before treating a missing `_matter._tcp.local.` TCP-server bit as a firmware defect. Run `python3 scripts/test_matter_tcp.py --ip <device-ip>` while the Matter TCP listener is free, before starting Home Assistant's Listen stream: the listener accepts one inbound peer, so HA's active Matter connection can prevent the smoke test from connecting. The script closes its test peer and reconnects itself; leave the HA stream running for the separate sustained WebRTC test after the smoke test passes.
+
+### Sustained Matter WebRTC Listen verification
+
+`WebRTC: accepted offer -> starting listen` only confirms signaling was accepted. Confirm the media path in serial logs with `WebRTC: ICE nominated peer`, `WebRTC: DTLS fingerprint verified; SRTP ready`, and `WebRTC: first outbound SRTP audio packet sent`. The DevKit has no microphone/codec input; its `devkit` build feeds a generated 1 kHz tone into the WebRTC receive-audio channel. `/api/status` should report roughly `rx_rms_dbfs: -6` and `rx_peak_dbfs: -3`; `tone_active` is for the separate local playback test tone.
+
+Do not apply `DEFAULT_MAX_LISTEN_DURATION_MS` to `SessionOwner::MatterCall`: the 180-second cap makes the bridge bus report `idle` while Home Assistant still shows the stream's End/Mute controls. Matter WebRTC has its own ICE consent timeout and sends core heartbeats while active. Verify a live Listen call remains active past 180 seconds, and verify it returns to idle after the WebRTC session ends or heartbeats stop. After ending a sustained call, read `WebRTC media benchmark ... min_free_heap_bytes=...` from serial and require at least 32,768 bytes.
 
 ### Viewing Commissioning QR & Pairing Codes
 

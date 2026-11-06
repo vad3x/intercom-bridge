@@ -23,7 +23,7 @@ fn main() {
         .define("FIXED_POINT", "1")
         .define("DISABLE_FLOAT_API", "1")
         .define("VAR_ARRAYS", "1")
-        .flag_if_supported("-Os")
+        .flag_if_supported("-O3")
         .flag_if_supported("-Wno-unused-parameter")
         .flag("-include")
         .flag(csrc_dir.join("opus_no_malloc.h").to_str().unwrap());

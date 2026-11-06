@@ -8,9 +8,54 @@ use embassy_sync::channel::{Channel, Receiver, Sender};
 
 pub const AUDIO_SAMPLE_RATE_HZ: u32 = 16_000;
 pub const AUDIO_FRAME_SAMPLES: usize = 320;
-pub const RX_AUDIO_QUEUE_CAP: usize = 2;
+pub const RX_AUDIO_QUEUE_CAP: usize = 4;
 pub const TX_AUDIO_QUEUE_CAP: usize = 3;
+pub const AUDIO_FRAME_DROP_WINDOW_FRAMES: u8 = 50;
+pub const AUDIO_CAPTURE_INTERVAL_MS: u64 = 20;
+pub const AUDIO_DMA_BUFFER_FRAMES: u8 = 4;
 pub const SILENCE_DBFS: i8 = -96;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AudioCaptureBatch {
+    pub frames: u8,
+    pub overruns: u64,
+}
+
+pub struct AudioCaptureSchedule {
+    next_frame_ms: u64,
+}
+
+impl AudioCaptureSchedule {
+    pub const fn new(now_ms: u64) -> Self {
+        Self {
+            next_frame_ms: now_ms + AUDIO_CAPTURE_INTERVAL_MS,
+        }
+    }
+
+    pub fn delay_until_next_ms(&self, now_ms: u64) -> u64 {
+        self.next_frame_ms.saturating_sub(now_ms)
+    }
+
+    pub fn take_due_frames(&mut self, now_ms: u64) -> AudioCaptureBatch {
+        if now_ms < self.next_frame_ms {
+            return AudioCaptureBatch {
+                frames: 0,
+                overruns: 0,
+            };
+        }
+
+        let elapsed_intervals =
+            now_ms.saturating_sub(self.next_frame_ms) / AUDIO_CAPTURE_INTERVAL_MS + 1;
+        self.next_frame_ms = self.next_frame_ms.saturating_add(
+            elapsed_intervals.saturating_mul(AUDIO_CAPTURE_INTERVAL_MS),
+        );
+        let capacity = u64::from(AUDIO_DMA_BUFFER_FRAMES);
+        AudioCaptureBatch {
+            frames: elapsed_intervals.min(capacity) as u8,
+            overruns: elapsed_intervals.saturating_sub(capacity),
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PcmFrame {
@@ -44,6 +89,34 @@ pub type RxAudioReceiver<'a> = Receiver<'a, CriticalSectionRawMutex, PcmFrame, R
 pub type TxAudioChannel = Channel<CriticalSectionRawMutex, PcmFrame, TX_AUDIO_QUEUE_CAP>;
 pub type TxAudioSender<'a> = Sender<'a, CriticalSectionRawMutex, PcmFrame, TX_AUDIO_QUEUE_CAP>;
 pub type TxAudioReceiver<'a> = Receiver<'a, CriticalSectionRawMutex, PcmFrame, TX_AUDIO_QUEUE_CAP>;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AudioFrameDropWindow {
+    frames: u8,
+    drops: u8,
+}
+
+impl AudioFrameDropWindow {
+    pub const fn new() -> Self {
+        Self {
+            frames: 0,
+            drops: 0,
+        }
+    }
+
+    pub fn record(&mut self, dropped: bool) -> Option<u8> {
+        self.frames += 1;
+        self.drops += u8::from(dropped);
+
+        if self.frames == AUDIO_FRAME_DROP_WINDOW_FRAMES {
+            let drops = self.drops;
+            *self = Self::new();
+            Some(drops)
+        } else {
+            None
+        }
+    }
+}
 
 impl<const N: usize> AudioFrameSource for Receiver<'_, CriticalSectionRawMutex, PcmFrame, N> {
     async fn receive_frame(&mut self) -> PcmFrame {
@@ -87,6 +160,55 @@ pub fn compute_frame_levels_dbfs(frame: &PcmFrame) -> FrameLevelsDbfs {
     FrameLevelsDbfs {
         rms_dbfs: amplitude_to_dbfs(rms_q10),
         peak_dbfs: amplitude_to_dbfs(peak as u64 * rms_scale),
+    }
+}
+
+/// Reads little-endian signed 16-bit PCM as 20 ms audio frames, then repeats it
+/// after inserting the requested number of silent samples.
+pub struct Pcm16LeLoopingSource<'a> {
+    pcm: &'a [u8],
+    sample_index: usize,
+    repeat_silence_samples: usize,
+    silence_remaining: usize,
+}
+
+impl<'a> Pcm16LeLoopingSource<'a> {
+    /// Creates a looping source for non-empty, complete little-endian PCM samples.
+    pub fn new(pcm: &'a [u8], repeat_silence_samples: usize) -> Option<Self> {
+        if pcm.is_empty() || pcm.len() % 2 != 0 {
+            return None;
+        }
+
+        Some(Self {
+            pcm,
+            sample_index: 0,
+            repeat_silence_samples,
+            silence_remaining: 0,
+        })
+    }
+
+    pub fn next_frame(&mut self) -> PcmFrame {
+        let mut samples = [0i16; AUDIO_FRAME_SAMPLES];
+        for sample in &mut samples {
+            if self.silence_remaining > 0 {
+                self.silence_remaining -= 1;
+                continue;
+            }
+
+            if self.sample_index == self.pcm.len() / 2 {
+                self.sample_index = 0;
+                self.silence_remaining = self.repeat_silence_samples;
+                if self.silence_remaining > 0 {
+                    self.silence_remaining -= 1;
+                    continue;
+                }
+            }
+
+            let offset = self.sample_index * 2;
+            *sample = i16::from_le_bytes([self.pcm[offset], self.pcm[offset + 1]]);
+            self.sample_index += 1;
+        }
+        PcmFrame { samples }
     }
 }
 
@@ -163,6 +285,41 @@ const DBFS_FRACTION_HUNDREDTHS: [u16; 17] = [
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pcm16le_looping_source_decodes_samples_and_inserts_repeat_silence() {
+        let pcm = [1i16, -2, 3]
+            .into_iter()
+            .flat_map(i16::to_le_bytes)
+            .collect::<Vec<_>>();
+        let mut source = Pcm16LeLoopingSource::new(&pcm, 2).unwrap();
+
+        let frame = source.next_frame();
+
+        assert_eq!(&frame.samples[..10], &[1, -2, 3, 0, 0, 1, -2, 3, 0, 0]);
+    }
+
+    #[test]
+    fn pcm16le_looping_source_rejects_empty_or_incomplete_samples() {
+        assert!(Pcm16LeLoopingSource::new(&[], 0).is_none());
+        assert!(Pcm16LeLoopingSource::new(&[0], 0).is_none());
+    }
+
+    #[test]
+    fn audio_frame_drop_window_reports_and_resets_every_50_frames() {
+        // Arrange
+        let mut window = AudioFrameDropWindow::new();
+        let mut reported_drops = None;
+
+        // Act
+        for frame_index in 0..50 {
+            reported_drops = window.record(frame_index % 10 == 0);
+        }
+
+        // Assert
+        assert_eq!(reported_drops, Some(5));
+        assert_eq!(window.record(false), None);
+    }
 
     #[test]
     fn silence_frame_measures_minus_96_dbfs() {
@@ -260,7 +417,7 @@ mod tests {
     }
 
     #[test]
-    fn receive_channel_has_two_frame_nonblocking_capacity() {
+    fn receive_channel_has_four_frame_nonblocking_capacity() {
         // Arrange
         let channel = RxAudioChannel::new();
         let sender = channel.sender();
@@ -271,24 +428,38 @@ mod tests {
         let second = PcmFrame {
             samples: [2; AUDIO_FRAME_SAMPLES],
         };
-        let overflow = PcmFrame {
+        let third = PcmFrame {
             samples: [3; AUDIO_FRAME_SAMPLES],
+        };
+        let fourth = PcmFrame {
+            samples: [4; AUDIO_FRAME_SAMPLES],
+        };
+        let overflow = PcmFrame {
+            samples: [5; AUDIO_FRAME_SAMPLES],
         };
         // Act
         let first_result = sender.try_send(first);
         let second_result = sender.try_send(second);
+        let third_result = sender.try_send(third);
+        let fourth_result = sender.try_send(fourth);
         let overflow_result = sender
             .try_send(overflow)
             .map_err(|embassy_sync::channel::TrySendError::Full(frame)| frame);
         let received_first = receiver.try_receive().ok();
         let received_second = receiver.try_receive().ok();
+        let received_third = receiver.try_receive().ok();
+        let received_fourth = receiver.try_receive().ok();
         let received_empty = receiver.try_receive().ok();
         // Assert
         assert_eq!(first_result, Ok(()));
         assert_eq!(second_result, Ok(()));
+        assert_eq!(third_result, Ok(()));
+        assert_eq!(fourth_result, Ok(()));
         assert_eq!(overflow_result, Err(overflow));
         assert_eq!(received_first, Some(first));
         assert_eq!(received_second, Some(second));
+        assert_eq!(received_third, Some(third));
+        assert_eq!(received_fourth, Some(fourth));
         assert_eq!(received_empty, None);
     }
 
@@ -340,5 +511,41 @@ mod tests {
         let copied = frame;
         // Assert
         assert_eq!(copied, PcmFrame::SILENCE);
+    }
+
+    #[test]
+    fn audio_capture_schedule_uses_absolute_20ms_deadlines() {
+        // Arrange
+        let mut schedule = AudioCaptureSchedule::new(0);
+
+        // Act
+        let early = schedule.take_due_frames(19);
+        let first = schedule.take_due_frames(20);
+        let late = schedule.take_due_frames(50);
+
+        // Assert
+        assert_eq!(early, AudioCaptureBatch { frames: 0, overruns: 0 });
+        assert_eq!(schedule.delay_until_next_ms(50), 10);
+        assert_eq!(first, AudioCaptureBatch { frames: 1, overruns: 0 });
+        assert_eq!(late, AudioCaptureBatch { frames: 1, overruns: 0 });
+    }
+
+    #[test]
+    fn audio_capture_schedule_caps_backlog_at_dma_capacity_and_counts_overruns() {
+        // Arrange
+        let mut schedule = AudioCaptureSchedule::new(0);
+
+        // Act
+        let batch = schedule.take_due_frames(100);
+
+        // Assert
+        assert_eq!(
+            batch,
+            AudioCaptureBatch {
+                frames: 4,
+                overruns: 1,
+            }
+        );
+        assert_eq!(schedule.delay_until_next_ms(100), 20);
     }
 }

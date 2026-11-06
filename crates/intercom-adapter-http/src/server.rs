@@ -5,10 +5,13 @@
 //! domain actions, and firmware OTA flashing.
 
 use edf_core::ports::ota::{OtaFlashDriver, OtaStream};
-use embassy_net::Stack;
 use embassy_net::tcp::TcpSocket;
+use embassy_net::Stack;
 use embassy_time::{Duration, Timer};
 use intercom_adapter_webrtc::session::WebRtcSessionHandle;
+use intercom_adapter_webrtc::signaling::{
+    SecureRandom, SignalingError, WebRtcSignalingFacade,
+};
 use intercom_core::domain::ecosystem::{EcosystemId, EcosystemType};
 use intercom_core::domain::intercom::SessionOwner;
 use intercom_core::events::SystemStateSender;
@@ -18,17 +21,38 @@ use intercom_core::ports::inbound::{AccessCommand, AccessControllerHandle};
 use intercom_core::ports::{BusSafetyDriver, ResetScope, SystemResetDriver};
 use intercom_core::service::DiagnosticsService;
 use log::{info, warn};
+use picoserve::io::Read as _;
 use picoserve::response::IntoResponse;
 
-use crate::DASHBOARD_HTML_GZ;
 use crate::config::{
-    HTTP_BUFFER_SIZE, HttpServerConfig, JSON_BUFFER_SIZE, LOG_BUFFER_SIZE,
+    HttpServerConfig, HTTP_BUFFER_SIZE, JSON_BUFFER_SIZE, LOG_BUFFER_SIZE,
     STREAM_WRITE_BUFFER_SIZE, TCP_RX_BUFFER_SIZE, TCP_TX_BUFFER_SIZE,
 };
+use crate::DASHBOARD_HTML_GZ;
 
 // ============================================================================
 // Internal State Types
 // ============================================================================
+
+/// Signaling bridge used to start and stop Debug UI sessions on the shared WebRTC engine.
+pub trait DebugWebRtcSignaling {
+    fn accept_offer(&self, offer: &str, answer_out: &mut [u8]) -> Result<usize, SignalingError>;
+    fn stop(&self);
+}
+
+impl<R: SecureRandom> DebugWebRtcSignaling for WebRtcSignalingFacade<'_, R> {
+    fn accept_offer(&self, offer: &str, answer_out: &mut [u8]) -> Result<usize, SignalingError> {
+        self.accept_offer_for_owner(
+            offer,
+            answer_out,
+            SessionOwner::HttpDebug,
+        )
+    }
+
+    fn stop(&self) {
+        self.stop_for_owner(SessionOwner::HttpDebug);
+    }
+}
 
 /// Shared application state passed to HTTP request handlers.
 pub(crate) struct AppState<
@@ -51,6 +75,7 @@ pub(crate) struct AppState<
     pub(crate) reset_requested: &'a core::cell::Cell<Option<ResetScope>>,
     pub(crate) audio_media: Option<crate::HttpAudioMedia<'a>>,
     pub(crate) webrtc_session: Option<&'a WebRtcSessionHandle<'a>>,
+    pub(crate) debug_webrtc_signaling: Option<&'a dyn DebugWebRtcSignaling>,
     pub(crate) log_provider: fn(&mut [u8]) -> usize,
 }
 
@@ -96,6 +121,7 @@ pub struct HttpServer<
     config: HttpServerConfig,
     audio_media: Option<crate::HttpAudioMedia<'a>>,
     webrtc_session: Option<&'a WebRtcSessionHandle<'a>>,
+    debug_webrtc_signaling: Option<&'a dyn DebugWebRtcSignaling>,
 }
 
 impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, T: EcosystemType>
@@ -121,6 +147,7 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, T: Ec
             state_sender: None,
             audio_media: None,
             webrtc_session: None,
+            debug_webrtc_signaling: None,
             log_provider,
             config,
         }
@@ -128,13 +155,13 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, T: Ec
 }
 
 impl<
-    'a,
-    H: HardwareInfoDriver,
-    E: EcosystemInfoDriver,
-    O: OtaFlashDriver,
-    R: SystemResetDriver,
-    T: EcosystemType,
-> HttpServer<'a, H, E, O, R, T>
+        'a,
+        H: HardwareInfoDriver,
+        E: EcosystemInfoDriver,
+        O: OtaFlashDriver,
+        R: SystemResetDriver,
+        T: EcosystemType,
+    > HttpServer<'a, H, E, O, R, T>
 {
     /// Create a new `HttpServer` bound to an `embassy_net::Stack`.
     pub fn new(
@@ -158,6 +185,7 @@ impl<
             state_sender,
             audio_media: None,
             webrtc_session: None,
+            debug_webrtc_signaling: None,
             log_provider,
             config,
         }
@@ -172,6 +200,15 @@ impl<
     /// Attach the WebRTC session so OTA can wait for active media buffers to be released.
     pub fn with_webrtc_session(mut self, session: &'a WebRtcSessionHandle<'a>) -> Self {
         self.webrtc_session = Some(session);
+        self
+    }
+
+    /// Attach the signaling facade used by the Debug UI's shared WebRTC session.
+    pub fn with_debug_webrtc_signaling(
+        mut self,
+        signaling: &'a dyn DebugWebRtcSignaling,
+    ) -> Self {
+        self.debug_webrtc_signaling = Some(signaling);
         self
     }
 
@@ -190,6 +227,7 @@ impl<
             state_sender: self.state_sender,
             audio_media: self.audio_media,
             webrtc_session: self.webrtc_session,
+            debug_webrtc_signaling: self.debug_webrtc_signaling,
             log_provider: self.log_provider,
             config: self.config,
         }
@@ -225,6 +263,7 @@ impl<
             state_sender: self.state_sender,
             audio_media: self.audio_media,
             webrtc_session: self.webrtc_session,
+            debug_webrtc_signaling: self.debug_webrtc_signaling,
             tarpit_delay: self.config.tarpit_delay,
             read_request_timeout: self.config.read_request_timeout,
             had_error: &had_error,
@@ -272,6 +311,7 @@ impl<
         let state_sender = self.state_sender;
         let audio_media = self.audio_media;
         let webrtc_session = self.webrtc_session;
+        let debug_webrtc_signaling = self.debug_webrtc_signaling;
         let log_provider = self.log_provider;
         let proxy = crate::ota_proxy::OtaProxy::new();
         let picoserve_config = picoserve::Config::new(picoserve::Timeouts {
@@ -302,6 +342,7 @@ impl<
                     state_sender,
                     audio_media,
                     webrtc_session,
+                    debug_webrtc_signaling,
                     tarpit_delay: config.tarpit_delay,
                     read_request_timeout: config.read_request_timeout,
                     had_error: &had_error,
@@ -499,6 +540,24 @@ fn build_router<
         )
         .route("/api/ws/audio", picoserve::routing::get_service(WsAudioService))
         .route(
+            "/api/debug/audio/webrtc/offer",
+            picoserve::routing::post_service(DebugWebRtcOfferService),
+        )
+        .route(
+            "/api/debug/audio/webrtc/stop",
+            picoserve::routing::post(
+                |picoserve::extract::State(state): picoserve::extract::State<
+                    AppState<'a, H, E, O, T>,
+                >| async move {
+                    if let Some(signaling) = state.debug_webrtc_signaling {
+                        signaling.stop();
+                    }
+                    picoserve::response::Response::ok("{\"status\":\"ok\"}")
+                        .with_content_type("application/json")
+                },
+            ),
+        )
+        .route(
             "/api/action/listen",
             picoserve::routing::post(
                 |picoserve::extract::State(state): picoserve::extract::State<
@@ -678,6 +737,123 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, T: Ec
                 .await
             }
         }
+    }
+}
+
+const DEBUG_SDP_BUFFER_SIZE: usize = 3_072;
+
+struct DebugWebRtcOfferService;
+
+impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, T: EcosystemType>
+    picoserve::routing::RequestHandlerService<AppState<'a, H, E, O, T>>
+    for DebugWebRtcOfferService
+{
+    async fn call_request_handler_service<
+        R: picoserve::io::Read,
+        W: picoserve::response::ResponseWriter<Error = R::Error>,
+    >(
+        &self,
+        state: &AppState<'a, H, E, O, T>,
+        _path_parameters: (),
+        mut request: picoserve::request::Request<'_, R>,
+        response_writer: W,
+    ) -> Result<picoserve::ResponseSent, W::Error> {
+        let content_length = request
+            .parts
+            .headers()
+            .get("content-length")
+            .and_then(|value| value.as_str().ok()?.parse::<usize>().ok());
+        let Some(content_length) = content_length.filter(|len| *len > 0 && *len <= DEBUG_SDP_BUFFER_SIZE) else {
+            return picoserve::response::Response::new(
+                picoserve::response::StatusCode::BAD_REQUEST,
+                "invalid SDP body length",
+            )
+            .write_to(request.body_connection.finalize().await?, response_writer)
+            .await;
+        };
+
+        let mut offer = [0u8; DEBUG_SDP_BUFFER_SIZE];
+        let read_result = {
+            let mut reader = request
+                .body_connection
+                .body()
+                .reader()
+                .with_different_timeout(state.read_request_timeout);
+            let mut read = 0;
+            while read < content_length {
+                match reader.read(&mut offer[read..content_length]).await {
+                    Ok(0) => break,
+                    Ok(count) => read += count,
+                    Err(_) => break,
+                }
+            }
+            read
+        };
+        let body_connection = request.body_connection.finalize().await?;
+        if read_result != content_length {
+            return picoserve::response::Response::new(
+                picoserve::response::StatusCode::BAD_REQUEST,
+                "incomplete SDP body",
+            )
+            .write_to(body_connection, response_writer)
+            .await;
+        }
+        let Ok(offer) = core::str::from_utf8(&offer[..read_result]) else {
+            return picoserve::response::Response::new(
+                picoserve::response::StatusCode::BAD_REQUEST,
+                "SDP must be UTF-8",
+            )
+            .write_to(body_connection, response_writer)
+            .await;
+        };
+        let Some(signaling) = state.debug_webrtc_signaling else {
+            return picoserve::response::Response::new(
+                picoserve::response::StatusCode::SERVICE_UNAVAILABLE,
+                "WebRTC signaling unavailable",
+            )
+            .write_to(body_connection, response_writer)
+            .await;
+        };
+        let mut answer = [0u8; DEBUG_SDP_BUFFER_SIZE];
+        let answer_len = match signaling.accept_offer(offer, &mut answer) {
+            Ok(len) => len,
+            Err(SignalingError::Busy) => {
+                return picoserve::response::Response::new(
+                    picoserve::response::StatusCode::CONFLICT,
+                    "WebRTC media session busy",
+                )
+                .write_to(body_connection, response_writer)
+                .await;
+            }
+            Err(SignalingError::NotReady) => {
+                return picoserve::response::Response::new(
+                    picoserve::response::StatusCode::SERVICE_UNAVAILABLE,
+                    "WebRTC signaling not ready",
+                )
+                .write_to(body_connection, response_writer)
+                .await;
+            }
+            Err(_) => {
+                return picoserve::response::Response::new(
+                    picoserve::response::StatusCode::BAD_REQUEST,
+                    "invalid WebRTC SDP offer",
+                )
+                .write_to(body_connection, response_writer)
+                .await;
+            }
+        };
+        let Ok(answer) = core::str::from_utf8(&answer[..answer_len]) else {
+            return picoserve::response::Response::new(
+                picoserve::response::StatusCode::INTERNAL_SERVER_ERROR,
+                "invalid WebRTC SDP answer",
+            )
+            .write_to(body_connection, response_writer)
+            .await;
+        };
+        picoserve::response::Response::new(picoserve::response::StatusCode::OK, answer)
+            .with_content_type("application/sdp")
+            .write_to(body_connection, response_writer)
+            .await
     }
 }
 

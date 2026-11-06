@@ -1,13 +1,15 @@
 //! Non-blocking DTLS 1.2 and RFC 5764 key export backed by a bounded Mbed TLS arena.
 
-use alloc::boxed::Box;
 use core::ffi::{c_int, c_void};
+use core::ops::{Deref, DerefMut};
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
-pub const DTLS_ARENA_BYTES: usize = 28_672;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::mutex::{Mutex, MutexGuard};
+
+pub const DTLS_ARENA_BYTES: usize = 26 * 1024;
 const STATE_STORAGE_WORDS: usize = 768;
 const DATAGRAM_MAX_BYTES: usize = 1_500;
-#[cfg(not(test))]
 const DTLS_ARENA_WORDS: usize = DTLS_ARENA_BYTES / core::mem::size_of::<u64>();
 const HEAP_INITIALIZING: u8 = 1;
 const HEAP_READY: u8 = 2;
@@ -41,22 +43,84 @@ pub enum DtlsError {
     DatagramTooLarge,
 }
 
-pub struct DtlsSrtpEngine {
-    storage: Box<[u64; STATE_STORAGE_WORDS]>,
+/// Fixed storage for one active DTLS-SRTP engine.
+pub struct DtlsSrtpResources {
+    storage: [u64; STATE_STORAGE_WORDS],
+    heap_arena: [u64; DTLS_ARENA_WORDS],
+}
+
+impl DtlsSrtpResources {
+    pub const fn new() -> Self {
+        Self {
+            storage: [0; STATE_STORAGE_WORDS],
+            heap_arena: [0; DTLS_ARENA_WORDS],
+        }
+    }
+}
+
+/// Shared storage for offer fingerprinting and the active media session.
+///
+/// The offer handler borrows this synchronously to generate the local certificate
+/// fingerprint. The media task borrows it for the lifetime of the DTLS session.
+pub struct DtlsSrtpResourceCell<'a> {
+    lock: Mutex<CriticalSectionRawMutex, &'a mut DtlsSrtpResources>,
+}
+
+impl<'a> DtlsSrtpResourceCell<'a> {
+    pub fn new(resources: &'a mut DtlsSrtpResources) -> Self {
+        Self {
+            lock: Mutex::new(resources),
+        }
+    }
+
+    pub fn try_borrow_mut(&self) -> Option<DtlsSrtpResourceGuard<'_, 'a>> {
+        Some(DtlsSrtpResourceGuard {
+            lock: self.lock.try_lock().ok()?,
+        })
+    }
+
+    pub async fn borrow_mut(&self) -> DtlsSrtpResourceGuard<'_, 'a> {
+        DtlsSrtpResourceGuard {
+            lock: self.lock.lock().await,
+        }
+    }
+}
+
+pub struct DtlsSrtpResourceGuard<'lock, 'resource> {
+    lock: MutexGuard<'lock, CriticalSectionRawMutex, &'resource mut DtlsSrtpResources>,
+}
+
+impl Deref for DtlsSrtpResourceGuard<'_, '_> {
+    type Target = DtlsSrtpResources;
+
+    fn deref(&self) -> &Self::Target {
+        &**self.lock
+    }
+}
+
+impl DerefMut for DtlsSrtpResourceGuard<'_, '_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut **self.lock
+    }
+}
+
+pub struct DtlsSrtpEngine<'a> {
+    storage: &'a mut [u64; STATE_STORAGE_WORDS],
     heap_lease: bool,
-    #[cfg(not(test))]
-    _heap_arena: Box<[u64; DTLS_ARENA_WORDS]>,
+    _heap_arena: &'a mut [u64; DTLS_ARENA_WORDS],
     local_cert_sha256: [u8; 32],
 }
 
-impl DtlsSrtpEngine {
-    pub fn new(role: DtlsRole, seed: [u8; 32]) -> Result<Self, DtlsError> {
+impl<'a> DtlsSrtpEngine<'a> {
+    pub fn new(
+        role: DtlsRole,
+        seed: [u8; 32],
+        resources: &'a mut DtlsSrtpResources,
+    ) -> Result<Self, DtlsError> {
         #[cfg(test)]
         let (heap_ptr, heap_len) = heap_buffer();
         #[cfg(not(test))]
-        let mut heap_arena = Box::new([0; DTLS_ARENA_WORDS]);
-        #[cfg(not(test))]
-        let heap_ptr = heap_arena.as_mut_ptr().cast::<u8>();
+        let heap_ptr = resources.heap_arena.as_mut_ptr().cast::<u8>();
         #[cfg(not(test))]
         let heap_len = DTLS_ARENA_BYTES;
 
@@ -68,10 +132,9 @@ impl DtlsSrtpEngine {
         }
 
         let mut engine = Self {
-            storage: Box::new([0; STATE_STORAGE_WORDS]),
+            storage: &mut resources.storage,
             heap_lease: false,
-            #[cfg(not(test))]
-            _heap_arena: heap_arena,
+            _heap_arena: &mut resources.heap_arena,
             local_cert_sha256: [0; 32],
         };
         let role = match role {
@@ -187,6 +250,34 @@ impl DtlsSrtpEngine {
         Some(keys)
     }
 
+    pub fn export_diagnostic(&self) -> (bool, i32, i32, i32) {
+        let (mut called, mut export_type, mut prf, mut error) = (0, 0, 0, 0);
+        unsafe {
+            intercom_dtls_export_diagnostic(
+                self.storage.as_ptr().cast_mut().cast::<c_void>(),
+                &mut called,
+                &mut export_type,
+                &mut prf,
+                &mut error,
+            )
+        };
+        (called != 0, export_type, prf, error)
+    }
+
+    pub fn debug_diagnostic(&self) -> (i32, i32, [u8; 128], usize) {
+        let (mut level, mut line, mut message) = (0, 0, [0; 128]);
+        let length = unsafe {
+            intercom_dtls_debug_diagnostic(
+                self.storage.as_ptr().cast_mut().cast::<c_void>(),
+                &mut level,
+                &mut line,
+                message.as_mut_ptr(),
+                message.len(),
+            )
+        };
+        (level, line, message, length)
+    }
+
     pub const fn local_cert_sha256(&self) -> [u8; 32] {
         self.local_cert_sha256
     }
@@ -203,7 +294,7 @@ impl DtlsSrtpEngine {
     }
 }
 
-impl Drop for DtlsSrtpEngine {
+impl Drop for DtlsSrtpEngine<'_> {
     fn drop(&mut self) {
         unsafe { intercom_dtls_free(self.storage.as_mut_ptr().cast::<c_void>()) };
         if self.heap_lease {
@@ -258,6 +349,7 @@ fn free_new_heap(owns_heap: bool) {
 
 #[cfg(test)]
 fn heap_buffer() -> (*mut u8, usize) {
+    // Host handshake tests keep both client and server engines alive concurrently.
     static mut HOST_MBEDTLS_HEAP: [u64; 8_192] = [0; 8_192];
     let buffer = core::ptr::addr_of_mut!(HOST_MBEDTLS_HEAP).cast::<u8>();
     (buffer, 8_192 * core::mem::size_of::<u64>())
@@ -283,13 +375,27 @@ unsafe extern "C" {
     fn intercom_dtls_step(storage: *mut c_void, now_ms: u64) -> c_int;
     fn intercom_dtls_pop_output(storage: *mut c_void, output: *mut u8, capacity: usize) -> usize;
     fn intercom_dtls_exported_keys(storage: *mut c_void, output: *mut u8) -> c_int;
+    fn intercom_dtls_export_diagnostic(
+        storage: *mut c_void,
+        called: *mut c_int,
+        export_type: *mut c_int,
+        prf: *mut c_int,
+        error: *mut c_int,
+    );
+    fn intercom_dtls_debug_diagnostic(
+        storage: *mut c_void,
+        level: *mut c_int,
+        line: *mut c_int,
+        message: *mut u8,
+        capacity: usize,
+    ) -> usize;
     fn intercom_dtls_local_fingerprint(storage: *mut c_void, output: *mut u8) -> c_int;
     fn intercom_dtls_peer_fingerprint(storage: *mut c_void, output: *mut u8) -> c_int;
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{DtlsRole, DtlsSrtpEngine};
+    use super::{DtlsRole, DtlsSrtpEngine, DtlsSrtpResources};
     use core::sync::atomic::Ordering;
 
     #[test]
@@ -298,8 +404,12 @@ mod tests {
         let _guard = super::DTLS_TEST_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut server = DtlsSrtpEngine::new(DtlsRole::Server, [0x42; 32]).expect("server init");
-        let mut client = DtlsSrtpEngine::new(DtlsRole::Client, [0x99; 32]).expect("client init");
+        let mut server_resources = DtlsSrtpResources::new();
+        let mut client_resources = DtlsSrtpResources::new();
+        let mut server = DtlsSrtpEngine::new(DtlsRole::Server, [0x42; 32], &mut server_resources)
+            .expect("server init");
+        let mut client = DtlsSrtpEngine::new(DtlsRole::Client, [0x99; 32], &mut client_resources)
+            .expect("client init");
         server
             .set_peer_transport_id(b"verified-ice-peer")
             .expect("server peer id");
@@ -334,6 +444,8 @@ mod tests {
             client_peer_id_result,
             Err(super::DtlsError::InputFailed(_))
         ));
+        assert_eq!(server.export_diagnostic(), (true, 0, 2, 0));
+        assert_eq!(client.export_diagnostic(), (true, 0, 2, 0));
         let client_keys = client.exported_srtp_keys().expect("client keys");
         let server_keys = server.exported_srtp_keys().expect("server keys");
 
@@ -341,6 +453,126 @@ mod tests {
         assert_eq!(client_keys, server_keys);
         assert_eq!(client.peer_cert_sha256(), Some(server.local_cert_sha256()));
         assert_eq!(server.peer_cert_sha256(), Some(client.local_cert_sha256()));
+    }
+
+    #[test]
+    fn server_reassembles_fragmented_dtls_client_hello() {
+        // Arrange
+        let _guard = super::DTLS_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut server_resources = DtlsSrtpResources::new();
+        let mut client_resources = DtlsSrtpResources::new();
+        let mut server = DtlsSrtpEngine::new(DtlsRole::Server, [0x42; 32], &mut server_resources)
+            .expect("server init");
+        let mut client = DtlsSrtpEngine::new(DtlsRole::Client, [0x99; 32], &mut client_resources)
+            .expect("client init");
+        server
+            .set_peer_transport_id(b"verified-ice-peer")
+            .expect("server peer id");
+        let mut client_hello = [0; 1500];
+        client.step(0).expect("client step");
+        let client_hello_length = client
+            .pop_outbound_datagram(&mut client_hello)
+            .expect("client hello datagram");
+        assert_eq!(client_hello[0], 22, "DTLS handshake record");
+        assert_eq!(client_hello[13], 1, "ClientHello message");
+        let message_length = read_u24(&client_hello[14..17]);
+        assert_eq!(client_hello_length, 25 + message_length);
+        let split = message_length / 2;
+        let mut first_fragment = [0; 1500];
+        let mut second_fragment = [0; 1500];
+        let first_length = make_client_hello_fragment(
+            &client_hello[..client_hello_length],
+            0,
+            split,
+            &mut first_fragment,
+        );
+        let second_length = make_client_hello_fragment(
+            &client_hello[..client_hello_length],
+            split,
+            message_length - split,
+            &mut second_fragment,
+        );
+
+        // Act
+        server
+            .push_inbound_datagram(&first_fragment[..first_length])
+            .expect("first ClientHello fragment");
+        let waiting_for_fragment = server.step(0);
+        server
+            .push_inbound_datagram(&second_fragment[..second_length])
+            .expect("second ClientHello fragment");
+        let completed_client_hello = server.step(1);
+        let mut server_response = [0; 1500];
+        let response_length = server.pop_outbound_datagram(&mut server_response);
+
+        // Assert
+        assert_eq!(waiting_for_fragment, Ok(false));
+        assert_eq!(completed_client_hello, Ok(false)); // HelloVerifyRequest is pending.
+        assert!(response_length.is_some());
+    }
+
+    #[test]
+    fn server_reports_backpressure_without_overwriting_active_datagram() {
+        // Arrange
+        let _guard = super::DTLS_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut server_resources = DtlsSrtpResources::new();
+        let mut client_resources = DtlsSrtpResources::new();
+        let mut server = DtlsSrtpEngine::new(DtlsRole::Server, [0x42; 32], &mut server_resources)
+            .expect("server init");
+        let mut client = DtlsSrtpEngine::new(DtlsRole::Client, [0x99; 32], &mut client_resources)
+            .expect("client init");
+        server
+            .set_peer_transport_id(b"verified-ice-peer")
+            .expect("server peer id");
+        let mut client_hello = [0; 1500];
+        client.step(0).expect("client step");
+        let client_hello_length = client
+            .pop_outbound_datagram(&mut client_hello)
+            .expect("client hello datagram");
+
+        // Act
+        server
+            .push_inbound_datagram(&client_hello[..client_hello_length])
+            .expect("first ClientHello datagram");
+        let queued = server.push_inbound_datagram(&client_hello[..client_hello_length]);
+
+        // Assert
+        assert_eq!(queued, Err(super::DtlsError::InputFailed(-0x6900)));
+        assert_eq!(server.step(0), Ok(false));
+        let mut server_response = [0; 1500];
+        assert!(server.pop_outbound_datagram(&mut server_response).is_some());
+    }
+
+    fn read_u24(bytes: &[u8]) -> usize {
+        (usize::from(bytes[0]) << 16) | (usize::from(bytes[1]) << 8) | usize::from(bytes[2])
+    }
+
+    fn write_u24(output: &mut [u8], value: usize) {
+        output[0] = (value >> 16) as u8;
+        output[1] = (value >> 8) as u8;
+        output[2] = value as u8;
+    }
+
+    fn make_client_hello_fragment(
+        client_hello: &[u8],
+        offset: usize,
+        fragment_length: usize,
+        output: &mut [u8; 1500],
+    ) -> usize {
+        output[..13].copy_from_slice(&client_hello[..13]);
+        output[13] = client_hello[13];
+        output[14..17].copy_from_slice(&client_hello[14..17]);
+        output[17..19].copy_from_slice(&client_hello[17..19]);
+        write_u24(&mut output[19..22], offset);
+        write_u24(&mut output[22..25], fragment_length);
+        output[25..25 + fragment_length]
+            .copy_from_slice(&client_hello[25 + offset..25 + offset + fragment_length]);
+        output[11..13].copy_from_slice(&((12 + fragment_length) as u16).to_be_bytes());
+        25 + fragment_length
     }
 
     #[test]
@@ -370,10 +602,13 @@ mod tests {
         // Act
         let failed_init = super::initialize_mbedtls_heap(heap_ptr, 128);
         let reset_after_failure = super::HEAP_STATE.load(Ordering::Acquire);
-        let first = DtlsSrtpEngine::new(DtlsRole::Client, [0x21; 32]);
+        let mut first_resources = DtlsSrtpResources::new();
+        let first = DtlsSrtpEngine::new(DtlsRole::Client, [0x21; 32], &mut first_resources);
         let first = first.expect("engine after failed arena initialization");
         drop(first);
-        let mut second = DtlsSrtpEngine::new(DtlsRole::Client, [0x22; 32]).expect("second engine");
+        let mut second_resources = DtlsSrtpResources::new();
+        let mut second = DtlsSrtpEngine::new(DtlsRole::Client, [0x22; 32], &mut second_resources)
+            .expect("second engine");
 
         // Assert
         assert_eq!(failed_init, Err(super::DtlsError::HeapInitializationFailed));

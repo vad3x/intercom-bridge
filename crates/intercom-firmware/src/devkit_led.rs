@@ -41,7 +41,11 @@ pub const COLOR_UPDATING: RGB8 = RGB8 { r: 40, g: 0, b: 40 };
 pub const COLOR_ERROR: RGB8 = RGB8 { r: 50, g: 0, b: 0 };
 pub const COLOR_RING: RGB8 = RGB8 { r: 60, g: 30, b: 0 };
 pub const COLOR_UNLOCK: RGB8 = RGB8 { r: 0, g: 60, b: 0 };
-pub const COLOR_HOLD_PRESS: RGB8 = RGB8 { r: 15, g: 15, b: 15 };
+pub const COLOR_HOLD_PRESS: RGB8 = RGB8 {
+    r: 15,
+    g: 15,
+    b: 15,
+};
 pub const COLOR_HOLD_STAGE1: RGB8 = RGB8 { r: 50, g: 25, b: 0 };
 pub const COLOR_HOLD_STAGE2: RGB8 = RGB8 { r: 60, g: 0, b: 0 };
 
@@ -59,7 +63,15 @@ pub enum LedCommand {
 /// Addressable RGB LED driver for ESP32-C6-DevKitM-1.
 pub struct DevKitLedDriver {
     #[cfg(all(target_arch = "riscv32", feature = "led-smartled"))]
-    led: RefCell<RmtSmartLeds<'static, { buffer_size::<RGB8>(1) }, esp_hal::Blocking, RGB8, color_order::Grb>>,
+    led: RefCell<
+        RmtSmartLeds<
+            'static,
+            { buffer_size::<RGB8>(1) },
+            esp_hal::Blocking,
+            RGB8,
+            color_order::Grb,
+        >,
+    >,
     #[cfg(not(all(target_arch = "riscv32", feature = "led-smartled")))]
     last_color: RefCell<RGB8>,
     signal: Signal<CriticalSectionRawMutex, LedCommand>,
@@ -152,7 +164,8 @@ impl DevKitLedDriver {
                         ringing = r;
                     }
                     LedCommand::Unlock => {
-                        unlock_until = Some(embassy_time::Instant::now() + Duration::from_millis(3000));
+                        unlock_until =
+                            Some(embassy_time::Instant::now() + Duration::from_millis(3000));
                     }
                     LedCommand::HoldPress => {
                         hold_mode = true;

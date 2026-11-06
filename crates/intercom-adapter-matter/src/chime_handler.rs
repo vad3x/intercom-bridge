@@ -15,8 +15,8 @@ use rs_matter::error::{Error, ErrorCode};
 use rs_matter::tlv::TLVBuilderParent;
 use rs_matter::with;
 
-use crate::MatterCluster;
 use crate::config::AUDIO_DOORBELL_ENDPOINT_ID;
+use crate::MatterCluster;
 
 const DEFAULT_CHIME_ID: u8 = 0;
 const DEFAULT_CHIME_NAME: &str = "Intercom Buzzer";
@@ -31,11 +31,11 @@ impl IntercomChime {
     }
 
     pub fn is_enabled(&self) -> bool {
-        self.0.0.enabled.load(Ordering::Acquire)
+        self.0 .0.enabled.load(Ordering::Acquire)
     }
 
     pub fn selected_chime_id(&self) -> u8 {
-        self.0.0.selected_chime.load(Ordering::Acquire)
+        self.0 .0.selected_chime.load(Ordering::Acquire)
     }
 }
 

@@ -7,7 +7,9 @@
 use edf_core::ports::ota::{OtaDriverError, OtaFlashDriver, OtaStream};
 use flate2::read::GzDecoder;
 use futures::executor::block_on;
-use intercom_adapter_http::{DASHBOARD_HTML_GZ, HttpServer, HttpServerConfig};
+use intercom_adapter_http::server::DebugWebRtcSignaling;
+use intercom_adapter_http::{HttpServer, HttpServerConfig, DASHBOARD_HTML_GZ};
+use intercom_adapter_webrtc::signaling::SignalingError;
 use intercom_core::events::{SystemState, SystemStateWatch};
 use intercom_core::ports::diagnostics::HardwareInfoDriver;
 use intercom_core::ports::inbound::{AccessCommand, AccessControllerHandle, CommandChannel};
@@ -180,6 +182,29 @@ fn test_log_provider(buf: &mut [u8]) -> usize {
     len
 }
 
+struct DebugWebRtcSignalingStub {
+    busy: bool,
+    offers: std::cell::Cell<usize>,
+    stops: std::cell::Cell<usize>,
+}
+
+impl DebugWebRtcSignaling for DebugWebRtcSignalingStub {
+    fn accept_offer(&self, offer: &str, answer_out: &mut [u8]) -> Result<usize, SignalingError> {
+        self.offers.set(self.offers.get() + 1);
+        assert_eq!(offer, "offer-sdp");
+        if self.busy {
+            return Err(SignalingError::Busy);
+        }
+        let answer = b"answer-sdp";
+        answer_out[..answer.len()].copy_from_slice(answer);
+        Ok(answer.len())
+    }
+
+    fn stop(&self) {
+        self.stops.set(self.stops.get() + 1);
+    }
+}
+
 // ============================================================================
 // Test Suite
 // ============================================================================
@@ -230,6 +255,70 @@ fn test_get_dashboard_returns_gzipped_html() {
         .expect("decompression failed");
     assert!(html.contains("<!DOCTYPE html>"));
     assert!(html.contains("Intercom Bridge"));
+}
+
+#[test]
+fn debug_webrtc_routes_negotiate_and_report_busy_without_stopping_another_session() {
+    let cmd_channel = CommandChannel::new();
+    let access_handle = AccessControllerHandle::new(cmd_channel.sender());
+    let hardware = MockHardwareInfo;
+    let state_watch = SystemStateWatch::new();
+    let diagnostics = DiagnosticsService::new(&hardware, &state_watch);
+    let mut ota_driver = MockOtaFlashDriver::new(false);
+    let signaling = DebugWebRtcSignalingStub {
+        busy: false,
+        offers: std::cell::Cell::new(0),
+        stops: std::cell::Cell::new(0),
+    };
+    let mut server = HttpServer::new_unbound(
+        access_handle,
+        &BusSafetyDriverMock,
+        &diagnostics,
+        &mut ota_driver,
+        test_log_provider,
+        HttpServerConfig::default(),
+    )
+    .with_debug_webrtc_signaling(&signaling);
+
+    let mut offer = MockStream::new(
+        b"POST /api/debug/audio/webrtc/offer HTTP/1.1\r\nHost: device\r\nContent-Type: application/sdp\r\nContent-Length: 9\r\n\r\noffer-sdp",
+    );
+    block_on(server.handle_request(&mut offer)).unwrap();
+    assert!(offer.written_str().starts_with("HTTP/1.1 200"));
+    assert!(offer.written_str().contains("Content-Type: application/sdp"));
+    assert!(offer.written_str().ends_with("answer-sdp"));
+    assert_eq!(signaling.offers.get(), 1);
+
+    let busy_signaling = DebugWebRtcSignalingStub {
+        busy: true,
+        offers: std::cell::Cell::new(0),
+        stops: std::cell::Cell::new(0),
+    };
+    let mut busy_ota_driver = MockOtaFlashDriver::new(false);
+    let mut busy_server = HttpServer::new_unbound(
+        access_handle,
+        &BusSafetyDriverMock,
+        &diagnostics,
+        &mut busy_ota_driver,
+        test_log_provider,
+        HttpServerConfig::default(),
+    )
+    .with_debug_webrtc_signaling(&busy_signaling);
+    let mut busy_offer = MockStream::new(
+        b"POST /api/debug/audio/webrtc/offer HTTP/1.1\r\nHost: device\r\nContent-Type: application/sdp\r\nContent-Length: 9\r\n\r\noffer-sdp",
+    );
+    block_on(busy_server.handle_request(&mut busy_offer)).unwrap();
+    assert!(busy_offer.written_str().starts_with("HTTP/1.1 409"));
+    assert!(busy_offer.written_str().contains("WebRTC media session busy"));
+    assert_eq!(busy_signaling.offers.get(), 1);
+    assert_eq!(busy_signaling.stops.get(), 0);
+
+    let mut stop = MockStream::new(
+        b"POST /api/debug/audio/webrtc/stop HTTP/1.1\r\nHost: device\r\nContent-Length: 0\r\n\r\n",
+    );
+    block_on(busy_server.handle_request(&mut stop)).unwrap();
+    assert!(stop.written_str().starts_with("HTTP/1.1 200"));
+    assert_eq!(busy_signaling.stops.get(), 1);
 }
 
 #[test]
@@ -1080,12 +1169,18 @@ fn ota_waits_for_webrtc_session_storage_to_be_released_before_flashing() {
     let session_state = portable_atomic::AtomicU8::new(0);
     let rx_audio = intercom_media::RxAudioChannel::new();
     let tx_audio = intercom_media::TxAudioChannel::new();
+    let mut dtls_resources = intercom_adapter_webrtc::dtls::DtlsSrtpResources::new();
+    let dtls_resource_cell =
+        intercom_adapter_webrtc::dtls::DtlsSrtpResourceCell::new(&mut dtls_resources);
+    let mut webrtc_resources = intercom_adapter_webrtc::session::WebRtcMediaResources::new();
     let (_engine, session) = WebRtcMediaEngine::new(
         &requests,
         &session_state,
         access_handle,
         rx_audio.receiver(),
         tx_audio.sender(),
+        &mut webrtc_resources,
+        &dtls_resource_cell,
     );
     let session_config = WebRtcSessionConfig::new(
         "local1",
@@ -1094,6 +1189,7 @@ fn ota_waits_for_webrtc_session_storage_to_be_released_before_flashing() {
         [0x5a; 32],
         DtlsRole::Server,
         [0x42; 32],
+        0x1234_5678,
         111,
     )
     .unwrap();
@@ -1484,11 +1580,9 @@ fn bench_tone_route_dispatches_bench_owner_and_rejects_invalid_query() {
         // Assert
         assert!(result.is_ok());
         let code = if expected.is_some() { "200" } else { "400" };
-        assert!(
-            stream
-                .written_str()
-                .starts_with(&format!("HTTP/1.1 {code} "))
-        );
+        assert!(stream
+            .written_str()
+            .starts_with(&format!("HTTP/1.1 {code} ")));
         assert_eq!(channel.try_receive().ok(), expected);
         assert!(channel.try_receive().is_err());
     }

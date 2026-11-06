@@ -4,9 +4,9 @@
 //! Uses Embassy async `wait_for_falling_edge()` + `Timer::after()` for
 //! debounce and cooldown.
 
+use crate::config;
 use embassy_time::{Duration, Instant, Timer};
 use esp_hal::gpio::{Input, InputConfig, Pull};
-use crate::config;
 use intercom_core::ports::RingDriver;
 use log::info;
 

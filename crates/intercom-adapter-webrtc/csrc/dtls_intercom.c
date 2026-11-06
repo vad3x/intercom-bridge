@@ -1,10 +1,12 @@
 #include "dtls_intercom.h"
 
 #include <mbedtls/ctr_drbg.h>
+#include <mbedtls/debug.h>
 #include <mbedtls/ecp.h>
 #include <mbedtls/md.h>
 #include <mbedtls/memory_buffer_alloc.h>
 #include <mbedtls/pk.h>
+#include <mbedtls/platform.h>
 #include <mbedtls/sha256.h>
 #include <mbedtls/ssl.h>
 #include <mbedtls/ssl_cookie.h>
@@ -31,12 +33,26 @@ typedef struct {
     uint8_t input[INTERCOM_DTLS_DATAGRAM_MAX];
     size_t input_length;
     bool input_pending;
+    unsigned char *client_hello_fragment_data;
+    uint8_t client_hello_fragment_map[
+        (INTERCOM_DTLS_DATAGRAM_MAX - 25 + 7) / 8];
+    size_t client_hello_fragment_total;
+    size_t client_hello_fragment_received;
+    uint16_t client_hello_fragment_seq;
+    uint8_t client_hello_record_header[13];
+    bool client_hello_fragment_active;
     uint8_t output[INTERCOM_DTLS_DATAGRAM_MAX];
     size_t output_length;
     bool output_pending;
     uint8_t exported_keys[60];
     bool keys_ready;
     int export_error;
+    bool export_callback_called;
+    int export_type;
+    int export_prf;
+    int debug_level;
+    int debug_line;
+    char debug_message[128];
     uint8_t local_fingerprint[32];
     uint8_t peer_fingerprint[32];
     bool peer_fingerprint_ready;
@@ -53,11 +69,37 @@ static const int intercom_cipher_suites[] = {
     0
 };
 
+static void intercom_debug(void *context, int level, const char *file,
+                           int line, const char *message)
+{
+    (void) file;
+    intercom_dtls_state *state = (intercom_dtls_state *) context;
+    state->debug_level = level;
+    state->debug_line = line;
+    size_t length = strlen(message);
+    if (length >= sizeof(state->debug_message)) {
+        length = sizeof(state->debug_message) - 1;
+    }
+    memcpy(state->debug_message, message, length);
+    state->debug_message[length] = '\0';
+}
+
 _Static_assert(sizeof(intercom_dtls_state) <= INTERCOM_DTLS_STATE_BYTES,
                "increase the Rust opaque DTLS state storage");
 
 static bool g_heap_initialized;
 
+#define INTERCOM_DTLS_RECORD_HEADER_BYTES 13
+#define INTERCOM_DTLS_HANDSHAKE_HEADER_BYTES 12
+#define INTERCOM_DTLS_CLIENT_HELLO_CAPACITY \
+    (INTERCOM_DTLS_DATAGRAM_MAX - INTERCOM_DTLS_RECORD_HEADER_BYTES - \
+     INTERCOM_DTLS_HANDSHAKE_HEADER_BYTES)
+
+int intercom_mbedtls_printf(const char *format, ...)
+{
+    (void) format;
+    return 0;
+}
 
 static int intercom_seed_entropy(void *context, unsigned char *output,
                                  size_t length)
@@ -119,6 +161,118 @@ static int intercom_bio_recv(void *context, unsigned char *output, size_t capaci
     return (int) length;
 }
 
+static size_t intercom_read_u24(const unsigned char *input)
+{
+    return ((size_t) input[0] << 16) | ((size_t) input[1] << 8) | input[2];
+}
+
+static void intercom_write_u24(unsigned char *output, size_t value)
+{
+    output[0] = (unsigned char) (value >> 16);
+    output[1] = (unsigned char) (value >> 8);
+    output[2] = (unsigned char) value;
+}
+
+static void intercom_clear_client_hello_reassembly(intercom_dtls_state *state)
+{
+    memset(state->client_hello_fragment_map, 0,
+           sizeof(state->client_hello_fragment_map));
+    state->client_hello_fragment_total = 0;
+    state->client_hello_fragment_received = 0;
+    state->client_hello_fragment_seq = 0;
+    state->client_hello_fragment_active = false;
+}
+
+/*
+ * Reassemble fragmented DTLS ClientHello messages before they reach Mbed TLS,
+ * whose TLS 1.2 server parser only accepts an unfragmented ClientHello.
+ * Returns 0 for a normal datagram, 1 when a fragment was consumed, or an
+ * Mbed TLS error for malformed/oversized fragments.
+ */
+static int intercom_reassemble_client_hello(intercom_dtls_state *state,
+                                            const unsigned char *input,
+                                            size_t input_length)
+{
+    if (input_length < INTERCOM_DTLS_RECORD_HEADER_BYTES +
+                           INTERCOM_DTLS_HANDSHAKE_HEADER_BYTES ||
+        input[0] != MBEDTLS_SSL_MSG_HANDSHAKE ||
+        input[INTERCOM_DTLS_RECORD_HEADER_BYTES] != MBEDTLS_SSL_HS_CLIENT_HELLO) {
+        return 0;
+    }
+
+    const size_t record_length = ((size_t) input[11] << 8) | input[12];
+    const size_t total = intercom_read_u24(input + 14);
+    const uint16_t message_seq = (uint16_t) (((uint16_t) input[17] << 8) | input[18]);
+    const size_t offset = intercom_read_u24(input + 19);
+    const size_t fragment_length = intercom_read_u24(input + 22);
+    const size_t fragment_start = INTERCOM_DTLS_RECORD_HEADER_BYTES +
+                                  INTERCOM_DTLS_HANDSHAKE_HEADER_BYTES;
+
+    if (record_length != input_length - INTERCOM_DTLS_RECORD_HEADER_BYTES ||
+        fragment_length != input_length - fragment_start || total == 0 ||
+        total > INTERCOM_DTLS_CLIENT_HELLO_CAPACITY || offset > total ||
+        fragment_length > total - offset) {
+        return MBEDTLS_ERR_SSL_DECODE_ERROR;
+    }
+    if (offset == 0 && fragment_length == total) {
+        return 0;
+    }
+    if (state->client_hello_fragment_data == NULL) {
+        return MBEDTLS_ERR_SSL_ALLOC_FAILED;
+    }
+
+    if (!state->client_hello_fragment_active ||
+        state->client_hello_fragment_seq != message_seq ||
+        state->client_hello_fragment_total != total) {
+        intercom_clear_client_hello_reassembly(state);
+        state->client_hello_fragment_active = true;
+        state->client_hello_fragment_seq = message_seq;
+        state->client_hello_fragment_total = total;
+    }
+    if (offset == 0) {
+        memcpy(state->client_hello_record_header, input,
+               INTERCOM_DTLS_RECORD_HEADER_BYTES);
+    }
+
+    for (size_t i = 0; i < fragment_length; i++) {
+        const size_t index = offset + i;
+        const uint8_t mask = (uint8_t) (1u << (index & 7));
+        uint8_t *bitmap_byte = &state->client_hello_fragment_map[index >> 3];
+        if ((*bitmap_byte & mask) != 0) {
+            if (state->client_hello_fragment_data[index] != input[fragment_start + i]) {
+                intercom_clear_client_hello_reassembly(state);
+                return MBEDTLS_ERR_SSL_DECODE_ERROR;
+            }
+        } else {
+            state->client_hello_fragment_data[index] = input[fragment_start + i];
+            *bitmap_byte |= mask;
+            state->client_hello_fragment_received++;
+        }
+    }
+
+    if (state->client_hello_fragment_received != total) {
+        return 1;
+    }
+
+    memcpy(state->input, state->client_hello_record_header,
+           INTERCOM_DTLS_RECORD_HEADER_BYTES);
+    state->input[13] = MBEDTLS_SSL_HS_CLIENT_HELLO;
+    intercom_write_u24(state->input + 14, total);
+    state->input[17] = (unsigned char) (message_seq >> 8);
+    state->input[18] = (unsigned char) message_seq;
+    intercom_write_u24(state->input + 19, 0);
+    intercom_write_u24(state->input + 22, total);
+    memcpy(state->input + fragment_start, state->client_hello_fragment_data, total);
+    const size_t reassembled_record_length =
+        INTERCOM_DTLS_HANDSHAKE_HEADER_BYTES + total;
+    state->input[11] = (unsigned char) (reassembled_record_length >> 8);
+    state->input[12] = (unsigned char) reassembled_record_length;
+    state->input_length = fragment_start + total;
+    state->input_pending = true;
+    intercom_clear_client_hello_reassembly(state);
+    return 1;
+}
+
 static void intercom_timer_set(void *context, uint32_t intermediate_ms, uint32_t final_ms)
 {
     intercom_dtls_state *state = (intercom_dtls_state *) context;
@@ -152,6 +306,9 @@ static void intercom_export_srtp_keys(void *context,
                                       mbedtls_tls_prf_types prf)
 {
     intercom_dtls_state *state = (intercom_dtls_state *) context;
+    state->export_callback_called = true;
+    state->export_type = (int) type;
+    state->export_prf = (int) prf;
     if (type != MBEDTLS_SSL_KEY_EXPORT_TLS12_MASTER_SECRET) {
         state->export_error = MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE;
         return;
@@ -171,7 +328,6 @@ static int intercom_make_self_signed_certificate(intercom_dtls_state *state)
 {
     int result;
     mbedtls_x509write_cert writer;
-    uint8_t der[2048];
     uint8_t serial[16];
     memset(&writer, 0, sizeof(writer));
     memcpy(serial, state->seed, sizeof(serial));
@@ -188,6 +344,14 @@ static int intercom_make_self_signed_certificate(intercom_dtls_state *state)
         return result;
     }
 
+    // P-256 certificate generation already has a deep call stack on the C6.
+    // Keep the DER scratch space in the bounded Mbed TLS arena instead of
+    // consuming another 2 KiB of the Embassy main task stack.
+    uint8_t *der = mbedtls_calloc(1, 2048);
+    if (der == NULL) {
+        return MBEDTLS_ERR_X509_ALLOC_FAILED;
+    }
+
     mbedtls_x509write_crt_init(&writer);
     mbedtls_x509write_crt_set_version(&writer, MBEDTLS_X509_CRT_VERSION_3);
     mbedtls_x509write_crt_set_md_alg(&writer, MBEDTLS_MD_SHA256);
@@ -199,23 +363,28 @@ static int intercom_make_self_signed_certificate(intercom_dtls_state *state)
         (result = mbedtls_x509write_crt_set_validity(&writer, "20260101000000", "20360101000000")) != 0 ||
         (result = mbedtls_x509write_crt_set_basic_constraints(&writer, 0, -1)) != 0) {
         mbedtls_x509write_crt_free(&writer);
+        mbedtls_free(der);
         return result;
     }
 
-    const int der_length = mbedtls_x509write_crt_der(&writer, der, sizeof(der),
+    const int der_length = mbedtls_x509write_crt_der(&writer, der, 2048,
                                                      mbedtls_ctr_drbg_random,
                                                      &state->ctr_drbg);
     mbedtls_x509write_crt_free(&writer);
     if (der_length <= 0) {
+        mbedtls_free(der);
         return der_length;
     }
-    const unsigned char *der_start = der + sizeof(der) - (size_t) der_length;
+    const unsigned char *der_start = der + 2048 - (size_t) der_length;
     if ((result = mbedtls_x509_crt_parse_der(&state->local_cert, der_start,
                                              (size_t) der_length)) != 0) {
+        mbedtls_free(der);
         return result;
     }
-    return mbedtls_sha256(der_start, (size_t) der_length,
-                          state->local_fingerprint, 0);
+    result = mbedtls_sha256(der_start, (size_t) der_length,
+                            state->local_fingerprint, 0);
+    mbedtls_free(der);
+    return result;
 }
 
 int intercom_dtls_heap_init(unsigned char *buffer, size_t length)
@@ -254,6 +423,11 @@ int intercom_dtls_init(void *storage, size_t storage_length, int role,
     memset(state, 0, sizeof(*state));
     state->is_server = role == MBEDTLS_SSL_IS_SERVER;
     memcpy(state->seed, seed, sizeof(state->seed));
+    state->client_hello_fragment_data = mbedtls_calloc(
+        1, INTERCOM_DTLS_CLIENT_HELLO_CAPACITY);
+    if (state->client_hello_fragment_data == NULL) {
+        return MBEDTLS_ERR_SSL_ALLOC_FAILED;
+    }
     mbedtls_ssl_init(&state->ssl);
     mbedtls_ssl_config_init(&state->config);
     mbedtls_ctr_drbg_init(&state->ctr_drbg);
@@ -282,6 +456,8 @@ int intercom_dtls_init(void *storage, size_t storage_length, int role,
     if (result != 0) {
         goto fail;
     }
+    mbedtls_debug_set_threshold(1);
+    mbedtls_ssl_conf_dbg(&state->config, intercom_debug, state);
     mbedtls_ssl_conf_dtls_cookies(&state->config, mbedtls_ssl_cookie_write,
                                   mbedtls_ssl_cookie_check, &state->cookie);
     mbedtls_ssl_conf_rng(&state->config, mbedtls_ctr_drbg_random, &state->ctr_drbg);
@@ -330,6 +506,7 @@ fail:
     }
     mbedtls_x509_crt_free(&state->local_cert);
     mbedtls_pk_free(&state->local_key);
+    mbedtls_free(state->client_hello_fragment_data);
     memset(state, 0, sizeof(*state));
     return result;
 }
@@ -350,6 +527,7 @@ void intercom_dtls_free(void *storage)
         mbedtls_x509_crt_free(&state->local_cert);
         mbedtls_pk_free(&state->local_key);
     }
+    mbedtls_free(state->client_hello_fragment_data);
     memset(state, 0, sizeof(*state));
 }
 
@@ -361,6 +539,13 @@ int intercom_dtls_push_input(void *storage, const unsigned char *data, size_t le
     intercom_dtls_state *state = (intercom_dtls_state *) storage;
     if (state->input_pending) {
         return MBEDTLS_ERR_SSL_WANT_READ;
+    }
+    const int reassembly = intercom_reassemble_client_hello(state, data, length);
+    if (reassembly < 0) {
+        return reassembly;
+    }
+    if (reassembly > 0) {
+        return 0;
     }
     memcpy(state->input, data, length);
     state->input_length = length;
@@ -466,6 +651,37 @@ int intercom_dtls_exported_keys(void *storage, unsigned char output[60])
     }
     memcpy(output, state->exported_keys, sizeof(state->exported_keys));
     return 1;
+}
+
+void intercom_dtls_export_diagnostic(void *storage, int *called, int *type,
+                                     int *prf, int *error)
+{
+    if (storage == NULL || called == NULL || type == NULL || prf == NULL || error == NULL) {
+        return;
+    }
+    const intercom_dtls_state *state = (const intercom_dtls_state *) storage;
+    *called = state->export_callback_called;
+    *type = state->export_type;
+    *prf = state->export_prf;
+    *error = state->export_error;
+}
+
+size_t intercom_dtls_debug_diagnostic(void *storage, int *level, int *line,
+                                      unsigned char *message, size_t capacity)
+{
+    if (storage == NULL || level == NULL || line == NULL || message == NULL || capacity == 0) {
+        return 0;
+    }
+    const intercom_dtls_state *state = (const intercom_dtls_state *) storage;
+    *level = state->debug_level;
+    *line = state->debug_line;
+    size_t length = strlen(state->debug_message);
+    if (length >= capacity) {
+        length = capacity - 1;
+    }
+    memcpy(message, state->debug_message, length);
+    message[length] = '\0';
+    return length;
 }
 
 int intercom_dtls_local_fingerprint(void *storage, unsigned char output[32])

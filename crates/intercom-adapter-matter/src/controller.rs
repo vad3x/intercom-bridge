@@ -511,7 +511,7 @@ where
 
 /// Build device identity for the Basic Information cluster.
 fn dev_det(info: &DeviceInfo, serial_no: &'static str) -> BasicInfoConfig<'static> {
-    BasicInfoConfig {
+    let mut basic_info = BasicInfoConfig {
         vid: VID,
         pid: PID,
         hw_ver: info.hw_ver,
@@ -525,5 +525,7 @@ fn dev_det(info: &DeviceInfo, serial_no: &'static str) -> BasicInfoConfig<'stati
         device_name: info.device_name,
         max_subscription_max_interval_secs: Some(crate::config::MAX_SUBSCRIPTION_INTERVAL_SECS),
         ..BasicInfoConfig::new()
-    }
+    };
+    basic_info.tcp_supported = true;
+    basic_info
 }

@@ -6,6 +6,7 @@ commissioned device.
 """
 
 import argparse
+import errno
 import fcntl
 import glob
 import os
@@ -80,28 +81,37 @@ def main():
                 if r:
                     try:
                         chunk = os.read(fd, 1024)
-                    except OSError as e:
-                        chunk = b""
-                    
-                    if not chunk:
-                        # Port disconnected (unplugged or rebooted via USB disconnect)
-                        print(f"\n[Port disconnected, waiting for {port}...]", flush=True)
-                        log_f.write(f"\n[Port disconnected at {time.ctime()}, waiting for {port}...]\n")
-                        try:
-                            os.close(fd)
-                        except Exception:
-                            pass
-                        while True:
-                            time.sleep(0.5)
-                            try:
-                                port = args.port or find_serial_port()
-                                fd = open_and_configure_port(port, args.baud)
-                                print(f"[Reconnected to {port}]", flush=True)
-                                log_f.write(f"[Reconnected to {port} at {time.ctime()}]\n")
-                                break
-                            except Exception:
-                                continue
+                    except (BlockingIOError, InterruptedError):
                         continue
+                    except OSError as e:
+                        if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK, errno.EINTR):
+                            continue
+                        chunk = b""
+
+                    if not chunk:
+                        # Only treat as true disconnect if port device node is gone or EOF after select
+                        if not os.path.exists(port):
+                            print(f"\n[Port disconnected, waiting for {port}...]", flush=True)
+                            log_f.write(f"\n[Port disconnected at {time.ctime()}, waiting for {port}...]\n")
+                            try:
+                                os.close(fd)
+                            except Exception:
+                                pass
+                            while True:
+                                time.sleep(0.5)
+                                try:
+                                    port = args.port or find_serial_port()
+                                    if os.path.exists(port):
+                                        fd = open_and_configure_port(port, args.baud)
+                                        print(f"[Reconnected to {port}]", flush=True)
+                                        log_f.write(f"[Reconnected to {port} at {time.ctime()}]\n")
+                                        break
+                                except Exception:
+                                    continue
+                            continue
+                        else:
+                            # Transient empty read on macOS non-blocking tty
+                            continue
 
                     text = chunk.decode("utf-8", errors="replace")
                     line_buf += text

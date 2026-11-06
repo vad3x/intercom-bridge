@@ -102,11 +102,19 @@ impl IntercomStateMachine {
         match self.phase {
             BusPhase::Idle => {}
             BusPhase::Listening {
+                owner,
                 max_deadline_ms,
                 heartbeat_deadline_ms,
-                ..
+            } => {
+                // A Matter stream has its own ICE consent timeout; a live stream
+                // must not be cut off by the local debug-listen duration cap.
+                let max_duration_expired =
+                    owner != SessionOwner::MatterCall && now_ms >= max_deadline_ms;
+                if max_duration_expired || now_ms >= heartbeat_deadline_ms {
+                    self.transition_to_idle(&mut fx);
+                }
             }
-            | BusPhase::Talking {
+            BusPhase::Talking {
                 max_deadline_ms,
                 heartbeat_deadline_ms,
                 ..
@@ -145,11 +153,15 @@ impl IntercomStateMachine {
         let phase_deadline = match self.phase {
             BusPhase::Idle => None,
             BusPhase::Listening {
+                owner,
                 max_deadline_ms,
                 heartbeat_deadline_ms,
-                ..
-            }
-            | BusPhase::Talking {
+            } => Some(if owner == SessionOwner::MatterCall {
+                heartbeat_deadline_ms
+            } else {
+                max_deadline_ms.min(heartbeat_deadline_ms)
+            }),
+            BusPhase::Talking {
                 max_deadline_ms,
                 heartbeat_deadline_ms,
                 ..
@@ -777,6 +789,26 @@ mod tests {
     }
 
     #[test]
+    fn live_matter_listen_survives_listen_cap_while_heartbeats_continue() {
+        // Arrange
+        let mut sm = IntercomStateMachine::new();
+        let owner = SessionOwner::MatterCall;
+        sm.handle_action(IntercomAction::StartListen(owner), 0);
+
+        // Act
+        for now_ms in (1_000..=190_000).step_by(1_000) {
+            sm.handle_action(IntercomAction::SessionHeartbeat(owner), now_ms);
+            assert_eq!(sm.poll_deadlines(now_ms), IntercomEffects::default());
+        }
+
+        // Assert
+        assert_eq!(sm.bus_state(), BusLineState::Listen);
+        assert_eq!(sm.call_state(), CallState::Listening);
+        assert_eq!(sm.active_owner(), Some(owner));
+        assert_eq!(sm.next_deadline(), Some(195_000));
+    }
+
+    #[test]
     fn missing_heartbeat_drops_session_to_idle_after_5_seconds() {
         // Arrange
         let mut sm = IntercomStateMachine::new();
@@ -789,6 +821,23 @@ mod tests {
         assert_eq!(drop_fx.audio_direction, Some(AudioDirection::Muted));
         assert_eq!(drop_fx.bus_state, Some(BusLineState::Idle));
         assert_eq!(drop_fx.report_call_state, Some(CallState::Idle));
+    }
+
+    #[test]
+    fn matter_call_still_expires_when_its_heartbeats_stop() {
+        // Arrange
+        let mut sm = IntercomStateMachine::new();
+        let owner = SessionOwner::MatterCall;
+        sm.handle_action(IntercomAction::StartListen(owner), 1_000);
+
+        // Act
+        let drop_fx = sm.poll_deadlines(6_000);
+
+        // Assert
+        assert_eq!(drop_fx.audio_direction, Some(AudioDirection::Muted));
+        assert_eq!(drop_fx.bus_state, Some(BusLineState::Idle));
+        assert_eq!(drop_fx.report_call_state, Some(CallState::Idle));
+        assert_eq!(sm.active_owner(), None);
     }
 
     #[test]

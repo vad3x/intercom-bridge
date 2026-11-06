@@ -104,6 +104,25 @@ async function connect(client: WsIntercomClient) {
   return { socket, context: Context.instances.at(-1) as Context };
 }
 
+test('RX playback keeps a 60 ms playout lead across evenly spaced frames', async () => {
+  const { client } = setup();
+  const { socket, context } = await connect(client);
+  const frame = () => socket.onmessage?.({ data: new Uint8Array(320).buffer });
+
+  frame();
+  context.currentTime = 1.02;
+  frame();
+  context.currentTime = 1.04;
+  frame();
+
+  const starts = context.playback.start.mock.calls.map(([time]) => time);
+  expect(starts).toHaveLength(3);
+  expect(starts[0]).toBeCloseTo(1.06);
+  expect(starts[1]).toBeCloseTo(1.08);
+  expect(starts[2]).toBeCloseTo(1.1);
+  client.disconnect();
+});
+
 test('connects once, schedules valid downlink and closes on preemption', async () => {
   // Arrange
   const { client, callbacks } = setup();

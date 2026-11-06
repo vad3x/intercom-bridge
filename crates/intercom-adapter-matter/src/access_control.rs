@@ -48,7 +48,7 @@ impl IntercomReporter for MatterAccessControlDriver<'_> {
 mod tests {
     use super::*;
     use crate::doorbell_switch::IntercomDoorbellSwitch;
-    use crate::{ClusterReadinessBarrier, door_lock::IntercomDoorLockConfig};
+    use crate::{door_lock::IntercomDoorLockConfig, ClusterReadinessBarrier};
     use intercom_core::events::{SystemStateSender, SystemStateWatch};
     use intercom_core::ports::{AccessControllerHandle, CommandChannel};
 

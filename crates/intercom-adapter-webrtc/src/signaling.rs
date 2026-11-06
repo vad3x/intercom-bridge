@@ -1,21 +1,23 @@
 //! Bounded Matter-facing SDP signaling for the single-session WebRTC media engine.
 
+use alloc::boxed::Box;
 use core::cell::RefCell;
 use core::fmt::Write;
 use core::sync::atomic::Ordering;
 
-use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::blocking_mutex::Mutex;
 use heapless::String;
+use intercom_core::domain::intercom::SessionOwner;
 use portable_atomic::AtomicU32;
 
-use crate::dtls::{DtlsRole, DtlsSrtpEngine};
+use crate::dtls::{DtlsRole, DtlsSrtpEngine, DtlsSrtpResourceCell, DtlsSrtpResources};
 use crate::sdp::{
-    DtlsSetupRole, LOCAL_OFFER_MID, LOCAL_OFFER_OPUS_PAYLOAD_TYPE, LocalSdpParams, SdpError,
-    SdpMediaDirection, parse_sdp_offer, write_sdp_answer, write_sdp_offer,
+    parse_sdp_offer, write_sdp_answer, write_sdp_offer, DtlsSetupRole, LocalSdpParams, SdpError,
+    SdpMediaDirection, LOCAL_OFFER_MID, LOCAL_OFFER_OPUS_PAYLOAD_TYPE,
 };
 use crate::session::{
-    MEDIA_UDP_PORT, WebRtcSessionConfig, WebRtcSessionHandle, WebRtcSessionRequestError,
+    WebRtcSessionConfig, WebRtcSessionHandle, WebRtcSessionRequestError, MEDIA_UDP_PORT,
 };
 
 /// Cryptographically secure entropy supplied by the composition root.
@@ -39,6 +41,8 @@ struct PendingOffer {
     local_ufrag: String<32>,
     local_password: String<64>,
     dtls_seed: [u8; 32],
+    ssrc: u32,
+    owner: SessionOwner,
 }
 
 struct SessionMaterial {
@@ -52,6 +56,7 @@ struct SessionMaterial {
 pub struct WebRtcSignalingFacade<'a, R: SecureRandom> {
     handle: WebRtcSessionHandle<'a>,
     random: &'a R,
+    dtls_resources: Option<&'a DtlsSrtpResourceCell<'a>>,
     local_ipv4: AtomicU32,
     pending: Mutex<CriticalSectionRawMutex, RefCell<Option<PendingOffer>>>,
 }
@@ -61,6 +66,22 @@ impl<'a, R: SecureRandom> WebRtcSignalingFacade<'a, R> {
         Self {
             handle,
             random,
+            dtls_resources: None,
+            local_ipv4: AtomicU32::new(0),
+            pending: Mutex::new(RefCell::new(None)),
+        }
+    }
+
+    /// Construct signaling that shares DTLS storage with the media engine.
+    pub const fn new_with_resources(
+        handle: WebRtcSessionHandle<'a>,
+        random: &'a R,
+        dtls_resources: &'a DtlsSrtpResourceCell<'a>,
+    ) -> Self {
+        Self {
+            handle,
+            random,
+            dtls_resources: Some(dtls_resources),
             local_ipv4: AtomicU32::new(0),
             pending: Mutex::new(RefCell::new(None)),
         }
@@ -105,10 +126,28 @@ impl<'a, R: SecureRandom> WebRtcSignalingFacade<'a, R> {
         })
     }
 
-    fn local_fingerprint(seed: [u8; 32], role: DtlsRole) -> Result<[u8; 32], SignalingError> {
+    fn local_fingerprint(
+        &self,
+        seed: [u8; 32],
+        role: DtlsRole,
+    ) -> Result<[u8; 32], SignalingError> {
         // The media engine uses the same seed to recreate this certificate when it starts.
-        let identity = DtlsSrtpEngine::new(role, seed).map_err(|_| SignalingError::Crypto)?;
-        Ok(identity.local_cert_sha256())
+        let fingerprint = if let Some(resources) = self.dtls_resources {
+            let mut resources = resources.try_borrow_mut().ok_or(SignalingError::Busy)?;
+            let identity = DtlsSrtpEngine::new(role, seed, &mut resources)
+                .map_err(|_| SignalingError::Crypto)?;
+            let fingerprint = identity.local_cert_sha256();
+            drop(identity);
+            fingerprint
+        } else {
+            let mut resources = Box::new(DtlsSrtpResources::new());
+            let identity = DtlsSrtpEngine::new(role, seed, &mut resources)
+                .map_err(|_| SignalingError::Crypto)?;
+            let fingerprint = identity.local_cert_sha256();
+            drop(identity);
+            fingerprint
+        };
+        Ok(fingerprint)
     }
 
     fn local_params<'b>(
@@ -132,6 +171,15 @@ impl<'a, R: SecureRandom> WebRtcSignalingFacade<'a, R> {
         offer: &str,
         answer_out: &mut [u8],
     ) -> Result<usize, SignalingError> {
+        self.accept_offer_for_owner(offer, answer_out, SessionOwner::MatterCall)
+    }
+
+    pub fn accept_offer_for_owner(
+        &self,
+        offer: &str,
+        answer_out: &mut [u8],
+        owner: SessionOwner,
+    ) -> Result<usize, SignalingError> {
         let ipv4 = self.local_ipv4()?;
         if !self.handle.is_idle() || self.pending.lock(|p| p.borrow().is_some()) {
             return Err(SignalingError::Busy);
@@ -142,17 +190,19 @@ impl<'a, R: SecureRandom> WebRtcSignalingFacade<'a, R> {
             DtlsSetupRole::Active | DtlsSetupRole::ActPass => DtlsRole::Server,
         };
         let material = self.new_material()?;
-        let fingerprint = Self::local_fingerprint(material.dtls_seed, role)?;
+        let fingerprint = self.local_fingerprint(material.dtls_seed, role)?;
         let params = Self::local_params(ipv4, &material, fingerprint);
         let len = write_sdp_answer(&remote, &params, answer_out).map_err(map_sdp_error)?;
-        let config = WebRtcSessionConfig::new(
+        let config = WebRtcSessionConfig::new_for_owner(
             &material.local_ufrag,
             remote.ice_ufrag,
             &material.local_password,
             remote.sha256_fingerprint,
             role,
             material.dtls_seed,
+            material.ssrc,
             remote.opus_payload_type,
+            owner,
         )
         .map_err(|_| SignalingError::InvalidSdp)?;
         self.handle.start(config).map_err(map_request_error)?;
@@ -165,7 +215,7 @@ impl<'a, R: SecureRandom> WebRtcSignalingFacade<'a, R> {
             return Err(SignalingError::Busy);
         }
         let material = self.new_material()?;
-        let fingerprint = Self::local_fingerprint(material.dtls_seed, DtlsRole::Server)?;
+        let fingerprint = self.local_fingerprint(material.dtls_seed, DtlsRole::Server)?;
         let params = Self::local_params(ipv4, &material, fingerprint);
         let len = write_sdp_offer(&params, offer_out).map_err(map_sdp_error)?;
         self.pending.lock(|p| {
@@ -173,6 +223,8 @@ impl<'a, R: SecureRandom> WebRtcSignalingFacade<'a, R> {
                 local_ufrag: material.local_ufrag,
                 local_password: material.local_password,
                 dtls_seed: material.dtls_seed,
+                ssrc: material.ssrc,
+                owner: SessionOwner::MatterCall,
             });
         });
         Ok(len)
@@ -194,14 +246,16 @@ impl<'a, R: SecureRandom> WebRtcSignalingFacade<'a, R> {
         self.pending.lock(|pending| {
             let pending = pending.borrow();
             let local = pending.as_ref().ok_or(SignalingError::InvalidInState)?;
-            let config = WebRtcSessionConfig::new(
+            let config = WebRtcSessionConfig::new_for_owner(
                 &local.local_ufrag,
                 remote.ice_ufrag,
                 &local.local_password,
                 remote.sha256_fingerprint,
                 role,
                 local.dtls_seed,
+                local.ssrc,
                 remote.opus_payload_type,
+                local.owner,
             )
             .map_err(|_| SignalingError::InvalidSdp)?;
             self.handle.start(config).map_err(map_request_error)
@@ -218,8 +272,20 @@ impl<'a, R: SecureRandom> WebRtcSignalingFacade<'a, R> {
     }
 
     pub fn stop(&self) {
-        self.pending.lock(|pending| *pending.borrow_mut() = None);
-        let _ = self.handle.stop();
+        self.stop_for_owner(SessionOwner::MatterCall);
+    }
+
+    pub fn stop_for_owner(&self, owner: SessionOwner) {
+        self.pending.lock(|pending| {
+            if pending
+                .borrow()
+                .as_ref()
+                .is_some_and(|offer| offer.owner == owner)
+            {
+                *pending.borrow_mut() = None;
+            }
+        });
+        let _ = self.handle.stop_for_owner(owner);
     }
 
     pub fn is_idle(&self) -> bool {
@@ -334,11 +400,13 @@ mod tests {
 
     use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
     use embassy_sync::channel::Channel;
+    use intercom_core::domain::intercom::SessionOwner;
     use intercom_core::ports::inbound::{AccessControllerHandle, CommandChannel};
     use intercom_media::{RxAudioChannel, TxAudioChannel};
     use portable_atomic::AtomicU8;
 
-    use super::{SecureRandom, SignalingError, WebRtcSignalingFacade, validate_remote_candidate};
+    use super::{validate_remote_candidate, SecureRandom, SignalingError, WebRtcSignalingFacade};
+    use crate::dtls::DtlsSrtpResources;
     use crate::session::{WebRtcMediaEngine, WebRtcSessionConfig};
 
     const CONTROLLER_OFFER: &str = "v=0\r\n\
@@ -354,6 +422,45 @@ a=fingerprint:sha-256 AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:D
 a=setup:actpass\r\n\
 a=rtcp-mux\r\n\
 a=rtpmap:111 opus/48000/2\r\n";
+
+    const HOME_ASSISTANT_OFFER: &str = "v=0\r\n\
+o=- 381697197521272464 2 IN IP4 127.0.0.1\r\n\
+s=-\r\n\
+t=0 0\r\n\
+a=group:BUNDLE 0\r\n\
+a=extmap-allow-mixed\r\n\
+a=msid-semantic: WMS\r\n\
+m=audio 9 UDP/TLS/RTP/SAVPF 111 63 9 0 8 13 110 126\r\n\
+c=IN IP4 0.0.0.0\r\n\
+a=rtcp:9 IN IP4 0.0.0.0\r\n\
+a=ice-ufrag:ctrlUfrag\r\n\
+a=ice-pwd:controllerPassword0123456789ab\r\n\
+a=ice-options:trickle\r\n\
+a=fingerprint:sha-256 0A:19:E8:17:F6:7D:4F:32:D9:9D:09:30:4A:D4:C5:E6:B8:C1:A1:A4:7A:5C:E7:44:6C:D5:47:D0:D2:05:2D:E4\r\n\
+a=setup:actpass\r\n\
+a=mid:0\r\n\
+a=extmap:1 urn:ietf:params:rtp-hdrext:ssrc-audio-level\r\n\
+a=extmap:2 http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time\r\n\
+a=extmap:3 http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01\r\n\
+a=extmap:4 urn:ietf:params:rtp-hdrext:sdes:mid\r\n\
+a=sendrecv\r\n\
+a=msid:- 621af9a1-27a2-4ec8-9433-d9f87063ac7f\r\n\
+a=rtcp-mux\r\n\
+a=rtcp-rsize\r\n\
+a=rtcp-xr:rcvr-rtt=all\r\n\
+a=rtpmap:111 opus/48000/2\r\n\
+a=rtcp-fb:111 transport-cc\r\n\
+a=fmtp:111 minptime=10;useinbandfec=1\r\n\
+a=rtpmap:63 red/48000/2\r\n\
+a=fmtp:63 111/111\r\n\
+a=rtpmap:9 G722/8000\r\n\
+a=rtpmap:0 PCMU/8000\r\n\
+a=rtpmap:8 PCMA/8000\r\n\
+a=rtpmap:13 CN/8000\r\n\
+a=rtpmap:110 telephone-event/48000\r\n\
+a=rtpmap:126 telephone-event/8000\r\n\
+a=ssrc:3210117597 cname:DNnSCHWCW0hzfTB4\r\n\
+a=ssrc:3210117597 msid:- 621af9a1-27a2-4ec8-9433-d9f87063ac7f\r\n";
 
     struct SecureRandomMock(Cell<u8>);
 
@@ -374,15 +481,20 @@ a=rtpmap:111 opus/48000/2\r\n";
         let state = AtomicU8::new(0);
         let rx = RxAudioChannel::new();
         let tx = TxAudioChannel::new();
+        let mut dtls_storage = DtlsSrtpResources::new();
+        let dtls_resources = crate::dtls::DtlsSrtpResourceCell::new(&mut dtls_storage);
+        let mut resources = crate::session::WebRtcMediaResources::new();
         let (_engine, handle) = WebRtcMediaEngine::new(
             &requests,
             &state,
             AccessControllerHandle::new(commands.sender()),
             rx.receiver(),
             tx.sender(),
+            &mut resources,
+            &dtls_resources,
         );
         let random = SecureRandomMock(Cell::new(0));
-        let facade = WebRtcSignalingFacade::new(handle, &random);
+        let facade = WebRtcSignalingFacade::new_with_resources(handle, &random, &dtls_resources);
         let mut answer = [0u8; 2048];
 
         // Act
@@ -402,15 +514,20 @@ a=rtpmap:111 opus/48000/2\r\n";
         let state = AtomicU8::new(0);
         let rx = RxAudioChannel::new();
         let tx = TxAudioChannel::new();
+        let mut dtls_storage = DtlsSrtpResources::new();
+        let dtls_resources = crate::dtls::DtlsSrtpResourceCell::new(&mut dtls_storage);
+        let mut resources = crate::session::WebRtcMediaResources::new();
         let (_engine, handle) = WebRtcMediaEngine::new(
             &requests,
             &state,
             AccessControllerHandle::new(commands.sender()),
             rx.receiver(),
             tx.sender(),
+            &mut resources,
+            &dtls_resources,
         );
         let random = SecureRandomMock(Cell::new(0));
-        let facade = WebRtcSignalingFacade::new(handle, &random);
+        let facade = WebRtcSignalingFacade::new_with_resources(handle, &random, &dtls_resources);
         facade.set_local_ipv4([192, 168, 1, 50]);
         let mut answer = [0u8; 2048];
 
@@ -419,6 +536,7 @@ a=rtpmap:111 opus/48000/2\r\n";
             .accept_offer(CONTROLLER_OFFER, &mut answer)
             .expect("answer");
         let config = requests.receiver().try_receive().expect("media queued");
+        assert!(dtls_resources.try_borrow_mut().is_some());
         let answer = core::str::from_utf8(&answer[..len]).expect("UTF-8 SDP");
 
         // Assert
@@ -426,7 +544,94 @@ a=rtpmap:111 opus/48000/2\r\n";
         assert!(answer.contains("a=ice-ufrag:"));
         assert_eq!(config.remote_ufrag.as_str(), "ctrlUfrag");
         assert_eq!(config.payload_type, 111);
+        let answer_ssrc = answer
+            .lines()
+            .find_map(|line| {
+                line.strip_prefix("a=ssrc:")?
+                    .split_ascii_whitespace()
+                    .next()?
+                    .parse::<u32>()
+                    .ok()
+            })
+            .expect("answer should advertise the local RTP SSRC");
+        assert_eq!(config.local_ssrc, answer_ssrc);
         assert!(!handle.is_idle());
+    }
+
+    #[test]
+    fn debug_offer_uses_the_shared_media_engine_and_owner_scoped_stop() {
+        let _guard = crate::dtls::DTLS_TEST_LOCK.lock().expect("DTLS lock");
+        let commands = CommandChannel::new();
+        let requests = Channel::<CriticalSectionRawMutex, WebRtcSessionConfig, 1>::new();
+        let state = AtomicU8::new(0);
+        let rx = RxAudioChannel::new();
+        let tx = TxAudioChannel::new();
+        let mut dtls_storage = DtlsSrtpResources::new();
+        let dtls_resources = crate::dtls::DtlsSrtpResourceCell::new(&mut dtls_storage);
+        let mut resources = crate::session::WebRtcMediaResources::new();
+        let (_engine, handle) = WebRtcMediaEngine::new(
+            &requests,
+            &state,
+            AccessControllerHandle::new(commands.sender()),
+            rx.receiver(),
+            tx.sender(),
+            &mut resources,
+            &dtls_resources,
+        );
+        let random = SecureRandomMock(Cell::new(0));
+        let facade = WebRtcSignalingFacade::new_with_resources(handle, &random, &dtls_resources);
+        facade.set_local_ipv4([192, 168, 1, 50]);
+        let mut answer = [0u8; 2048];
+
+        let result = facade.accept_offer_for_owner(
+            CONTROLLER_OFFER,
+            &mut answer,
+            SessionOwner::HttpDebug,
+        );
+        let config = requests.receiver().try_receive().expect("shared engine queued");
+
+        assert!(result.is_ok());
+        assert_eq!(config.owner, SessionOwner::HttpDebug);
+        assert_eq!(
+            handle.stop_for_owner(SessionOwner::MatterCall),
+            Err(crate::session::WebRtcSessionRequestError::NotActive)
+        );
+        assert_eq!(handle.stop_for_owner(SessionOwner::HttpDebug), Ok(()));
+    }
+
+    #[test]
+    fn accepts_home_assistant_live_view_offer() {
+        let _guard = crate::dtls::DTLS_TEST_LOCK.lock().expect("DTLS lock");
+        let commands = CommandChannel::new();
+        let requests = Channel::<CriticalSectionRawMutex, WebRtcSessionConfig, 1>::new();
+        let state = AtomicU8::new(0);
+        let rx = RxAudioChannel::new();
+        let tx = TxAudioChannel::new();
+        let mut dtls_storage = DtlsSrtpResources::new();
+        let dtls_resources = crate::dtls::DtlsSrtpResourceCell::new(&mut dtls_storage);
+        let mut resources = crate::session::WebRtcMediaResources::new();
+        let (_engine, handle) = WebRtcMediaEngine::new(
+            &requests,
+            &state,
+            AccessControllerHandle::new(commands.sender()),
+            rx.receiver(),
+            tx.sender(),
+            &mut resources,
+            &dtls_resources,
+        );
+        let random = SecureRandomMock(Cell::new(0));
+        let facade = WebRtcSignalingFacade::new_with_resources(handle, &random, &dtls_resources);
+        facade.set_local_ipv4([192, 168, 0, 101]);
+        let mut answer = [0u8; 2048];
+
+        crate::sdp::parse_sdp_offer(HOME_ASSISTANT_OFFER).expect("Home Assistant SDP should parse");
+
+        let len = facade
+            .accept_offer(HOME_ASSISTANT_OFFER, &mut answer)
+            .expect("Home Assistant offer should be accepted");
+
+        assert!(len > 0);
+        assert!(requests.receiver().try_receive().is_ok());
     }
 
     #[test]
@@ -438,15 +643,20 @@ a=rtpmap:111 opus/48000/2\r\n";
         let state = AtomicU8::new(0);
         let rx = RxAudioChannel::new();
         let tx = TxAudioChannel::new();
+        let mut dtls_storage = DtlsSrtpResources::new();
+        let dtls_resources = crate::dtls::DtlsSrtpResourceCell::new(&mut dtls_storage);
+        let mut resources = crate::session::WebRtcMediaResources::new();
         let (_engine, handle) = WebRtcMediaEngine::new(
             &requests,
             &state,
             AccessControllerHandle::new(commands.sender()),
             rx.receiver(),
             tx.sender(),
+            &mut resources,
+            &dtls_resources,
         );
         let random = SecureRandomMock(Cell::new(0));
-        let facade = WebRtcSignalingFacade::new(handle, &random);
+        let facade = WebRtcSignalingFacade::new_with_resources(handle, &random, &dtls_resources);
         facade.set_local_ipv4([192, 168, 1, 50]);
         let mut answer = [0u8; 4];
 
@@ -468,15 +678,20 @@ a=rtpmap:111 opus/48000/2\r\n";
         let state = AtomicU8::new(0);
         let rx = RxAudioChannel::new();
         let tx = TxAudioChannel::new();
+        let mut dtls_storage = DtlsSrtpResources::new();
+        let dtls_resources = crate::dtls::DtlsSrtpResourceCell::new(&mut dtls_storage);
+        let mut resources = crate::session::WebRtcMediaResources::new();
         let (_engine, handle) = WebRtcMediaEngine::new(
             &requests,
             &state,
             AccessControllerHandle::new(commands.sender()),
             rx.receiver(),
             tx.sender(),
+            &mut resources,
+            &dtls_resources,
         );
         let random = SecureRandomMock(Cell::new(0));
-        let facade = WebRtcSignalingFacade::new(handle, &random);
+        let facade = WebRtcSignalingFacade::new_with_resources(handle, &random, &dtls_resources);
         facade.set_local_ipv4([192, 168, 1, 50]);
         let mut offer = [0u8; 2048];
 
@@ -488,11 +703,9 @@ a=rtpmap:111 opus/48000/2\r\n";
         let config = requests.receiver().try_receive().expect("media queued");
 
         // Assert
-        assert!(
-            core::str::from_utf8(&offer[..len])
-                .unwrap()
-                .contains("a=setup:actpass")
-        );
+        assert!(core::str::from_utf8(&offer[..len])
+            .unwrap()
+            .contains("a=setup:actpass"));
         assert!(before_answer.is_err());
         assert_eq!(accepted, Ok(()));
         assert_eq!(config.local_dtls_role, crate::dtls::DtlsRole::Server);
@@ -529,15 +742,20 @@ a=rtpmap:111 opus/48000/2\r\n";
         let state = AtomicU8::new(0);
         let rx = RxAudioChannel::new();
         let tx = TxAudioChannel::new();
+        let mut dtls_storage = DtlsSrtpResources::new();
+        let dtls_resources = crate::dtls::DtlsSrtpResourceCell::new(&mut dtls_storage);
+        let mut resources = crate::session::WebRtcMediaResources::new();
         let (_engine, handle) = WebRtcMediaEngine::new(
             &requests,
             &state,
             AccessControllerHandle::new(commands.sender()),
             rx.receiver(),
             tx.sender(),
+            &mut resources,
+            &dtls_resources,
         );
         let random = SecureRandomMock(Cell::new(0));
-        let facade = WebRtcSignalingFacade::new(handle, &random);
+        let facade = WebRtcSignalingFacade::new_with_resources(handle, &random, &dtls_resources);
         facade.set_local_ipv4([192, 168, 1, 50]);
         let mut offer = [0u8; 2048];
         facade.create_offer(&mut offer).expect("local offer");

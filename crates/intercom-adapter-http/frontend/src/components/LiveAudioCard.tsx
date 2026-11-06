@@ -1,7 +1,7 @@
 import { Badge, Card, CardBody, CardTitle } from '@embedded-device-foundation/dashboard-core';
 import { AudioWaveform, Mic, PhoneCall, PhoneOff, Volume2 } from 'lucide-solid';
 import { type Component, createEffect, createSignal, onCleanup } from 'solid-js';
-import { WsIntercomClient } from '../audio/wsIntercomClient';
+import { WebRtcIntercomClient } from '../audio/webrtcIntercomClient';
 import { createPttHandlers } from './pttHandlers';
 import { createToneCountdown } from './toneCountdown';
 
@@ -32,14 +32,13 @@ export const LiveAudioCard: Component<LiveAudioCardProps> = (props) => {
     onCleanup(() => clearInterval(timer));
   });
 
-  const client = new WsIntercomClient({
+  const client = new WebRtcIntercomClient({
     onConnectedChange: (value) => {
       setConnected(value);
       setConnecting(false);
     },
     onTalkingChange: setTalking,
     onTxLevelChange: setTxRms,
-    onPreempted: () => props.onNotify('Live audio preempted by Matter call or OTA', 'info'),
     onError: (msg) => props.onNotify(msg, 'error'),
   });
 

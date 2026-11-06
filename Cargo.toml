@@ -66,6 +66,7 @@ picoserve = { version = "=0.20.1", default-features = false, features = ["embass
 tinyrlibc = { version = "=0.5.1", default-features = false }
 
 [patch.crates-io]
+edge-nal-embassy = { path = "../rs-matter-embassy/vendor/edge-nal-embassy" }
 rs-matter = { path = "../rs-matter/rs-matter" }
 rs-matter-stack = { path = "../rs-matter-stack" }
 

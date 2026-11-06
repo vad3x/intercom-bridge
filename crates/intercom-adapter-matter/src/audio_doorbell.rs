@@ -3,26 +3,28 @@
 use core::cell::RefCell;
 use core::sync::atomic::{AtomicU16, Ordering};
 
-use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex};
+use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::signal::Signal;
 use heapless::Vec;
 use intercom_core::domain::intercom::SessionOwner;
 use intercom_core::domain::policy::{
-    MAX_RX_PGA_HALF_DB, MAX_TX_DAC_HALF_DB, MIN_RX_PGA_HALF_DB, MIN_TX_DAC_HALF_DB, RxPgaGain,
-    TxDacGain,
+    RxPgaGain, TxDacGain, MAX_RX_PGA_HALF_DB, MAX_TX_DAC_HALF_DB, MIN_RX_PGA_HALF_DB,
+    MIN_TX_DAC_HALF_DB,
 };
 use intercom_core::ports::inbound::IntercomControllerHandle;
 use log::{info, warn};
 use rs_matter::dm::clusters::app::audio_av_stream::{
-    AllocatedAudioStream, AudioAvStreamHandler, AudioAvStreamHooks, AudioEndpointCapabilities,
-    HandlerAsyncAdaptor as AudioAvAdaptor,
+    AllocatedAudioStream, AudioAvStreamHandler, AudioAvStreamHooks, AudioCodecEnum,
+    AudioEndpointCapabilities, HandlerAsyncAdaptor as AudioAvAdaptor,
 };
 use rs_matter::dm::clusters::app::webrtc_prov::{
     AnswerOutcome, IceCandidateSink, OfferParams, OutboundWork, SolicitOutcome, WebRtcError,
     WebRtcHooks, WebRtcProvHandler,
 };
-use rs_matter::dm::clusters::decl::globals::{ICECandidateStruct, WebRTCEndReasonEnum};
+use rs_matter::dm::clusters::decl::globals::{
+    ICECandidateStruct, StreamUsageEnum, WebRTCEndReasonEnum,
+};
 use rs_matter::dm::clusters::decl::{web_rtc_transport_provider, web_rtc_transport_requestor};
 use rs_matter::dm::devices::DEV_TYPE_AUDIO_DOORBELL;
 use rs_matter::dm::{
@@ -32,8 +34,8 @@ use rs_matter::dm::{
 use rs_matter::error::Error;
 use rs_matter::tlv::TLVArray;
 
-use crate::MatterCluster;
 use crate::config::AUDIO_DOORBELL_ENDPOINT_ID;
+use crate::MatterCluster;
 
 pub const MAX_SDP_BYTES: usize = 2048;
 
@@ -74,7 +76,11 @@ impl ActiveCallGate {
 
     pub fn active_session(&self) -> Option<u16> {
         let id = self.active_session_id.load(Ordering::Acquire);
-        if id == 0 { None } else { Some(id) }
+        if id == 0 {
+            None
+        } else {
+            Some(id)
+        }
     }
 }
 
@@ -176,11 +182,28 @@ impl<'a> IntercomAudioAvCluster<'a> {
     }
 
     pub const fn handler(&self) -> &AudioAvStreamHandler<IntercomAudioHooks<'a>, 2> {
-        &self.0.0
+        &self.0 .0
+    }
+
+    /// Allocate the synthetic 16 kHz Opus stream used by the DevKit's tone source.
+    pub fn allocate_synthetic_audio_stream(&self) -> Result<u16, Error> {
+        self.handler().allocate_stream(
+            StreamUsageEnum::LiveView,
+            AudioCodecEnum::OPUS,
+            1,
+            16_000,
+            24_000,
+            16,
+        )
     }
 
     pub fn last_allocated_stream(&self) -> Option<u16> {
-        let id = self.0.0.hooks().last_allocated_stream_id.load(Ordering::Acquire);
+        let id = self
+            .0
+             .0
+            .hooks()
+            .last_allocated_stream_id
+            .load(Ordering::Acquire);
         if id != 0 {
             Some(id)
         } else {
@@ -331,7 +354,11 @@ impl<M: MediaSessionPort> WebRtcHooks for IntercomWebRtcHooks<'_, M> {
     ) -> Result<SolicitOutcome, WebRtcError> {
         info!(
             "WebRTC: on_solicit_offer session={}, usage={:?}, orig_ep={}, audio={:?}, video={:?}",
-            session_id, params.stream_usage, params.originating_endpoint_id, params.audio_stream_id, params.video_stream_id
+            session_id,
+            params.stream_usage,
+            params.originating_endpoint_id,
+            params.audio_stream_id,
+            params.video_stream_id
         );
         let audio_id = self.resolve_audio_stream_id(params)?;
         self.gate.try_acquire(session_id)?;
@@ -391,7 +418,10 @@ impl<M: MediaSessionPort> WebRtcHooks for IntercomWebRtcHooks<'_, M> {
     ) -> Result<AnswerOutcome, WebRtcError> {
         info!(
             "WebRTC: on_offer session={}, sdp_len={}, audio={:?}, video={:?}",
-            session_id, sdp.len(), params.audio_stream_id, params.video_stream_id
+            session_id,
+            sdp.len(),
+            params.audio_stream_id,
+            params.video_stream_id
         );
         let audio_id = self.resolve_audio_stream_id(params)?;
         self.gate.try_acquire(session_id)?;
@@ -428,7 +458,10 @@ impl<M: MediaSessionPort> WebRtcHooks for IntercomWebRtcHooks<'_, M> {
             Ok::<(), OutboundWork>(())
         });
         if queued.is_err() {
-            warn!("WebRTC: outbound queue full for answer session {}", session_id);
+            warn!(
+                "WebRTC: outbound queue full for answer session {}",
+                session_id
+            );
             self.rollback_offer(session_id, audio_id).await;
             return Err(WebRtcError::ResourceExhausted);
         }
@@ -443,9 +476,16 @@ impl<M: MediaSessionPort> WebRtcHooks for IntercomWebRtcHooks<'_, M> {
     }
 
     async fn on_answer(&self, session_id: u16, sdp: &str) -> Result<(), WebRtcError> {
-        info!("WebRTC: on_answer session={}, sdp_len={}", session_id, sdp.len());
+        info!(
+            "WebRTC: on_answer session={}, sdp_len={}",
+            session_id,
+            sdp.len()
+        );
         if self.gate.active_session() != Some(session_id) {
-            warn!("WebRTC: on_answer called for inactive session {}", session_id);
+            warn!(
+                "WebRTC: on_answer called for inactive session {}",
+                session_id
+            );
             return Err(WebRtcError::InvalidInState);
         }
         self.media.accept_remote_answer(sdp)?;
@@ -464,7 +504,10 @@ impl<M: MediaSessionPort> WebRtcHooks for IntercomWebRtcHooks<'_, M> {
     ) -> Result<(), WebRtcError> {
         info!("WebRTC: on_ice_candidates session={}", session_id);
         if self.gate.active_session() != Some(session_id) {
-            warn!("WebRTC: on_ice_candidates for inactive session {}", session_id);
+            warn!(
+                "WebRTC: on_ice_candidates for inactive session {}",
+                session_id
+            );
             return Err(WebRtcError::InvalidInState);
         }
         for item in candidates.iter() {
@@ -480,7 +523,10 @@ impl<M: MediaSessionPort> WebRtcHooks for IntercomWebRtcHooks<'_, M> {
         session_id: u16,
         reason: WebRTCEndReasonEnum,
     ) -> Result<(), WebRtcError> {
-        info!("WebRTC: on_end_session session={}, reason={:?}", session_id, reason);
+        info!(
+            "WebRTC: on_end_session session={}, reason={:?}",
+            session_id, reason
+        );
         self.cleanup_session(session_id).await;
         Ok(())
     }
@@ -651,8 +697,8 @@ mod tests {
     use rs_matter::dm::clusters::decl::globals::{StreamUsageEnum, WebRTCEndReasonEnum};
 
     use super::{
-        ActiveCallGate, IntercomAudioAvCluster, IntercomWebRtcHooks, MediaSessionPort,
-        volume_percent_to_rx_gain, volume_percent_to_tx_gain,
+        volume_percent_to_rx_gain, volume_percent_to_tx_gain, ActiveCallGate,
+        IntercomAudioAvCluster, IntercomWebRtcHooks, MediaSessionPort,
     };
 
     struct MediaSessionPortMock {
@@ -723,6 +769,16 @@ mod tests {
         }
     }
 
+    fn params_without_audio() -> OfferParams {
+        OfferParams {
+            stream_usage: StreamUsageEnum::LiveView,
+            originating_endpoint_id: 1,
+            video_stream_id: None,
+            audio_stream_id: None,
+            metadata_enabled: false,
+        }
+    }
+
     #[test]
     fn active_call_gate_rejects_a_second_session_and_releases_the_first() {
         // Arrange
@@ -771,6 +827,30 @@ mod tests {
         assert_eq!(speaker_low.half_db(), -127);
         assert_eq!(speaker_high.half_db(), 48);
         assert_eq!(muted.half_db(), -127);
+    }
+
+    #[test]
+    fn synthetic_audio_stream_allows_offer_when_controller_omits_stream_id() {
+        // Arrange
+        let commands = CommandChannel::new();
+        let handle = IntercomControllerHandle::new(commands.sender());
+        let audio = IntercomAudioAvCluster::new(handle);
+        let stream_id = audio
+            .allocate_synthetic_audio_stream()
+            .expect("allocate synthetic audio stream");
+        let media = MediaSessionPortMock::new();
+        let hooks = IntercomWebRtcHooks::new(handle, &audio, &media);
+
+        // Act
+        let result = block_on(hooks.on_offer(7, "v=0\r\n", &params_without_audio()));
+
+        // Assert
+        assert_eq!(
+            result
+                .expect("accept synthetic audio offer")
+                .audio_stream_id,
+            Some(stream_id)
+        );
     }
 
     #[test]
