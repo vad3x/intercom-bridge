@@ -62,12 +62,10 @@ impl ClusterReadinessBarrier {
     }
 
     /// Mark the DoorLock cluster as subscription-primed, optionally associating a fabric index.
-    pub fn mark_door_lock_ready(&self, fab_idx: Option<u8>) {
-        if let Some(idx) = fab_idx {
-            if (1..=32).contains(&idx) {
-                self.door_lock_fabrics
-                    .fetch_or(1 << (idx - 1), Ordering::Release);
-            }
+    pub fn mark_door_lock_ready(&self, fab_idx: u8) {
+        if (1..=32).contains(&fab_idx) {
+            self.door_lock_fabrics
+                .fetch_or(1 << (fab_idx - 1), Ordering::Release);
         }
         let was_ready = self.is_ready();
         self.door_lock_ready.store(true, Ordering::Release);
@@ -78,12 +76,10 @@ impl ClusterReadinessBarrier {
     }
 
     /// Mark the Occupancy/Ring cluster as subscription-primed, optionally associating a fabric index.
-    pub fn mark_ring_ready(&self, fab_idx: Option<u8>) {
-        if let Some(idx) = fab_idx {
-            if (1..=32).contains(&idx) {
-                self.ring_fabrics
-                    .fetch_or(1 << (idx - 1), Ordering::Release);
-            }
+    pub fn mark_ring_ready(&self, fab_idx: u8) {
+        if (1..=32).contains(&fab_idx) {
+            self.ring_fabrics
+                .fetch_or(1 << (fab_idx - 1), Ordering::Release);
         }
         let was_ready = self.is_ready();
         self.ring_ready.store(true, Ordering::Release);
@@ -224,7 +220,7 @@ mod tests {
         let barrier = ClusterReadinessBarrier::new(sender);
 
         // Act
-        barrier.mark_door_lock_ready(Some(1));
+        barrier.mark_door_lock_ready(1);
 
         // Assert
         assert!(barrier.is_door_lock_ready());
@@ -233,7 +229,7 @@ mod tests {
         assert_eq!(sender.current_state(), None);
 
         // Act
-        barrier.mark_ring_ready(Some(1));
+        barrier.mark_ring_ready(1);
 
         // Assert
         assert!(barrier.is_door_lock_ready());
@@ -249,8 +245,8 @@ mod tests {
         let sender = SystemStateSender::new(&WATCH);
         let barrier = ClusterReadinessBarrier::new(sender);
         barrier.set_paired(true);
-        barrier.mark_door_lock_ready(Some(1));
-        barrier.mark_ring_ready(Some(1));
+        barrier.mark_door_lock_ready(1);
+        barrier.mark_ring_ready(1);
 
         // Act
         barrier.reset();
@@ -271,7 +267,7 @@ mod tests {
 
         // Act
         barrier.set_paired(true);
-        barrier.mark_door_lock_ready(Some(1));
+        barrier.mark_door_lock_ready(1);
         let status = barrier.status().unwrap();
 
         // Assert
@@ -303,13 +299,13 @@ mod tests {
         static WATCH: SystemStateWatch = SystemStateWatch::new();
         let sender = SystemStateSender::new(&WATCH);
         let barrier = ClusterReadinessBarrier::new(sender);
-        barrier.mark_door_lock_ready(Some(1));
-        barrier.mark_ring_ready(Some(1));
+        barrier.mark_door_lock_ready(1);
+        barrier.mark_ring_ready(1);
         assert_eq!(sender.current_state(), Some(SystemState::Operational));
 
         // Act - repeated calls when already ready
-        barrier.mark_door_lock_ready(Some(1));
-        barrier.mark_ring_ready(Some(1));
+        barrier.mark_door_lock_ready(1);
+        barrier.mark_ring_ready(1);
 
         // Assert
         assert!(barrier.is_ready());
@@ -322,8 +318,8 @@ mod tests {
         static WATCH: SystemStateWatch = SystemStateWatch::new();
         let sender = SystemStateSender::new(&WATCH);
         let barrier = ClusterReadinessBarrier::new(sender);
-        barrier.mark_door_lock_ready(Some(1));
-        barrier.mark_ring_ready(Some(1));
+        barrier.mark_door_lock_ready(1);
+        barrier.mark_ring_ready(1);
         assert_eq!(sender.current_state(), Some(SystemState::Operational));
 
         // Act - reset clears readiness
@@ -336,14 +332,14 @@ mod tests {
         assert!(!barrier.is_ready());
 
         // Marking door lock only does not transition yet
-        barrier.mark_door_lock_ready(Some(1));
+        barrier.mark_door_lock_ready(1);
         assert_eq!(
             sender.current_state(),
             Some(SystemState::EcosystemConnecting)
         );
 
         // Marking ring completes readiness and re-arms Operational
-        barrier.mark_ring_ready(Some(1));
+        barrier.mark_ring_ready(1);
 
         // Assert
         assert!(barrier.is_ready());

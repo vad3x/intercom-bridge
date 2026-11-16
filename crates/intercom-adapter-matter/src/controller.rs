@@ -37,14 +37,14 @@ use rs_matter::BasicCommData;
 use rs_matter_embassy::matter::crypto::{default_crypto, Crypto};
 use rs_matter_embassy::matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT};
 use rs_matter_embassy::matter::utils::init::InitMaybeUninit;
-use rs_matter_embassy::stack::rand::reseeding_csprng;
-use rs_matter_embassy::stack::UserTask;
-use rs_matter_embassy::wireless::esp::EspWifiDriver;
-use rs_matter_embassy::wireless::{EmbassyWifi, EmbassyWifiMatterStack};
+use rs_matter_embassy::stack::{MatterStack, UserTask};
+use rs_matter_embassy::wireless::esp::EspWifiRadio;
+use rs_matter_embassy::wireless::{EmbassyWifi, EmbassyWifiNetwork};
 
 use intercom_core::events::SystemStateSender;
 use intercom_core::ports::{ClockSyncDriver, ResetScope, SystemResetDriver};
 
+use super::audio_doorbell::{IntercomWebRtcHooks, IntercomWebRtcProvCluster, MediaSessionPort};
 use super::{commissioning, ClusterReadinessBarrier, MatterCluster, BUMP_SIZE};
 
 // ============================================================================
@@ -171,6 +171,8 @@ pub struct MatterController<S: KvBlobStore, R: SystemResetDriver, H = EmptyHandl
     state_sender: SystemStateSender<'static>,
     readiness: &'static ClusterReadinessBarrier,
     reset: R,
+    stack: &'static MatterStack<'static, BUMP_SIZE, EmbassyWifiNetwork>,
+    hostname: &'static str,
 }
 
 impl<S: KvBlobStore, R: SystemResetDriver> MatterController<S, R> {
@@ -184,6 +186,62 @@ impl<S: KvBlobStore, R: SystemResetDriver> MatterController<S, R> {
         readiness: &'static ClusterReadinessBarrier,
         reset: R,
     ) -> Self {
+        let mac = esp_hal::efuse::base_mac_address();
+        let mac_bytes: [u8; 6] = mac.as_bytes().try_into().unwrap();
+
+        static IDENTITY_CELL: static_cell::StaticCell<commissioning::DeviceIdentity> =
+            static_cell::StaticCell::new();
+        let identity = &*IDENTITY_CELL.init(
+            commissioning::derive_intercom_identity(&mac_bytes)
+                .expect("valid Intercom identity prefixes"),
+        );
+
+        let comm_data = if let Some(ref custom_comm) = config.comm_data {
+            info!(
+                "Using custom commissioning parameters (discriminator: {})",
+                custom_comm.discriminator
+            );
+            custom_comm.clone()
+        } else {
+            let data = identity.comm_data();
+            info!(
+                "Generated commissioning parameters from MAC {}: passcode {}, discriminator {}",
+                mac, identity.passcode, identity.discriminator
+            );
+            data
+        };
+
+        let serial_no: &'static str = if let Some(custom_serial) = config.device_info.serial_no {
+            info!("Using custom serial number: {}", custom_serial);
+            custom_serial
+        } else {
+            let serial_no = identity.serial_str();
+            info!("Generated serial number from MAC {}: {}", mac, serial_no);
+            serial_no
+        };
+
+        let hostname: &'static str = if let Some(custom_hostname) = config.device_info.hostname {
+            info!("Using custom DHCP hostname: {}", custom_hostname);
+            custom_hostname
+        } else {
+            let hostname = identity.hostname_str();
+            info!("Generated DHCP hostname from MAC {}: {}", mac, hostname);
+            hostname
+        };
+
+        // Allocate device identity + stack in static cells (safe: new() is called once)
+        static DEV_DET_CELL: static_cell::StaticCell<BasicInfoConfig> =
+            static_cell::StaticCell::new();
+        let dev_det = DEV_DET_CELL.init(dev_det(&config.device_info, serial_no));
+
+        static STACK_CELL: static_cell::StaticCell<MatterStack<BUMP_SIZE, EmbassyWifiNetwork>> =
+            static_cell::StaticCell::new();
+        let stack = STACK_CELL.uninit().init_with(MatterStack::init(
+            dev_det,
+            rs_matter::DevCommData::Passcode(comm_data),
+            &TEST_DEV_ATT,
+        ));
+
         Self {
             handler: EmptyHandler,
             endpoint_metas: Vec::new(),
@@ -191,11 +249,20 @@ impl<S: KvBlobStore, R: SystemResetDriver> MatterController<S, R> {
             state_sender,
             readiness,
             reset,
+            stack,
+            hostname,
         }
     }
 }
 
 impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, R, H> {
+    /// Construct the Endpoint 1 WebRTC Transport Provider cluster bound to this controller's `Matter` instance.
+    pub fn webrtc_prov_cluster<'a, M: MediaSessionPort + 'static>(
+        &self,
+        hooks: IntercomWebRtcHooks<'a, M>,
+    ) -> IntercomWebRtcProvCluster<'a, M> {
+        IntercomWebRtcProvCluster::new(self.stack.matter(), hooks)
+    }
     /// Register a cluster handler.
     ///
     /// The endpoint ID is obtained from `C::ENDPOINT_ID` (the [`MatterCluster`] trait).
@@ -255,6 +322,8 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
             state_sender: self.state_sender,
             readiness: self.readiness,
             reset: self.reset,
+            stack: self.stack,
+            hostname: self.hostname,
         }
     }
 
@@ -285,77 +354,30 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
             endpoints: &endpoints,
         };
 
-        let mac = esp_hal::efuse::base_mac_address();
-        let mac_bytes: [u8; 6] = mac.as_bytes().try_into().unwrap();
+        let stack = self.stack;
+        let hostname = self.hostname;
 
-        static IDENTITY_CELL: static_cell::StaticCell<commissioning::DeviceIdentity> =
-            static_cell::StaticCell::new();
-        let identity = &*IDENTITY_CELL.init(
-            commissioning::derive_intercom_identity(&mac_bytes)
-                .expect("valid Intercom identity prefixes"),
-        );
-
-        let comm_data = if let Some(custom_comm) = config.comm_data {
-            info!(
-                "Using custom commissioning parameters (discriminator: {})",
-                custom_comm.discriminator
-            );
-            custom_comm
-        } else {
-            let data = identity.comm_data();
-            info!(
-                "Generated commissioning parameters from MAC {}: passcode {}, discriminator {}",
-                mac, identity.passcode, identity.discriminator
-            );
-            data
-        };
-
-        let serial_no: &'static str = if let Some(custom_serial) = config.device_info.serial_no {
-            info!("Using custom serial number: {}", custom_serial);
-            custom_serial
-        } else {
-            let serial_no = identity.serial_str();
-            info!("Generated serial number from MAC {}: {}", mac, serial_no);
-            serial_no
-        };
-
-        let hostname: &'static str = if let Some(custom_hostname) = config.device_info.hostname {
-            info!("Using custom DHCP hostname: {}", custom_hostname);
-            custom_hostname
-        } else {
-            let hostname = identity.hostname_str();
-            info!("Generated DHCP hostname from MAC {}: {}", mac, hostname);
-            hostname
-        };
-
-        // Allocate device identity + stack in static cells (safe: run() is called exactly once)
-        static DEV_DET_CELL: static_cell::StaticCell<BasicInfoConfig> =
-            static_cell::StaticCell::new();
-        let dev_det = DEV_DET_CELL.init(dev_det(&config.device_info, serial_no));
-
-        static STACK_CELL: static_cell::StaticCell<EmbassyWifiMatterStack<BUMP_SIZE, ()>> =
-            static_cell::StaticCell::new();
-        let stack = STACK_CELL.uninit().init_with(EmbassyWifiMatterStack::init(
-            dev_det,
-            comm_data,
-            &TEST_DEV_ATT,
-        ));
-
-        // Crypto: TRNG → reseeding CSPRNG → DAC signing key
+        // Crypto: TRNG → DAC signing key
+        // Keep _trng_source alive for Trng
         let _trng_source =
             esp_hal::rng::TrngSource::new(config.peripherals.rng, config.peripherals.adc1);
         let crypto = default_crypto(
-            reseeding_csprng(esp_hal::rng::Trng::try_new().unwrap(), 1000).unwrap(),
+            esp_hal::rng::Trng::try_new().expect("TrngSource initialized above"),
             DAC_PRIVKEY,
         );
-        let weak_rand = crypto.weak_rand().unwrap();
+        let weak_rand = crypto
+            .weak_rand()
+            .expect("crypto weak_rand must be available");
 
         // Chain root endpoint (Endpoint 0) system clusters (Descriptor, Basic Info, Admin Comm, NOC, ACL, etc.)
         let handler = ChainedHandler::new_with_matcher(
             |e, _| e == rs_matter::dm::endpoints::ROOT_ENDPOINT_ID,
-            Async(EmbassyWifiMatterStack::<0, ()>::root_handler(
+            Async(MatterStack::<0, EmbassyWifiNetwork>::root_handler(
+                stack.matter(),
                 &(),
-                crypto.weak_rand().unwrap(),
+                crypto
+                    .weak_rand()
+                    .expect("crypto weak_rand must be available"),
             )),
             self.handler,
         );
@@ -364,17 +386,7 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
         // If loading fails (e.g. TLV format mismatch after firmware upgrade),
         // reset the KV store and retry so the device doesn't boot-loop.
         let mut kv = config.store;
-        if let Err(e) = stack.startup(&crypto, &mut kv).await {
-            warn!(
-                "Failed to load persisted state ({:?}), resetting KV store",
-                e
-            );
-            stack
-                .reset(&crypto, (&node, &handler), &mut kv)
-                .await
-                .unwrap();
-            stack.startup(&crypto, &mut kv).await.unwrap();
-        }
+        NoInlineFuture(startup_or_reset(stack, &crypto, (&node, &handler), &mut kv)).await;
 
         // Wrap KV store as shared reference for concurrent access by Matter stack
         let kv = stack.matter().kv(kv);
@@ -401,7 +413,7 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
             clock_driver,
         };
         let wifi = EmbassyWifi::new(
-            EspWifiDriver::new(config.peripherals.wifi, config.peripherals.bt),
+            EspWifiRadio::new(config.peripherals.wifi, config.peripherals.bt),
             weak_rand,
             true,
             stack,
@@ -411,20 +423,107 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
         match commissioning::select_wireless_boot_mode(is_commissioned) {
             commissioning::WirelessBootMode::OperationalWifiOnly => {
                 info!("Commissioned fabric present -> starting Wi-Fi-only operational stack");
-                stack
-                    .run_wifi_only(wifi, &crypto, (node, handler), kv, &mut monitor)
-                    .await
-                    .expect("Matter operational Wi-Fi stack fatal error");
+                NoInlineFuture(run_wifi_oper_task(
+                    stack,
+                    wifi,
+                    &crypto,
+                    (node, handler),
+                    kv,
+                    &mut monitor,
+                ))
+                .await;
             }
             commissioning::WirelessBootMode::BleWifiCoex => {
                 info!("Uncommissioned -> starting concurrent BLE + Wi-Fi commissioning");
-                stack
-                    .run_coex(wifi, &crypto, (node, handler), kv, &mut monitor)
-                    .await
-                    .expect("Matter coex stack fatal error");
+                NoInlineFuture(run_wifi_coex_task(
+                    stack,
+                    wifi,
+                    &crypto,
+                    (node, handler),
+                    kv,
+                    &mut monitor,
+                ))
+                .await;
             }
         }
     }
+}
+
+struct NoInlineFuture<F>(F);
+
+impl<F: core::future::Future> core::future::Future for NoInlineFuture<F> {
+    type Output = F::Output;
+
+    #[inline(never)]
+    fn poll(
+        self: core::pin::Pin<&mut Self>,
+        cx: &mut core::task::Context<'_>,
+    ) -> core::task::Poll<Self::Output> {
+        // SAFETY: structural projection to the pinned inner future `F`.
+        let inner = unsafe { self.map_unchecked_mut(|this| &mut this.0) };
+        inner.poll(cx)
+    }
+}
+
+#[inline(never)]
+async fn startup_or_reset<C, H, S>(
+    stack: &MatterStack<'_, BUMP_SIZE, EmbassyWifiNetwork>,
+    crypto: &C,
+    node_handler: (&Node<'_>, &H),
+    kv: &mut S,
+) where
+    C: rs_matter::crypto::Crypto,
+    H: AsyncHandler,
+    S: KvBlobStore,
+{
+    if let Err(e) = NoInlineFuture(stack.startup(crypto, &mut *kv)).await {
+        warn!(
+            "Failed to load persisted state ({:?}), resetting KV store",
+            e
+        );
+        NoInlineFuture(stack.reset(crypto, node_handler, &mut *kv))
+            .await
+            .unwrap();
+        NoInlineFuture(stack.startup(crypto, kv)).await.unwrap();
+    }
+}
+
+#[inline(never)]
+async fn run_wifi_oper_task<'a, C, H, S, const KB: usize, M>(
+    stack: &'a MatterStack<'a, BUMP_SIZE, EmbassyWifiNetwork>,
+    wifi: EmbassyWifi<'a, EspWifiRadio<'a>, C::WeakRand<'a>>,
+    crypto: &'a C,
+    handler: (Node<'a>, H),
+    kv: rs_matter::dm::persist::SharedKvBlobStore<'a, S, KB>,
+    monitor: M,
+) where
+    C: rs_matter::crypto::Crypto,
+    H: AsyncHandler,
+    S: KvBlobStore,
+    M: rs_matter_embassy::stack::UserTask,
+{
+    NoInlineFuture(stack.run_wifi_oper(wifi, crypto, handler, kv, monitor))
+        .await
+        .expect("Matter operational Wi-Fi stack fatal error");
+}
+
+#[inline(never)]
+async fn run_wifi_coex_task<'a, C, H, S, const KB: usize, M>(
+    stack: &'a MatterStack<'a, BUMP_SIZE, EmbassyWifiNetwork>,
+    wifi: EmbassyWifi<'a, EspWifiRadio<'a>, C::WeakRand<'a>>,
+    crypto: &'a C,
+    handler: (Node<'a>, H),
+    kv: rs_matter::dm::persist::SharedKvBlobStore<'a, S, KB>,
+    monitor: M,
+) where
+    C: rs_matter::crypto::Crypto,
+    H: AsyncHandler,
+    S: KvBlobStore,
+    M: rs_matter_embassy::stack::UserTask,
+{
+    NoInlineFuture(stack.run_wifi(wifi, crypto, handler, kv, monitor))
+        .await
+        .expect("Matter coex stack fatal error");
 }
 
 // ============================================================================
@@ -454,7 +553,7 @@ where
 {
     async fn run<S, N>(&mut self, _net_stack: S, netif: N) -> Result<(), rs_matter::error::Error>
     where
-        S: rs_matter_embassy::stack::nal::NetStack,
+        S: rs_matter_embassy::stack::net::NetStack,
         N: rs_matter::dm::clusters::gen_diag::NetifDiag + rs_matter::dm::networks::NetChangeNotif,
     {
         let fabric_policy = FabricPolicy::default();
@@ -523,7 +622,7 @@ fn dev_det(info: &DeviceInfo, serial_no: &'static str) -> BasicInfoConfig<'stati
         vendor_name: info.vendor_name,
         product_name: info.product_name,
         device_name: info.device_name,
-        max_subscription_max_interval_secs: Some(crate::config::MAX_SUBSCRIPTION_INTERVAL_SECS),
+        max_subscription_max_interval_secs: crate::config::MAX_SUBSCRIPTION_INTERVAL_SECS,
         ..BasicInfoConfig::new()
     };
     basic_info.tcp_supported = true;

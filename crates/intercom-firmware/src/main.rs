@@ -97,8 +97,8 @@ use intercom_adapter_gpio::ring::{GpioRingConfig, GpioRingDriver};
 #[cfg(target_arch = "riscv32")]
 use intercom_adapter_matter::{
     ClusterReadinessBarrier, DeviceInfo, IntercomAudioAvCluster, IntercomChime, IntercomDoorLock,
-    IntercomDoorLockConfig, IntercomDoorbellSwitch, IntercomWebRtcHooks, IntercomWebRtcProvCluster,
-    MatterAccessControlDriver, MatterController, MatterControllerConfig, MatterPeripherals,
+    IntercomDoorLockConfig, IntercomDoorbellSwitch, IntercomWebRtcHooks, MatterAccessControlDriver,
+    MatterController, MatterControllerConfig, MatterPeripherals,
 };
 
 #[cfg(target_arch = "riscv32")]
@@ -281,14 +281,10 @@ async fn main(_spawner: Spawner) {
     {
         let stream_id = audio_av_cluster
             .allocate_synthetic_audio_stream()
+            .await
             .expect("allocate DevKit synthetic audio stream");
         info!("DevKit synthetic audio stream allocated: {}", stream_id);
     }
-    let webrtc_prov_cluster = IntercomWebRtcProvCluster::new(IntercomWebRtcHooks::new(
-        access_handle,
-        &audio_av_cluster,
-        &webrtc_signaling,
-    ));
     let chime_cluster = IntercomChime::new();
     let door_lock = IntercomDoorLock::new(IntercomDoorLockConfig {
         access: access_handle,
@@ -325,12 +321,18 @@ async fn main(_spawner: Spawner) {
         state_sender,
         readiness,
         FirmwareResetDriver,
-    )
-    .register(&doorbell_switch)
-    .register(&audio_av_cluster)
-    .register(&webrtc_prov_cluster)
-    .register(&chime_cluster)
-    .register(&door_lock);
+    );
+    let webrtc_prov_cluster = matter.webrtc_prov_cluster(IntercomWebRtcHooks::new(
+        access_handle,
+        &audio_av_cluster,
+        &webrtc_signaling,
+    ));
+    let matter = matter
+        .register(&doorbell_switch)
+        .register(&audio_av_cluster)
+        .register(&webrtc_prov_cluster)
+        .register(&chime_cluster)
+        .register(&door_lock);
 
     // ========================================================================
     // Create GPIO + access control drivers → wire into App

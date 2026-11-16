@@ -15,8 +15,8 @@ use intercom_core::domain::policy::{
 use intercom_core::ports::inbound::IntercomControllerHandle;
 use log::{info, warn};
 use rs_matter::dm::clusters::app::audio_av_stream::{
-    AllocatedAudioStream, AudioAvStreamHandler, AudioAvStreamHooks, AudioCodecEnum,
-    AudioEndpointCapabilities, HandlerAsyncAdaptor as AudioAvAdaptor,
+    AudioAvStreamConfig, AudioAvStreamHandler, AudioAvStreamHooks, AudioCodecEnum, AudioStream,
+    AudioStreamParams, CamAvError, HandlerAsyncAdaptor as AudioAvAdaptor,
 };
 use rs_matter::dm::clusters::app::webrtc_prov::{
     AnswerOutcome, IceCandidateSink, OfferParams, OutboundWork, SolicitOutcome, WebRtcError,
@@ -33,6 +33,7 @@ use rs_matter::dm::{
 };
 use rs_matter::error::Error;
 use rs_matter::tlv::TLVArray;
+use rs_matter::Matter;
 
 use crate::config::AUDIO_DOORBELL_ENDPOINT_ID;
 use crate::MatterCluster;
@@ -115,100 +116,86 @@ pub const fn volume_percent_to_tx_gain(muted: bool, level: u8) -> TxDacGain {
 /// Bridges `AudioAvStreamHandler` volume/mute attributes to `IntercomControllerHandle::set_audio_gain`.
 pub struct IntercomAudioHooks<'a> {
     intercom: IntercomControllerHandle<'a>,
-    last_allocated_stream_id: AtomicU16,
 }
 
 impl<'a> IntercomAudioHooks<'a> {
     pub const fn new(intercom: IntercomControllerHandle<'a>) -> Self {
-        Self {
-            intercom,
-            last_allocated_stream_id: AtomicU16::new(0),
-        }
+        Self { intercom }
     }
 }
 
 impl AudioAvStreamHooks for IntercomAudioHooks<'_> {
-    fn on_audio_allocated(&self, stream: &AllocatedAudioStream) -> Result<(), Error> {
+    async fn on_audio_allocated(&self, stream: &AudioStream) -> Result<(), CamAvError> {
         info!(
             "AudioAV: on_audio_allocated stream_id={}, codec={:?}, rate={}, bitrate={}",
             stream.audio_stream_id, stream.audio_codec, stream.sample_rate, stream.bit_rate
         );
-        self.last_allocated_stream_id
-            .store(stream.audio_stream_id, Ordering::Release);
         Ok(())
     }
 
-    fn on_audio_deallocated(&self, stream_id: u16) {
+    async fn on_audio_deallocated(&self, stream_id: u16) -> Result<(), CamAvError> {
         info!("AudioAV: on_audio_deallocated stream_id={}", stream_id);
-        let _ = self.last_allocated_stream_id.compare_exchange(
-            stream_id,
-            0,
-            Ordering::AcqRel,
-            Ordering::Relaxed,
-        );
+        Ok(())
     }
 
-    fn on_volume_or_mute_changed(
+    async fn on_volume_or_mute_changed(
         &self,
         mic_muted: bool,
         mic_volume_level: u8,
         speaker_muted: bool,
         speaker_volume_level: u8,
-    ) {
+    ) -> Result<(), CamAvError> {
         let rx = volume_percent_to_rx_gain(mic_muted, mic_volume_level);
         let tx = volume_percent_to_tx_gain(speaker_muted, speaker_volume_level);
         self.intercom.set_audio_gain(rx, tx);
+        Ok(())
     }
 }
 
 /// Endpoint 1 `CameraAVStreamManagement` (`0x0551`) cluster wrapper.
 pub struct IntercomAudioAvCluster<'a>(
-    AudioAvAdaptor<AudioAvStreamHandler<IntercomAudioHooks<'a>, 2>>,
+    AudioAvAdaptor<AudioAvStreamHandler<'a, IntercomAudioHooks<'a>, 2>>,
 );
 
 impl<'a> IntercomAudioAvCluster<'a> {
     pub const CLUSTER: Cluster<'static> =
-        AudioAvStreamHandler::<IntercomAudioHooks<'static>, 2>::CLUSTER;
+        AudioAvStreamHandler::<'static, IntercomAudioHooks<'static>, 2>::CLUSTER;
 
     pub const fn new(intercom: IntercomControllerHandle<'a>) -> Self {
         Self(
             AudioAvStreamHandler::new(
                 Dataver::new(30),
-                AudioEndpointCapabilities::opus_16khz_mono(),
+                AUDIO_DOORBELL_ENDPOINT_ID,
+                AudioAvStreamConfig::opus_16khz_mono(),
                 IntercomAudioHooks::new(intercom),
             )
             .adapt(),
         )
     }
 
-    pub const fn handler(&self) -> &AudioAvStreamHandler<IntercomAudioHooks<'a>, 2> {
+    pub const fn handler(&self) -> &AudioAvStreamHandler<'a, IntercomAudioHooks<'a>, 2> {
         &self.0 .0
     }
 
     /// Allocate the synthetic 16 kHz Opus stream used by the DevKit's tone source.
-    pub fn allocate_synthetic_audio_stream(&self) -> Result<u16, Error> {
-        self.handler().allocate_stream(
-            StreamUsageEnum::LiveView,
-            AudioCodecEnum::OPUS,
-            1,
-            16_000,
-            24_000,
-            16,
-        )
+    pub async fn allocate_synthetic_audio_stream(&self) -> Result<u16, Error> {
+        self.handler()
+            .allocate_stream(&AudioStreamParams::new(
+                StreamUsageEnum::LiveView,
+                AudioCodecEnum::OPUS,
+                1,
+                16_000,
+                24_000,
+                16,
+            ))
+            .await
     }
 
     pub fn last_allocated_stream(&self) -> Option<u16> {
-        let id = self
-            .0
-             .0
-            .hooks()
-            .last_allocated_stream_id
-            .load(Ordering::Acquire);
-        if id != 0 {
-            Some(id)
-        } else {
-            None
-        }
+        self.handler()
+            .audio_streams()
+            .last()
+            .map(|s| s.audio_stream_id)
     }
 }
 
@@ -608,20 +595,30 @@ impl<M: MediaSessionPort> WebRtcHooks for IntercomWebRtcHooks<'_, M> {
 /// Endpoint 1 `WebRTCTransportProvider` (`0x0553`) cluster wrapper advertising client `0x0554`.
 pub struct IntercomWebRtcProvCluster<'a, M: MediaSessionPort>(
     web_rtc_transport_provider::HandlerAsyncAdaptor<
-        WebRtcProvHandler<IntercomWebRtcHooks<'a, M>, 3, MAX_SDP_BYTES, 1024, 128, 4>,
+        WebRtcProvHandler<'a, IntercomWebRtcHooks<'a, M>, 3, MAX_SDP_BYTES, 1024, 128, 4>,
     >,
 );
 
-impl<'a, M: MediaSessionPort> IntercomWebRtcProvCluster<'a, M> {
-    pub const CLUSTER: Cluster<'static> =
-        WebRtcProvHandler::<IntercomWebRtcHooks<'a, M>, 3, MAX_SDP_BYTES, 1024, 128, 4>::CLUSTER;
+impl<'a, M: MediaSessionPort + 'static> IntercomWebRtcProvCluster<'a, M> {
+    pub const CLUSTER: Cluster<'static> = WebRtcProvHandler::<
+        'static,
+        IntercomWebRtcHooks<'static, M>,
+        3,
+        MAX_SDP_BYTES,
+        1024,
+        128,
+        4,
+    >::CLUSTER;
 
-    pub const fn new(hooks: IntercomWebRtcHooks<'a, M>) -> Self {
-        Self(WebRtcProvHandler::new(Dataver::new(40), AUDIO_DOORBELL_ENDPOINT_ID, hooks).adapt())
+    pub const fn new(matter: &'a Matter<'a>, hooks: IntercomWebRtcHooks<'a, M>) -> Self {
+        Self(
+            WebRtcProvHandler::new(Dataver::new(40), matter, AUDIO_DOORBELL_ENDPOINT_ID, hooks)
+                .adapt(),
+        )
     }
 }
 
-impl<M: MediaSessionPort> MatterCluster for IntercomWebRtcProvCluster<'_, M> {
+impl<M: MediaSessionPort + 'static> MatterCluster for IntercomWebRtcProvCluster<'_, M> {
     const ENDPOINT_ID: u16 = AUDIO_DOORBELL_ENDPOINT_ID;
     const CLUSTER_DEF: Cluster<'static> = Self::CLUSTER;
     const DEVICE_TYPE: DeviceType = DEV_TYPE_AUDIO_DOORBELL;
@@ -835,8 +832,7 @@ mod tests {
         let commands = CommandChannel::new();
         let handle = IntercomControllerHandle::new(commands.sender());
         let audio = IntercomAudioAvCluster::new(handle);
-        let stream_id = audio
-            .allocate_synthetic_audio_stream()
+        let stream_id = block_on(audio.allocate_synthetic_audio_stream())
             .expect("allocate synthetic audio stream");
         let media = MediaSessionPortMock::new();
         let hooks = IntercomWebRtcHooks::new(handle, &audio, &media);

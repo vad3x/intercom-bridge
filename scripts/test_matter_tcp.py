@@ -158,10 +158,12 @@ def read_device_logs(ip: str, timeout: float) -> set[str]:
 
 def verify_accepted(ip: str, port: int, previous_logs: set[str], timeout: float) -> None:
     deadline = time.monotonic() + timeout
-    marker = f"Matter TCP accepted peer "
     while time.monotonic() < deadline:
         for line in read_device_logs(ip, min(timeout, 2.0)) - previous_logs:
-            if marker in line and line.rstrip().endswith(f":{port}"):
+            stripped = line.rstrip()
+            if ("Matter TCP accepted peer " in line and stripped.endswith(f":{port}")) or (
+                ">>RCV TCP " in line and f":{port} " in line
+            ):
                 return
         time.sleep(0.1)
     raise RuntimeError(f"Device did not log acceptance of TCP peer port {port}")

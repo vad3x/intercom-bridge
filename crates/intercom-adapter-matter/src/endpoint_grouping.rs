@@ -66,13 +66,12 @@ pub(crate) fn group_endpoint_clusters(
 mod tests {
     use super::*;
     use rs_matter::dm::clusters::app::audio_av_stream::{
-        AllocatedAudioStream, AudioAvStreamHandler, AudioAvStreamHooks,
+        AudioAvStreamHandler, AudioAvStreamHooks, AudioStream, CamAvError,
     };
     use rs_matter::dm::clusters::decl::{
         chime, door_lock, switch, web_rtc_transport_provider, web_rtc_transport_requestor,
     };
     use rs_matter::dm::devices::DEV_TYPE_AUDIO_DOORBELL;
-    use rs_matter::error::Error;
 
     const DEV_TYPE_DOOR_LOCK: DeviceType = DeviceType {
         dtype: 0x000A,
@@ -81,11 +80,21 @@ mod tests {
 
     struct DummyAudioHooksMock;
     impl AudioAvStreamHooks for DummyAudioHooksMock {
-        fn on_audio_allocated(&self, _s: &AllocatedAudioStream) -> Result<(), Error> {
+        async fn on_audio_allocated(&self, _s: &AudioStream) -> Result<(), CamAvError> {
             Ok(())
         }
-        fn on_audio_deallocated(&self, _id: u16) {}
-        fn on_volume_or_mute_changed(&self, _: bool, _: u8, _: bool, _: u8) {}
+        async fn on_audio_deallocated(&self, _id: u16) -> Result<(), CamAvError> {
+            Ok(())
+        }
+        async fn on_volume_or_mute_changed(
+            &self,
+            _: bool,
+            _: u8,
+            _: bool,
+            _: u8,
+        ) -> Result<(), CamAvError> {
+            Ok(())
+        }
     }
 
     #[test]

@@ -80,11 +80,7 @@ impl MatterCluster for IntercomDoorbellSwitch {
 
 impl AsyncHandler for IntercomDoorbellSwitch {
     async fn read(&self, ctx: impl ReadContext, reply: impl ReadReply) -> Result<(), Error> {
-        let fab_idx = ctx
-            .accessor()
-            .ok()
-            .and_then(|a| a.fab_idx().ok().map(|idx| idx.get()));
-        self.readiness.mark_ring_ready(fab_idx);
+        self.readiness.mark_ring_ready(ctx.attr().fab_idx);
         if let Some(writer) = reply.with_dataver(self.dataver.get())? {
             if ctx.attr().is_system() {
                 Self::CLUSTER.read(ctx.attr(), writer)

@@ -47,7 +47,8 @@ pub use rs_matter::dm::clusters::app::webrtc_prov::WebRtcError;
 /// Sized for Endpoint 0 + Endpoint 1 (`Switch`, `AudioAvStreamHandler`,
 /// `WebRtcProvHandler<..., 3, 2048, 1024, 128, 4>`, `Chime`) + Endpoint 2 (`DoorLock`),
 /// multi-fabric CASE sessions, event reports, and mDNS service records.
-const BUMP_SIZE: usize = 72_000;
+/// `TcpBuffers` are heap-allocated outside the bump allocator in `rs-matter-embassy`.
+const BUMP_SIZE: usize = 52_000;
 
 // ============================================================================
 // MatterCluster trait

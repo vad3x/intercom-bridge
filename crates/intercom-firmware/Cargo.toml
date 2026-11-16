@@ -33,7 +33,7 @@ edf-ota = { workspace = true }
 edf-logger = { workspace = true }
 intercom-adapter-http = { path = "../intercom-adapter-http" }
 edf-matter = { workspace = true }
-rs-matter = { workspace = true }
+rs-matter = { workspace = true, features = ["large-buffers-4096"] }
 log = { workspace = true }
 embassy-executor = { workspace = true }
 embassy-futures = { workspace = true }
@@ -53,7 +53,7 @@ esp-alloc = { workspace = true }
 esp-println = { workspace = true, features = ["log-04", "esp32c6"] }
 esp-bootloader-esp-idf = { workspace = true, features = ["log-04", "esp32c6"] }
 esp-metadata-generated = { workspace = true, features = ["esp32c6"] }
-rs-matter-embassy = { path = "../../../rs-matter-embassy/rs-matter-embassy", default-features = false, features = ["esp", "trouble", "embassy-net", "log", "rustcrypto", "kv-blob-store-8192", "mld-v1-compat", "nd-learn-from-frames"] }
+rs-matter-embassy = { path = "../../../../rs-matter-embassy/review_matter_tcp_rust/rs-matter-embassy", default-features = false, features = ["esp", "trouble", "embassy-net", "log", "rustcrypto", "kv-blob-store-8192", "mld-v1-compat", "nd-learn-from-frames", "max-im-buffers-4"] }
 esp-wifi-sys-esp32c6 = { workspace = true }
 esp-hal-smartled = { workspace = true, features = ["esp32c6"], optional = true }
 smart-leds = { workspace = true, optional = true }
