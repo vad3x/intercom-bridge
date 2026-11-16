@@ -624,7 +624,5 @@ fn dev_det(info: &DeviceInfo, serial_no: &'static str) -> BasicInfoConfig<'stati
         device_name: info.device_name,
         max_subscription_max_interval_secs: crate::config::MAX_SUBSCRIPTION_INTERVAL_SECS,
         ..BasicInfoConfig::new()
-    };
-    basic_info.tcp_supported = true;
-    basic_info
+    }
 }
