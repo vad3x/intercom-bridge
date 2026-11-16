@@ -610,7 +610,7 @@ where
 
 /// Build device identity for the Basic Information cluster.
 fn dev_det(info: &DeviceInfo, serial_no: &'static str) -> BasicInfoConfig<'static> {
-    let mut basic_info = BasicInfoConfig {
+    BasicInfoConfig {
         vid: VID,
         pid: PID,
         hw_ver: info.hw_ver,
