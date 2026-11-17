@@ -3868,6 +3868,7 @@ dependencies = [
 [[package]]
 name = "rs-matter"
 version = "0.4.1"
+source = "git+https://github.com/project-chip/rs-matter?branch=main#c86233d310902503995738b3137884a3a7dc1764"
 dependencies = [
  "bitflags 2.13.2",
  "defmt",
@@ -3896,6 +3897,7 @@ dependencies = [
 [[package]]
 name = "rs-matter-bdx"
 version = "0.4.1"
+source = "git+https://github.com/project-chip/rs-matter?branch=main#c86233d310902503995738b3137884a3a7dc1764"
 dependencies = [
  "defmt",
  "log",
@@ -3909,6 +3911,7 @@ dependencies = [
 [[package]]
 name = "rs-matter-cert"
 version = "0.4.1"
+source = "git+https://github.com/project-chip/rs-matter?branch=main#c86233d310902503995738b3137884a3a7dc1764"
 dependencies = [
  "defmt",
  "der",
@@ -3925,6 +3928,7 @@ dependencies = [
 [[package]]
 name = "rs-matter-codegen"
 version = "0.4.1"
+source = "git+https://github.com/project-chip/rs-matter?branch=main#c86233d310902503995738b3137884a3a7dc1764"
 dependencies = [
  "convert_case 0.6.0",
  "miette",
@@ -3943,6 +3947,7 @@ dependencies = [
 [[package]]
 name = "rs-matter-crypto"
 version = "0.4.1"
+source = "git+https://github.com/project-chip/rs-matter?branch=main#c86233d310902503995738b3137884a3a7dc1764"
 dependencies = [
  "aes 0.9.3",
  "ccm 0.6.1",
@@ -3972,6 +3977,7 @@ dependencies = [
 [[package]]
 name = "rs-matter-dm"
 version = "0.4.1"
+source = "git+https://github.com/project-chip/rs-matter?branch=main#c86233d310902503995738b3137884a3a7dc1764"
 dependencies = [
  "async-channel",
  "bitflags 2.13.2",
@@ -4000,6 +4006,7 @@ dependencies = [
 [[package]]
 name = "rs-matter-dm-clusters"
 version = "0.4.1"
+source = "git+https://github.com/project-chip/rs-matter?branch=main#c86233d310902503995738b3137884a3a7dc1764"
 dependencies = [
  "bitflags 2.13.2",
  "defmt",
@@ -4014,6 +4021,7 @@ dependencies = [
 [[package]]
 name = "rs-matter-dm-core"
 version = "0.4.1"
+source = "git+https://github.com/project-chip/rs-matter?branch=main#c86233d310902503995738b3137884a3a7dc1764"
 dependencies = [
  "cfg-if",
  "defmt",
@@ -4061,6 +4069,7 @@ dependencies = [
 [[package]]
 name = "rs-matter-im"
 version = "0.4.1"
+source = "git+https://github.com/project-chip/rs-matter?branch=main#c86233d310902503995738b3137884a3a7dc1764"
 dependencies = [
  "defmt",
  "log",
@@ -4077,6 +4086,7 @@ dependencies = [
 [[package]]
 name = "rs-matter-im-core"
 version = "0.4.1"
+source = "git+https://github.com/project-chip/rs-matter?branch=main#c86233d310902503995738b3137884a3a7dc1764"
 dependencies = [
  "defmt",
  "log",
@@ -4091,6 +4101,7 @@ dependencies = [
 [[package]]
 name = "rs-matter-macros"
 version = "0.4.1"
+source = "git+https://github.com/project-chip/rs-matter?branch=main#c86233d310902503995738b3137884a3a7dc1764"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -4101,6 +4112,7 @@ dependencies = [
 [[package]]
 name = "rs-matter-node"
 version = "0.4.1"
+source = "git+https://github.com/project-chip/rs-matter?branch=main#c86233d310902503995738b3137884a3a7dc1764"
 dependencies = [
  "defmt",
  "log",
@@ -4120,6 +4132,7 @@ dependencies = [
 [[package]]
 name = "rs-matter-node-core"
 version = "0.4.1"
+source = "git+https://github.com/project-chip/rs-matter?branch=main#c86233d310902503995738b3137884a3a7dc1764"
 dependencies = [
  "bitflags 2.13.2",
  "cfg-if",
@@ -4140,6 +4153,7 @@ dependencies = [
 [[package]]
 name = "rs-matter-onboard"
 version = "0.4.1"
+source = "git+https://github.com/project-chip/rs-matter?branch=main#c86233d310902503995738b3137884a3a7dc1764"
 dependencies = [
  "defmt",
  "log",
@@ -4157,6 +4171,7 @@ dependencies = [
 [[package]]
 name = "rs-matter-pairing"
 version = "0.4.1"
+source = "git+https://github.com/project-chip/rs-matter?branch=main#c86233d310902503995738b3137884a3a7dc1764"
 dependencies = [
  "defmt",
  "log",
@@ -4170,6 +4185,7 @@ dependencies = [
 [[package]]
 name = "rs-matter-respond"
 version = "0.4.1"
+source = "git+https://github.com/project-chip/rs-matter?branch=main#c86233d310902503995738b3137884a3a7dc1764"
 dependencies = [
  "defmt",
  "log",
@@ -4185,6 +4201,7 @@ dependencies = [
 [[package]]
 name = "rs-matter-sc"
 version = "0.4.1"
+source = "git+https://github.com/project-chip/rs-matter?branch=main#c86233d310902503995738b3137884a3a7dc1764"
 dependencies = [
  "defmt",
  "log",
@@ -4204,6 +4221,7 @@ dependencies = [
 [[package]]
 name = "rs-matter-stack"
 version = "0.4.1"
+source = "git+https://github.com/project-chip/rs-matter?branch=main#c86233d310902503995738b3137884a3a7dc1764"
 dependencies = [
  "cfg-if",
  "defmt",
@@ -4225,6 +4243,7 @@ dependencies = [
 [[package]]
 name = "rs-matter-tlv"
 version = "0.4.1"
+source = "git+https://github.com/project-chip/rs-matter?branch=main#c86233d310902503995738b3137884a3a7dc1764"
 dependencies = [
  "defmt",
  "log",
@@ -4239,6 +4258,7 @@ dependencies = [
 [[package]]
 name = "rs-matter-transport"
 version = "0.4.1"
+source = "git+https://github.com/project-chip/rs-matter?branch=main#c86233d310902503995738b3137884a3a7dc1764"
 dependencies = [
  "async-channel",
  "bitflags 2.13.2",
@@ -4263,6 +4283,7 @@ dependencies = [
 [[package]]
 name = "rs-matter-utils"
 version = "0.4.1"
+source = "git+https://github.com/project-chip/rs-matter?branch=main#c86233d310902503995738b3137884a3a7dc1764"
 dependencies = [
  "bitflags 2.13.2",
  "critical-section",

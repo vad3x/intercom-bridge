@@ -66,7 +66,7 @@ picoserve = { version = "=0.20.1", default-features = false, features = ["embass
 tinyrlibc = { version = "=0.5.1", default-features = false }
 
 [patch.crates-io]
-rs-matter = { path = "../../rs-matter/review_matter_tcp_rust/rs-matter" }
+rs-matter = { git = "https://github.com/project-chip/rs-matter", branch = "main" }
 
 [profile.dev]
 opt-level = "z"
