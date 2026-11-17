@@ -2,22 +2,23 @@
 
 ## 1. Dual-Target PlatformDriver Trait & Feature Architecture
 
-- [ ] 1.1 Configure mutually exclusive `esp32c6` (default) and `esp32s31` features in `crates/intercom-firmware/Cargo.toml` and verify default resolution
-- [ ] 1.2 Define formal `PlatformDriver` trait in `crates/intercom-firmware/src/platform/mod.rs` and implement `C6Platform`, `S31Platform`, and `MockPlatform`, verifying host compilation on macOS
+- [ ] 1.1 Configure feature bubbling across `Cargo.toml`, `intercom-adapter-gpio`, `intercom-adapter-matter`, and `intercom-firmware` (`esp32c6` default vs `esp32s31`), verifying clean dependency resolution
+- [ ] 1.2 Define formal `PlatformDriver` trait and `PlatformDrivers` bundle in `crates/intercom-firmware/src/platform/mod.rs`, implementing `C6Platform`, `S31Platform`, and `MockPlatform`
 - [ ] 1.3 Centralize S31 GPIO pin declarations in `src/platform/s31.rs` for easy future PCB trace alignment, verifying no scattered pin numbers across adapter crates
 - [ ] 1.4 Refactor `crates/intercom-firmware/src/main.rs` to interact strictly via `ActivePlatform: PlatformDriver` with zero target-specific `#[cfg]` checks in `main()`
 
-## 2. Multi-Core Architecture & Embassy IPC Abstractions (S31)
+## 2. Media Types & Multi-Core IPC Abstractions
 
-- [ ] 2.1 Define typed audio frame structs (`OpusPacket`, `PcmFrame`) and configure bounded `embassy_sync::channel::Channel<CriticalSectionRawMutex, _, _>` in `crates/intercom-core`, verifying with host unit tests
-- [ ] 2.2 Implement Core 1 (`AppCpu`) Embassy executor and async audio worker task in `S31Platform`, verifying compile check on RISC-V target
-- [ ] 2.3 Implement half-duplex direction switching interlock between terminal 3 (listen) and terminal 2 (talk) on Core 1, verifying click-free mute/unmute ramps
+- [ ] 2.1 Define `OpusPacket` and `OpusChannel` in `crates/intercom-media` with bounded capacity, verifying host unit tests pass
+- [ ] 2.2 Implement 10 ms linear ramp helpers (`apply_ramp_in`, `apply_ramp_out`) and 30 ms relay settling in `crates/intercom-media`, verifying sample fade accuracy in tests
+- [ ] 2.3 Implement Core 1 (`AppCpu`) Embassy executor and async audio worker task in `S31Platform`, verifying clean compilation under RISC-V target
+- [ ] 2.4 Connect Core 1 audio worker to shared `CALL_STATE_WATCH` and `SYSTEM_STATE_WATCH` receivers directly, verifying cross-core state propagation
 
-## 3. Tiered PSRAM Memory Allocation & Fail-Fast Safety (S31)
+## 3. PSRAM Jitter Buffer & Tiered Memory Allocation
 
-- [ ] 3.1 Configure `esp-alloc` external heap allocator for DDR Octal PSRAM under `S31Platform` with fail-fast boot-time panic check, verifying initialization telemetry
-- [ ] 3.2 Update WebRTC jitter buffers and DTLS scratchpads to allocate dynamically from the PSRAM heap on S31, verifying internal SRAM remains >32 KiB
-- [ ] 3.3 Implement memory telemetry reporting in `/api/status` distinguishing internal SRAM vs PSRAM free heap, verifying output via HTTP curl test
+- [ ] 3.1 Implement sequence-ordered `JitterBuffer<N>` with Opus Packet Loss Concealment (PLC) in `crates/intercom-adapter-webrtc`, verifying out-of-order packet reordering in host unit tests
+- [ ] 3.2 Configure `esp-alloc` external heap allocator for DDR Octal PSRAM under `S31Platform` with fail-fast boot-time panic check, verifying initialization telemetry
+- [ ] 3.3 Update `/api/status` schema and `HardwareInfoDriver` to report structured `"memory"` object with internal and PSRAM sub-maps, verifying output via HTTP curl and integration tests
 
 ## 4. Audio Engine & Sustained Streaming Benchmarking
 

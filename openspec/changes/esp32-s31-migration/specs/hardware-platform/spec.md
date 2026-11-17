@@ -27,6 +27,13 @@ When compiled for the ESP32-S31, the system memory allocator SHALL allocate all 
 - **WHEN** the firmware boots with the esp32s31 feature enabled
 - **THEN** it SHALL verify external PSRAM availability before task scheduling, panicking immediately with diagnostic telemetry if PSRAM is absent or uninitialized
 
+### Requirement: Structured Memory Telemetry Schema
+The diagnostics API endpoint (/api/status) SHALL report partitioned memory usage using a structured memory object with internal SRAM and PSRAM sub-maps.
+
+#### Scenario: Reading memory diagnostics via REST API
+- **WHEN** a client issues a GET request to /api/status on an operational bridge
+- **THEN** the response payload SHALL include a memory object containing internal free and total byte counts, and psram byte counts when running on S31 or null when running on C6
+
 ### Requirement: Universal Dual-Bank A/B OTA Support
 The platform flash configuration SHALL provide symmetric 3.4 MB dual-bank application slots (ota_0 and ota_1) across all development and production targets, eliminating single-bank OTA restrictions.
 
