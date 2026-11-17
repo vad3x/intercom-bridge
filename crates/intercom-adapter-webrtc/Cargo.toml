@@ -8,6 +8,8 @@ description = "Bare-metal no_std fixed-point Opus 16 kHz SILK and single-port We
 [features]
 default = []
 matter-port = ["dep:intercom-adapter-matter"]
+esp32c6 = ["intercom-adapter-matter?/esp32c6"]
+esp32s31 = ["intercom-adapter-matter?/esp32s31"]
 
 [dependencies]
 aes = { version = "0.8", default-features = false }
@@ -21,7 +23,7 @@ embassy-time = { workspace = true }
 heapless = { workspace = true }
 hmac = { version = "0.12", default-features = false }
 intercom-core = { path = "../intercom-core" }
-intercom-adapter-matter = { path = "../intercom-adapter-matter", optional = true }
+intercom-adapter-matter = { path = "../intercom-adapter-matter", default-features = false, optional = true }
 intercom-media = { path = "../intercom-media" }
 log = { workspace = true }
 portable-atomic = { workspace = true }

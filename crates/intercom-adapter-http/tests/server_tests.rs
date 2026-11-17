@@ -8,7 +8,9 @@ use edf_core::ports::ota::{OtaDriverError, OtaFlashDriver, OtaStream};
 use flate2::read::GzDecoder;
 use futures::executor::block_on;
 use intercom_adapter_http::server::DebugWebRtcSignaling;
-use intercom_adapter_http::{HttpServer, HttpServerConfig, DASHBOARD_HTML_GZ};
+use intercom_adapter_http::{
+    HttpServer, HttpServerConfig, MemoryRegion, MemorySnapshot, DASHBOARD_HTML_GZ,
+};
 use intercom_adapter_webrtc::signaling::SignalingError;
 use intercom_core::events::{SystemState, SystemStateWatch};
 use intercom_core::ports::diagnostics::HardwareInfoDriver;
@@ -74,6 +76,19 @@ impl OtaStream for MockStream {
 // ============================================================================
 
 struct MockHardwareInfo;
+
+fn test_memory_info() -> MemorySnapshot {
+    MemorySnapshot {
+        internal: MemoryRegion {
+            free_bytes: 96_000,
+            total_bytes: 160_000,
+        },
+        psram: Some(MemoryRegion {
+            free_bytes: 1_900_000,
+            total_bytes: 2_000_000,
+        }),
+    }
+}
 
 impl HardwareInfoDriver for MockHardwareInfo {
     fn device_type(&self) -> &'static str {
@@ -285,7 +300,9 @@ fn debug_webrtc_routes_negotiate_and_report_busy_without_stopping_another_sessio
     );
     block_on(server.handle_request(&mut offer)).unwrap();
     assert!(offer.written_str().starts_with("HTTP/1.1 200"));
-    assert!(offer.written_str().contains("Content-Type: application/sdp"));
+    assert!(offer
+        .written_str()
+        .contains("Content-Type: application/sdp"));
     assert!(offer.written_str().ends_with("answer-sdp"));
     assert_eq!(signaling.offers.get(), 1);
 
@@ -309,7 +326,9 @@ fn debug_webrtc_routes_negotiate_and_report_busy_without_stopping_another_sessio
     );
     block_on(busy_server.handle_request(&mut busy_offer)).unwrap();
     assert!(busy_offer.written_str().starts_with("HTTP/1.1 409"));
-    assert!(busy_offer.written_str().contains("WebRTC media session busy"));
+    assert!(busy_offer
+        .written_str()
+        .contains("WebRTC media session busy"));
     assert_eq!(busy_signaling.offers.get(), 1);
     assert_eq!(busy_signaling.stops.get(), 0);
 
@@ -370,11 +389,51 @@ fn test_get_status_returns_valid_telemetry_json() {
     assert_eq!(v["slot_valid"], true);
     assert_eq!(v["free_heap_bytes"], 120_000);
     assert_eq!(v["total_heap_bytes"], 320_000);
+    assert_eq!(
+        v["memory"],
+        serde_json::json!({
+            "internal": {"free_bytes": 120_000, "total_bytes": 320_000},
+            "psram": null
+        })
+    );
     assert_eq!(v["available_ecosystems"], serde_json::json!([]));
     assert!(v["active_ecosystem"].is_null());
     assert_eq!(v["version"], "1.2.3");
     assert_eq!(v["git_commit"], "deadbeef");
     assert_eq!(v["build_date"], "2026-10-15");
+}
+
+#[test]
+fn test_status_memory_schema() {
+    let cmd_channel = CommandChannel::new();
+    let access_handle = AccessControllerHandle::new(cmd_channel.sender());
+    let hardware = MockHardwareInfo;
+    let state_watch = SystemStateWatch::new();
+    let diagnostics = DiagnosticsService::new(&hardware, &state_watch);
+    let mut ota_driver = MockOtaFlashDriver::new(false);
+    let mut server = HttpServer::new_unbound(
+        access_handle,
+        &BusSafetyDriverMock,
+        &diagnostics,
+        &mut ota_driver,
+        test_log_provider,
+        HttpServerConfig::default(),
+    )
+    .with_memory_info_provider(test_memory_info);
+    let mut stream = MockStream::new(b"GET /api/status HTTP/1.1\r\nHost: test\r\n\r\n");
+
+    block_on(server.handle_request(&mut stream)).expect("request should succeed");
+
+    let response = stream.written_str();
+    let body = response.split_once("\r\n\r\n").unwrap().1;
+    let status: Value = serde_json::from_str(body).expect("status should be JSON");
+    assert_eq!(
+        status["memory"],
+        serde_json::json!({
+            "internal": {"free_bytes": 96_000, "total_bytes": 160_000},
+            "psram": {"free_bytes": 1_900_000, "total_bytes": 2_000_000}
+        })
+    );
 }
 
 #[test]

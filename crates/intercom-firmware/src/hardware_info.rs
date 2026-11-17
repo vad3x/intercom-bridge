@@ -9,6 +9,48 @@ use intercom_core::ports::diagnostics::HardwareInfoDriver;
 /// Concrete hardware information provider querying runtime heap, bootloader, efuse, and timers.
 pub struct FirmwareHardwareInfo;
 
+impl FirmwareHardwareInfo {
+    /// Return live allocator usage split by internal RAM and external PSRAM.
+    pub fn memory_info() -> intercom_adapter_http::MemorySnapshot {
+        #[cfg(target_arch = "riscv32")]
+        {
+            let mut internal = intercom_adapter_http::MemoryRegion {
+                free_bytes: 0,
+                total_bytes: 0,
+            };
+            let mut psram = None;
+            for region in esp_alloc::HEAP.stats().region_stats.into_iter().flatten() {
+                let stats = intercom_adapter_http::MemoryRegion {
+                    free_bytes: region.free,
+                    total_bytes: region.size,
+                };
+                if region
+                    .capabilities
+                    .contains(esp_alloc::MemoryCapability::External)
+                {
+                    psram = Some(stats);
+                } else if region
+                    .capabilities
+                    .contains(esp_alloc::MemoryCapability::Internal)
+                {
+                    internal.free_bytes += stats.free_bytes;
+                    internal.total_bytes += stats.total_bytes;
+                }
+            }
+
+            intercom_adapter_http::MemorySnapshot { internal, psram }
+        }
+        #[cfg(not(target_arch = "riscv32"))]
+        intercom_adapter_http::MemorySnapshot {
+            internal: intercom_adapter_http::MemoryRegion {
+                free_bytes: 0,
+                total_bytes: 0,
+            },
+            psram: None,
+        }
+    }
+}
+
 impl HardwareInfoDriver for FirmwareHardwareInfo {
     fn device_type(&self) -> &'static str {
         crate::config::DEVICE_TYPE
@@ -34,7 +76,7 @@ impl HardwareInfoDriver for FirmwareHardwareInfo {
     }
 
     fn wifi_ssid(&self) -> Option<WifiSsid> {
-        #[cfg(target_arch = "riscv32")]
+        #[cfg(all(target_arch = "riscv32", feature = "esp32c6"))]
         {
             use esp_wifi_sys_esp32c6::include::{
                 ESP_OK, esp_wifi_get_config, esp_wifi_sta_get_ap_info, wifi_ap_record_t,
@@ -79,7 +121,7 @@ impl HardwareInfoDriver for FirmwareHardwareInfo {
     }
 
     fn wifi_rssi(&self) -> Option<i8> {
-        #[cfg(target_arch = "riscv32")]
+        #[cfg(all(target_arch = "riscv32", feature = "esp32c6"))]
         {
             let mut rssi: i32 = 0;
             if unsafe { esp_wifi_sta_get_rssi(&mut rssi) } == 0 {
@@ -185,7 +227,7 @@ fn ensure_bootloader_cached() {
     }
 }
 
-#[cfg(target_arch = "riscv32")]
+#[cfg(all(target_arch = "riscv32", feature = "esp32c6"))]
 extern "C" {
     fn esp_wifi_sta_get_rssi(rssi: *mut i32) -> i32;
 }

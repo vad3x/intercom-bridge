@@ -38,16 +38,18 @@ use embassy_executor::Spawner;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 #[cfg(target_arch = "riscv32")]
 use embassy_sync::channel::Channel;
+#[cfg(all(target_arch = "riscv32", feature = "esp32c6", not(feature = "devkit")))]
+use embassy_sync::signal::Signal;
 #[cfg(target_arch = "riscv32")]
 #[cfg(target_arch = "riscv32")]
 use esp_alloc::heap_allocator;
 #[cfg(target_arch = "riscv32")]
 use esp_backtrace as _;
 #[cfg(target_arch = "riscv32")]
+#[cfg(feature = "esp32c6")]
 use esp_hal::ram;
 #[cfg(target_arch = "riscv32")]
-use esp_hal::timer::timg::TimerGroup;
-#[cfg(target_arch = "riscv32")]
+#[cfg(feature = "esp32c6")]
 use esp_metadata_generated::memory_range;
 #[cfg(target_arch = "riscv32")]
 use log::{info, warn};
@@ -105,8 +107,10 @@ use intercom_adapter_matter::{
 use self::hardware_info::FirmwareHardwareInfo;
 #[cfg(target_arch = "riscv32")]
 use self::reset::{FirmwarePersistenceReporter, FirmwareResetDriver};
-
 #[cfg(target_arch = "riscv32")]
+use intercom_firmware::platform::{ActivePlatform, PlatformDriver};
+
+#[cfg(all(target_arch = "riscv32", feature = "esp32c6"))]
 const RECLAIMED_RAM: usize =
     memory_range!("DRAM2_UNINIT").end - memory_range!("DRAM2_UNINIT").start;
 
@@ -118,11 +122,98 @@ fn media_free_heap_bytes() -> u32 {
 #[cfg(target_arch = "riscv32")]
 struct HardwareSecureRandom;
 
+#[cfg(all(target_arch = "riscv32", feature = "esp32c6", not(feature = "devkit")))]
+#[embassy_executor::task]
+async fn i2s_audio_worker(
+    pipeline: intercom_adapter_audio::I2sAudioPipeline,
+    rx_audio: &'static intercom_media::RxAudioChannel,
+    tx_audio: &'static intercom_media::TxAudioChannel,
+) {
+    if let Err(error) = pipeline.run(rx_audio.sender(), tx_audio.receiver()).await {
+        warn!("I2S DMA stream failed: {:?}", error);
+        custom_halt();
+    }
+}
+
+#[cfg(all(target_arch = "riscv32", feature = "esp32s31"))]
+#[embassy_executor::task]
+async fn s31_synthetic_audio_worker(
+    rx_audio: &'static intercom_media::RxAudioChannel,
+    tx_audio: &'static intercom_media::TxAudioChannel,
+    opus_channel: &'static intercom_media::OpusChannel,
+    mut call_state: intercom_core::events::CallStateReceiver<'static>,
+    mut system_state: intercom_core::events::SystemStateReceiver<'static>,
+) {
+    static PIPELINE: StaticCell<
+        intercom_firmware::platform::synthetic_audio::S31SyntheticAudioPipeline,
+    > = StaticCell::new();
+    let pipeline = PIPELINE
+        .init(intercom_firmware::platform::synthetic_audio::S31SyntheticAudioPipeline::new());
+    let rx_sender = rx_audio.sender();
+    let tx_receiver = tx_audio.receiver();
+    let mut schedule =
+        intercom_media::AudioCaptureSchedule::new(embassy_time::Instant::now().as_millis());
+    let mut drop_window = intercom_media::AudioFrameDropWindow::new();
+    let mut simulated_overruns = 0u64;
+    loop {
+        let (call_update, system_update) = intercom_firmware::platform::take_audio_state_updates(
+            &mut call_state,
+            &mut system_state,
+        );
+        if let Some(snapshot) = call_update {
+            info!("S31 audio worker observed call state: {:?}", snapshot);
+        }
+        if let Some(state) = system_update {
+            info!("S31 audio worker observed system state: {:?}", state);
+        }
+
+        let now_ms = embassy_time::Instant::now().as_millis();
+        embassy_time::Timer::after_millis(schedule.delay_until_next_ms(now_ms)).await;
+        let batch = schedule.take_due_frames(embassy_time::Instant::now().as_millis());
+        simulated_overruns = simulated_overruns.saturating_add(batch.overruns);
+
+        for _ in 0..batch.frames {
+            let (source, packet, decoded) = match pipeline.next_frame() {
+                Ok(frame) => frame,
+                Err(error) => {
+                    warn!("S31 synthetic Opus pipeline failed: {:?}", error);
+                    custom_halt();
+                }
+            };
+            let levels = intercom_media::compute_frame_levels_dbfs(&source);
+            intercom_core::domain::diagnostics::update_rx_levels_dbfs(
+                levels.rms_dbfs,
+                levels.peak_dbfs,
+            );
+            let decoded_levels = intercom_media::compute_frame_levels_dbfs(&decoded);
+            let pcm_dropped = rx_sender.try_send(source).is_err();
+            let opus_dropped = opus_channel.try_send(packet).is_err();
+            let _ = tx_receiver.try_receive();
+
+            if let Some(queue_drops) = drop_window.record(pcm_dropped || opus_dropped) {
+                info!(
+                    "S31 synthetic audio frames={} simulated_overruns={} queue_drops={} last_decoded_rms_dbfs={}",
+                    intercom_media::AUDIO_FRAME_DROP_WINDOW_FRAMES,
+                    simulated_overruns,
+                    queue_drops,
+                    decoded_levels.rms_dbfs,
+                );
+                simulated_overruns = 0;
+            }
+        }
+    }
+}
+
 #[cfg(target_arch = "riscv32")]
 impl SecureRandom for HardwareSecureRandom {
     fn fill(&self, out: &mut [u8]) -> Result<(), SignalingError> {
-        let trng = esp_hal::rng::Trng::try_new().map_err(|_| SignalingError::NotReady)?;
-        trng.read(out);
+        #[cfg(feature = "esp32c6")]
+        {
+            let trng = esp_hal::rng::Trng::try_new().map_err(|_| SignalingError::NotReady)?;
+            trng.read(out);
+        }
+        #[cfg(feature = "esp32s31")]
+        esp_hal::rng::Rng::new().read(out);
         Ok(())
     }
 }
@@ -159,7 +250,7 @@ pub fn custom_halt() -> ! {
 
 #[cfg(target_arch = "riscv32")]
 #[esp_rtos::main]
-async fn main(_spawner: Spawner) {
+async fn main(spawner: Spawner) {
     if let Err(error) = utils::uptime_logger::init(log::LevelFilter::Info) {
         esp_println::println!("Failed to initialize uptime logger: {error:?}");
         custom_halt();
@@ -173,17 +264,16 @@ async fn main(_spawner: Spawner) {
         version::SW_VER
     );
 
-    heap_allocator!(size: config::HEAP_SIZE - RECLAIMED_RAM);
-    heap_allocator!(#[ram(reclaimed)] size: RECLAIMED_RAM - core::mem::size_of::<DtlsSrtpResources>());
+    #[cfg(feature = "esp32c6")]
+    {
+        heap_allocator!(size: config::HEAP_SIZE - RECLAIMED_RAM);
+        heap_allocator!(#[ram(reclaimed)] size: RECLAIMED_RAM - core::mem::size_of::<DtlsSrtpResources>());
+    }
+    #[cfg(feature = "esp32s31")]
+    heap_allocator!(size: config::HEAP_SIZE);
 
-    // Initialize ESP-HAL peripherals
-    let peripherals = esp_hal::init(
-        esp_hal::Config::default().with_cpu_clock(esp_hal::clock::CpuClock::max()),
-    );
-
-    // Initialize Embassy async runtime via esp-rtos
-    let timg0 = TimerGroup::new(peripherals.TIMG0);
-    esp_rtos::start(timg0.timer0, peripherals.FROM_CPU_INTR0);
+    let (mut platform, platform_drivers) = ActivePlatform::init();
+    let peripherals = platform_drivers.peripherals;
 
     info!("Hardware initialized");
 
@@ -197,10 +287,16 @@ async fn main(_spawner: Spawner) {
 
     static CALL_STATE_WATCH: intercom_core::events::CallStateWatch =
         intercom_core::events::CallStateWatch::new();
+    #[cfg(feature = "esp32s31")]
+    let core1_call_state_receiver = CALL_STATE_WATCH.receiver().unwrap();
+    #[cfg(feature = "esp32s31")]
+    let core1_system_state_receiver = STATE_WATCH.receiver().unwrap();
     static RX_AUDIO_CHANNEL: intercom_media::RxAudioChannel = intercom_media::RxAudioChannel::new();
     static WS_AUDIO_ACTIVE: core::sync::atomic::AtomicBool =
         core::sync::atomic::AtomicBool::new(false);
     static TX_AUDIO_CHANNEL: intercom_media::TxAudioChannel = intercom_media::TxAudioChannel::new();
+    #[cfg(feature = "esp32s31")]
+    static OPUS_CHANNEL: intercom_media::OpusChannel = intercom_media::OpusChannel::new();
     static WEBRTC_REQUESTS: Channel<CriticalSectionRawMutex, WebRtcSessionConfig, 1> =
         Channel::new();
     static WEBRTC_STATE: portable_atomic::AtomicU8 = portable_atomic::AtomicU8::new(0);
@@ -229,6 +325,22 @@ async fn main(_spawner: Spawner) {
     let dtls_resource_cell =
         WEBRTC_DTLS_RESOURCE_CELL.init(DtlsSrtpResourceCell::new(dtls_resources));
     let webrtc_resources = unsafe { &mut *core::ptr::addr_of_mut!(WEBRTC_RESOURCES) };
+    #[cfg(feature = "esp32s31")]
+    let webrtc_jitter_buffer = intercom_firmware::platform::s31::allocate_webrtc_jitter_buffer();
+    #[cfg(feature = "esp32s31")]
+    let (mut webrtc_engine, webrtc_session_handle) =
+        WebRtcMediaEngine::new_with_opus_channel_and_jitter_buffer(
+            &WEBRTC_REQUESTS,
+            &WEBRTC_STATE,
+            access_handle,
+            RX_AUDIO_CHANNEL.receiver(),
+            TX_AUDIO_CHANNEL.sender(),
+            Some(&OPUS_CHANNEL),
+            webrtc_jitter_buffer,
+            webrtc_resources,
+            dtls_resource_cell,
+        );
+    #[cfg(not(feature = "esp32s31"))]
     let (mut webrtc_engine, webrtc_session_handle) = WebRtcMediaEngine::new(
         &WEBRTC_REQUESTS,
         &WEBRTC_STATE,
@@ -300,6 +412,7 @@ async fn main(_spawner: Spawner) {
         MatterControllerConfig {
             peripherals: MatterPeripherals {
                 wifi: peripherals.WIFI,
+                #[cfg(feature = "esp32c6")]
                 bt: peripherals.BT,
                 rng: peripherals.RNG,
                 adc1: peripherals.ADC1,
@@ -342,36 +455,70 @@ async fn main(_spawner: Spawner) {
     let bus = intercom_core::service::BusSafetyInterlock::new(GpioBusDriver::new(
         GpioBusConfig::new(peripherals.GPIO7, peripherals.GPIO10, peripherals.GPIO18),
     ));
-    // Start MCLK/BCLK/WS before releasing CODEC_RST_N (GPIO11).
-    #[cfg(not(feature = "devkit"))]
-    let i2s_pipeline = intercom_adapter_audio::I2sAudioPipeline::new(
-        peripherals.I2S0,
-        peripherals.DMA_CH0,
-        peripherals.GPIO22,
-        peripherals.GPIO23,
-        peripherals.GPIO15,
-        peripherals.GPIO20,
-        peripherals.GPIO21,
-    )
-    .expect("I2S0 init");
-    let i2c_config =
-        esp_hal::i2c::master::Config::default().with_frequency(esp_hal::time::Rate::from_khz(400));
-    let i2c0 = esp_hal::i2c::master::I2c::new(peripherals.I2C0, i2c_config)
-        .expect("I2C0 init")
-        .with_sda(peripherals.GPIO0)
-        .with_scl(peripherals.GPIO1);
-    let codec_rst = esp_hal::gpio::Output::new(
-        peripherals.GPIO11,
-        esp_hal::gpio::Level::Low,
-        esp_hal::gpio::OutputConfig::default(),
-    );
-    let mut audio_ctrl = intercom_adapter_audio::Aic3204AudioDriver::new(i2c0, codec_rst);
-    if let Err(error) = audio_ctrl.init(initial_rx_gain, initial_tx_gain).await {
-        warn!(
-            "TLV320AIC3204 init failed (bench without codec?): {:?}",
-            error
-        );
+    // Start I2S clocks before releasing the C6 codec reset.
+    #[cfg(all(feature = "esp32c6", not(feature = "devkit")))]
+    {
+        static I2S_PIPELINE_READY: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+        platform.spawn_audio_worker(spawner, move |audio_spawner| {
+            let i2s_pipeline = intercom_adapter_audio::I2sAudioPipeline::new(
+                peripherals.I2S0,
+                peripherals.DMA_CH0,
+                peripherals.GPIO22,
+                peripherals.GPIO23,
+                peripherals.GPIO15,
+                peripherals.GPIO20,
+                peripherals.GPIO21,
+            )
+            .expect("I2S0 init");
+            audio_spawner.spawn(
+                i2s_audio_worker(i2s_pipeline, &RX_AUDIO_CHANNEL, &TX_AUDIO_CHANNEL)
+                    .expect("Failed to create I2S audio worker task"),
+            );
+            I2S_PIPELINE_READY.signal(());
+        });
+
+        I2S_PIPELINE_READY.wait().await;
     }
+
+    #[cfg(feature = "esp32s31")]
+    platform.spawn_audio_worker(spawner, move |audio_spawner| {
+        audio_spawner.spawn(
+            s31_synthetic_audio_worker(
+                &RX_AUDIO_CHANNEL,
+                &TX_AUDIO_CHANNEL,
+                &OPUS_CHANNEL,
+                core1_call_state_receiver,
+                core1_system_state_receiver,
+            )
+            .expect("Failed to create S31 synthetic audio worker task"),
+        );
+    });
+
+    #[cfg(feature = "esp32c6")]
+    let audio_ctrl = {
+        let i2c_config = esp_hal::i2c::master::Config::default()
+            .with_frequency(esp_hal::time::Rate::from_khz(400));
+        let i2c0 = esp_hal::i2c::master::I2c::new(peripherals.I2C0, i2c_config)
+            .expect("I2C0 init")
+            .with_sda(peripherals.GPIO0)
+            .with_scl(peripherals.GPIO1);
+        let codec_rst = esp_hal::gpio::Output::new(
+            peripherals.GPIO11,
+            esp_hal::gpio::Level::Low,
+            esp_hal::gpio::OutputConfig::default(),
+        );
+        let mut audio_ctrl = intercom_adapter_audio::Aic3204AudioDriver::new(i2c0, codec_rst);
+        if let Err(error) = audio_ctrl.init(initial_rx_gain, initial_tx_gain).await {
+            warn!(
+                "TLV320AIC3204 init failed (bench without codec?): {:?}",
+                error
+            );
+        }
+        audio_ctrl
+    };
+    #[cfg(feature = "esp32s31")]
+    let audio_ctrl = intercom_core::ports::NoopAudioControlDriver;
 
     #[cfg(not(feature = "led-smartled"))]
     static INDICATOR: StaticCell<GpioLedDriver> = StaticCell::new();
@@ -481,6 +628,7 @@ async fn main(_spawner: Spawner) {
             utils::uptime_logger::get_buffered_logs,
             http_config,
         )
+        .with_memory_info_provider(FirmwareHardwareInfo::memory_info)
         .with_audio_media(HttpAudioMedia {
             rx_audio: &RX_AUDIO_CHANNEL,
             tx_audio: &TX_AUDIO_CHANNEL,
@@ -496,18 +644,7 @@ async fn main(_spawner: Spawner) {
     info!("Matter Controller Running");
 
     #[cfg(not(feature = "devkit"))]
-    let audio_input_future = async {
-        if let Err(error) = i2s_pipeline
-            .run(RX_AUDIO_CHANNEL.sender(), TX_AUDIO_CHANNEL.receiver())
-            .await
-        {
-            warn!("I2S DMA stream failed: {:?}", error);
-            #[cfg(not(feature = "devkit"))]
-            custom_halt();
-            #[cfg(feature = "devkit")]
-            core::future::pending::<()>().await;
-        }
-    };
+    let audio_input_future = core::future::pending::<()>();
     #[cfg(feature = "devkit")]
     let audio_input_future = async {
         let mut speech = intercom_media::Pcm16LeLoopingSource::new(
@@ -564,8 +701,11 @@ async fn main(_spawner: Spawner) {
                 embassy_time::Timer::after_secs(2).await;
             }
         };
-        embassy_futures::join::join(webrtc_engine.run(stack, media_free_heap_bytes), refresh_ip)
-            .await;
+        let media_future = embassy_futures::join::join(
+            webrtc_engine.run(stack, media_free_heap_bytes),
+            refresh_ip,
+        );
+        media_future.await;
     };
 
     embassy_futures::join::join5(

@@ -22,10 +22,10 @@ resolver = "2"
 embedded-hal = "=1.0.0"
 intercom-media = { path = "crates/intercom-media" }
 edf-core = { path = "../embedded-device-foundation/crates/edf-core" }
-edf-gpio = { path = "../embedded-device-foundation/crates/edf-gpio" }
+edf-gpio = { path = "../embedded-device-foundation/crates/edf-gpio", default-features = false }
 edf-matter = { path = "../embedded-device-foundation/crates/edf-matter" }
 edf-pairing-tool = { path = "../embedded-device-foundation/crates/edf-pairing-tool" }
-edf-ota = { path = "../embedded-device-foundation/crates/edf-ota" }
+edf-ota = { path = "../embedded-device-foundation/crates/edf-ota", default-features = false }
 edf-logger = { path = "../embedded-device-foundation/crates/edf-logger" }
 edf-http-diagnostics = { path = "../embedded-device-foundation/crates/edf-http-diagnostics" }
 edf-http-ota = { path = "../embedded-device-foundation/crates/edf-http-ota" }
@@ -52,7 +52,7 @@ rs-matter = { version = "=0.4.1", default-features = false }
 esp-backtrace = "=0.20.0"
 esp-hal = "=1.2.2"
 esp-rtos = "=0.4.0"
-esp-radio = "=1.0.0-beta.1"
+esp-radio = { version = "=1.0.0-beta.1", default-features = false }
 esp-alloc = "=0.11.0"
 esp-println = "=0.18.0"
 esp-bootloader-esp-idf = "=0.6.0"
@@ -66,7 +66,8 @@ picoserve = { version = "=0.20.1", default-features = false, features = ["embass
 tinyrlibc = { version = "=0.5.1", default-features = false }
 
 [patch.crates-io]
-rs-matter = { path = "../../rs-matter/review_matter_tcp_rust/rs-matter" }
+rs-matter = { path = "../rs-matter/rs-matter" }
+rs-matter-stack = { path = "../rs-matter/rs-matter-stack" }
 
 [profile.dev]
 opt-level = "z"

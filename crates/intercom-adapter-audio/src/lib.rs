@@ -4,13 +4,18 @@
 #![allow(async_fn_in_trait)]
 
 pub mod aic3204;
-#[cfg(target_arch = "riscv32")]
+#[cfg(all(target_arch = "riscv32", feature = "esp32c6"))]
 pub mod i2s_pipeline;
 pub mod registers;
+#[cfg(feature = "esp32s31")]
+pub mod synthetic_pipeline;
 
 pub use aic3204::{Aic3204AudioDriver, CodecError};
-#[cfg(target_arch = "riscv32")]
+#[cfg(all(target_arch = "riscv32", feature = "esp32c6"))]
 pub use i2s_pipeline::I2sAudioPipeline;
+#[cfg(feature = "esp32s31")]
+pub use synthetic_pipeline::SyntheticAudioPipeline;
 
 #[cfg(any(test, target_arch = "riscv32"))]
+#[cfg(feature = "esp32c6")]
 mod pcm_slots;

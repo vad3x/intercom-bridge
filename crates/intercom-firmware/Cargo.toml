@@ -15,8 +15,43 @@ harness = false
 test = false
 
 [features]
-default = []
-devkit = ["flash-4mb", "led-smartled", "ota-disabled"]
+default = ["esp32c6"]
+esp32c6 = [
+    "intercom-adapter-audio/esp32c6",
+    "intercom-adapter-gpio/esp32c6",
+    "intercom-adapter-matter/esp32c6",
+    "rs-matter-embassy/trouble",
+    "rs-matter/large-buffers-4096",
+    "intercom-adapter-webrtc/esp32c6",
+    "edf-gpio/esp32c6",
+    "edf-ota/esp32c6",
+    "dep:esp-wifi-sys-esp32c6",
+    "esp-backtrace/esp32c6",
+    "esp-hal/esp32c6",
+    "esp-rtos/esp32c6",
+    "esp-alloc/esp32c6",
+    "esp-println/esp32c6",
+    "esp-bootloader-esp-idf/esp32c6",
+    "esp-metadata-generated/esp32c6",
+]
+esp32s31 = [
+    "intercom-adapter-audio/esp32s31",
+    "intercom-adapter-gpio/esp32s31",
+    "intercom-adapter-matter/esp32s31",
+    "intercom-adapter-webrtc/esp32s31",
+    "rs-matter/large-buffers-4096",
+    "edf-gpio/esp32s31",
+    "edf-ota/esp32s31",
+    "dep:esp-wifi-sys-esp32s31",
+    "esp-backtrace/esp32s31",
+    "esp-hal/esp32s31",
+    "esp-rtos/esp32s31",
+    "esp-alloc/esp32s31",
+    "esp-println/esp32s31",
+    "esp-bootloader-esp-idf/esp32s31",
+    "esp-metadata-generated/esp32s31",
+]
+devkit = ["esp32c6", "flash-4mb", "led-smartled", "ota-disabled"]
 flash-4mb = []
 led-smartled = ["dep:esp-hal-smartled", "dep:smart-leds"]
 ota-disabled = []
@@ -26,14 +61,14 @@ dummy-persist = []
 intercom-core = { path = "../intercom-core" }
 intercom-media = { workspace = true }
 intercom-adapter-webrtc = { path = "../intercom-adapter-webrtc" }
-intercom-adapter-audio = { path = "../intercom-adapter-audio" }
+intercom-adapter-audio = { path = "../intercom-adapter-audio", default-features = false }
 edf-core = { workspace = true }
 edf-gpio = { workspace = true }
 edf-ota = { workspace = true }
 edf-logger = { workspace = true }
 intercom-adapter-http = { path = "../intercom-adapter-http" }
 edf-matter = { workspace = true }
-rs-matter = { workspace = true, features = ["large-buffers-4096"] }
+rs-matter = { workspace = true }
 log = { workspace = true }
 embassy-executor = { workspace = true }
 embassy-futures = { workspace = true }
@@ -43,21 +78,23 @@ portable-atomic = { workspace = true, features = ["critical-section"] }
 static_cell = { workspace = true }
 
 [target.'cfg(target_arch = "riscv32")'.dependencies]
-intercom-adapter-webrtc = { path = "../intercom-adapter-webrtc", features = ["matter-port"] }
-intercom-adapter-gpio = { path = "../intercom-adapter-gpio" }
-intercom-adapter-matter = { path = "../intercom-adapter-matter" }
-esp-backtrace = { workspace = true, features = ["panic-handler", "println", "custom-halt", "esp32c6"] }
-esp-hal = { workspace = true, features = ["log-04", "unstable", "exception-handler", "esp32c6"] }
-esp-rtos = { workspace = true, features = ["esp-radio", "embassy", "esp32c6"] }
+intercom-adapter-webrtc = { path = "../intercom-adapter-webrtc", default-features = false, features = ["matter-port"] }
+intercom-adapter-gpio = { path = "../intercom-adapter-gpio", default-features = false }
+intercom-adapter-matter = { path = "../intercom-adapter-matter", default-features = false }
+esp-backtrace = { workspace = true, features = ["panic-handler", "println", "custom-halt"] }
+esp-hal = { workspace = true, features = ["log-04", "unstable", "exception-handler"] }
+esp-rtos = { workspace = true, features = ["esp-radio", "embassy"] }
 esp-alloc = { workspace = true }
-esp-println = { workspace = true, features = ["log-04", "esp32c6"] }
-esp-bootloader-esp-idf = { workspace = true, features = ["log-04", "esp32c6"] }
-esp-metadata-generated = { workspace = true, features = ["esp32c6"] }
-rs-matter-embassy = { path = "../../../../rs-matter-embassy/review_matter_tcp_rust/rs-matter-embassy", default-features = false, features = ["esp", "trouble", "embassy-net", "log", "rustcrypto", "kv-blob-store-8192", "mld-v1-compat", "nd-learn-from-frames", "max-im-buffers-4"] }
-esp-wifi-sys-esp32c6 = { workspace = true }
+esp-println = { workspace = true, features = ["log-04"] }
+esp-bootloader-esp-idf = { workspace = true, features = ["log-04"] }
+esp-metadata-generated = { workspace = true }
+rs-matter-embassy = { path = "../../../rs-matter-embassy/rs-matter-embassy", default-features = false, features = ["esp", "embassy-net", "log", "rustcrypto", "kv-blob-store-8192", "mld-v1-compat", "nd-learn-from-frames", "max-im-buffers-4"] }
+esp-wifi-sys-esp32c6 = { workspace = true, optional = true }
+esp-wifi-sys-esp32s31 = { version = "=0.3.0", optional = true }
 esp-hal-smartled = { workspace = true, features = ["esp32c6"], optional = true }
 smart-leds = { workspace = true, optional = true }
 
 [dev-dependencies]
+embassy-executor = { workspace = true, features = ["platform-std", "executor-thread"] }
 critical-section = { workspace = true, features = ["std"] }
 futures = { workspace = true }
