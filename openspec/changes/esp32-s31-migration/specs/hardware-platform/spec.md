@@ -2,16 +2,16 @@
 
 ## Purpose
 
-Defines hardware delta requirements for migrating from ESP32-C6 to ESP32-S31, resolving memory allocation limits, single-core CPU contention, 4 MB DevKit OTA limitations, and power transient stability at 320 MHz, while maintaining dual-target firmware portability.
+Defines firmware platform delta requirements for supporting both ESP32-C6 and ESP32-S31 from a single codebase, resolving memory allocation limits, single-core CPU contention, 4 MB DevKit OTA limitations, and centralizing pin configuration while keeping PCB redesign out of scope.
 
 ## ADDED Requirements
 
 ### Requirement: Dual-Target Portability via Feature Configuration
-The firmware SHALL support compilation for either ESP32-C6 or ESP32-S31 from a single unified codebase, selecting hardware peripherals, multi-core execution, and memory allocators via mutually exclusive Cargo feature flags.
+The firmware SHALL support compilation for either ESP32-C6 or ESP32-S31 from a single unified codebase, defaulting to esp32c6 for backwards compatibility and enabling S31 hardware abstractions via the esp32s31 feature flag.
 
-#### Scenario: Compiling for ESP32-C6 vs ESP32-S31 targets
-- **WHEN** the firmware is built with the target feature flag (esp32c6 or esp32s31)
-- **THEN** the build system SHALL configure HAL drivers, memory allocators, and core execution models matching the selected silicon with zero manual source modifications
+#### Scenario: Compiling with default vs explicit feature flags
+- **WHEN** the firmware is built without feature flags, or with an explicit target feature flag
+- **THEN** the build system SHALL compile for ESP32-C6 by default, or configure S31 HAL drivers and dual-core abstractions when esp32s31 is passed
 
 ### Requirement: Core-Level Execution Isolation
 When compiled for the ESP32-S31, the architecture SHALL physically isolate real-time audio I2S DMA and Opus encoding onto Core 1, preventing preemption by Wi-Fi MAC and network interrupts on Core 0.
@@ -20,12 +20,12 @@ When compiled for the ESP32-S31, the architecture SHALL physically isolate real-
 - **WHEN** maximum-throughput Wi-Fi 6 transmission bursts and Matter TCP handshakes execute on Core 0
 - **THEN** Core 1 audio I2S DMA servicing and Opus encoding SHALL experience zero interrupt delay or scheduling preemption
 
-### Requirement: Tiered Memory Allocation and Headroom Guarantees
-When compiled for the ESP32-S31, the system memory allocator SHALL allocate all dynamic audio packet queues, WebRTC jitter buffers, and TLS session contexts from external PSRAM, guaranteeing internal SRAM stack margin under peak load.
+### Requirement: Tiered Memory Allocation and Fail-Fast Safety
+When compiled for the ESP32-S31, the system memory allocator SHALL allocate all dynamic audio packet queues and WebRTC jitter buffers from external PSRAM, and SHALL fail-fast with a diagnostic panic if PSRAM fails to initialize at boot.
 
-#### Scenario: Memory headroom during active audio and network load
-- **WHEN** concurrent Matter-over-TCP, active WebRTC audio streaming, and HTTP dashboard requests run simultaneously on S31
-- **THEN** internal SRAM call-stack headroom SHALL remain above 32 KiB and all dynamic heap growth SHALL be served from external DDR PSRAM
+#### Scenario: PSRAM initialization verification at boot
+- **WHEN** the firmware boots with the esp32s31 feature enabled
+- **THEN** it SHALL verify external PSRAM availability before task scheduling, panicking immediately with diagnostic telemetry if PSRAM is absent or uninitialized
 
 ### Requirement: Universal Dual-Bank A/B OTA Support
 The platform flash configuration SHALL provide symmetric 3.4 MB dual-bank application slots (ota_0 and ota_1) across all development and production targets, eliminating single-bank OTA restrictions.
@@ -34,16 +34,9 @@ The platform flash configuration SHALL provide symmetric 3.4 MB dual-bank applic
 - **WHEN** a signed firmware image is uploaded over HTTP OTA to either a development board or production unit
 - **THEN** the update SHALL write to the inactive partition and boot successfully with Ed25519 cryptographic validation and fail-safe watchdog rollback
 
-### Requirement: Power Rail Stability Under Peak 320 MHz Transient Load
-The power delivery subsystem SHALL maintain voltage stability across simultaneous dual-core 320 MHz computation bursts and Wi-Fi 6 transmission pulses.
+### Requirement: Centralized Platform Pin Configuration
+All microcontroller pin assignments for the ESP32-S31 target SHALL be centralized in a single compile-time platform configuration module, decoupling firmware pin mapping from future PCB layout revisions.
 
-#### Scenario: Dual-core burst during Wi-Fi 6 transmission
-- **WHEN** Core 0 and Core 1 operate at maximum 320 MHz clock speed while the Wi-Fi 6 transmitter fires at peak output power
-- **THEN** the 3.3V core supply rail SHALL not droop below 3.0V, preventing brownout resets or clock phase jitter
-
-### Requirement: ESP32-S31 GPIO Mapping for Intercom Bus
-The hardware interface SHALL route the ESP32-S31 GPIO matrix to the IR204E building terminals, maintaining electrical isolation between building common and digital ground.
-
-#### Scenario: Isolated strike actuation and ring detection
-- **WHEN** a ring signal occurs on terminal X or an unlock command is executed to terminals 2-3
-- **THEN** signals SHALL interface via optocouplers and PhotoMOS relays without ground loop noise coupling into I2S audio lines
+#### Scenario: Pin reassignment for board revision
+- **WHEN** GPIO assignments must be updated to match physical board trace routing
+- **THEN** modifying the centralized platform configuration module SHALL reassign all edge peripheral connections without code modifications in domain or adapter crates
