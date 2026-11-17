@@ -2,41 +2,41 @@
 
 ## Purpose
 
-Defines hardware abstraction and system resource guarantees for the microcontroller platform, including real-time audio latency under network load, PSRAM memory allocation pools, GPIO pin mapping, power rail stability, and bootloader OTA partition layout.
+Defines hardware delta requirements for migrating from ESP32-C6 to ESP32-S31, resolving memory allocation limits, single-core CPU contention, 4 MB DevKit OTA limitations, and power transient stability at 320 MHz.
 
 ## ADDED Requirements
 
-### Requirement: Real-Time Audio Deadline Guarantee Under Load
-The platform SHALL guarantee continuous, uninterrupted audio processing and I2S DMA servicing during concurrent high-throughput network activity, without frame drops or buffer underruns.
+### Requirement: Core-Level Execution Isolation
+The microcontroller architecture SHALL physically isolate real-time audio I2S DMA and Opus encoding onto an independent execution core, preventing preemption by Wi-Fi MAC and network interrupts.
 
-#### Scenario: Network burst during active audio stream
-- **WHEN** a high-throughput network event, Matter-over-TCP transaction, or HTTP request occurs simultaneously with active WebRTC streaming
-- **THEN** audio capture, encoding, and speaker DMA delivery SHALL continue with zero buffer underruns and frame processing latency under 5 milliseconds
+#### Scenario: Network burst does not preempt audio processing
+- **WHEN** maximum-throughput Wi-Fi 6 transmission bursts and Matter TCP handshakes execute on Core 0
+- **THEN** Core 1 audio I2S DMA servicing and Opus encoding SHALL experience zero interrupt delay or scheduling preemption
 
-### Requirement: External PSRAM Memory Pool
-The system memory allocator SHALL route dynamic audio queues, WebRTC packet buffers, and TLS session state to external DDR Octal PSRAM, preserving internal SRAM for interrupt stacks and DMA descriptors.
+### Requirement: Tiered Memory Allocation and Headroom Guarantees
+The system memory allocator SHALL allocate all dynamic audio packet queues, WebRTC jitter buffers, and TLS session contexts from external PSRAM, guaranteeing internal SRAM stack margin under peak load.
 
-#### Scenario: Memory allocation under peak load
-- **WHEN** concurrent Matter-over-TCP, WebRTC streaming, and HTTP dashboard requests are active
-- **THEN** internal SRAM stack headroom SHALL remain above 32 KiB and dynamic heap allocations SHALL be fulfilled from external PSRAM without out-of-memory errors
+#### Scenario: Memory headroom during active audio and network load
+- **WHEN** concurrent Matter-over-TCP, active WebRTC audio streaming, and HTTP dashboard requests run simultaneously
+- **THEN** internal SRAM call-stack headroom SHALL remain above 32 KiB and all dynamic heap growth SHALL be served from external DDR PSRAM
 
-### Requirement: Intercom GPIO Matrix Mapping
-The hardware edge adapter SHALL interface to the physical intercom hardware through dedicated GPIOs for ring optocoupler input, PhotoMOS door strike output, status indicator LED, and I2S codec lines.
+### Requirement: Universal Dual-Bank A/B OTA Support
+The platform flash configuration SHALL provide symmetric 3.4 MB dual-bank application slots (ota_0 and ota_1) across all development and production targets, eliminating single-bank OTA restrictions.
 
-#### Scenario: Door strike actuation signal
-- **WHEN** an authenticated unlock command is issued by the access control service
-- **THEN** the hardware driver SHALL pulse the door strike GPIO line for the configured duration while keeping audio and ring detection lines unaffected
+#### Scenario: Seamless A/B update with automated rollback
+- **WHEN** a signed firmware image is uploaded over HTTP OTA to either a development board or production unit
+- **THEN** the update SHALL write to the inactive partition and boot successfully with Ed25519 cryptographic validation and fail-safe watchdog rollback
 
-### Requirement: Power Rail Stability
-The power subsystem SHALL supply continuous, ripple-filtered 3.3V DC to the ESP32-S31 SoC and PSRAM across peak Wi-Fi 6 transmission pulses and dual-core 320 MHz computational bursts.
+### Requirement: Power Rail Stability Under Peak 320 MHz Transient Load
+The power delivery subsystem SHALL maintain voltage stability across simultaneous dual-core 320 MHz computation bursts and Wi-Fi 6 transmission pulses.
 
-#### Scenario: Peak RF transmission transient
-- **WHEN** the Wi-Fi 6 transmitter fires at maximum power simultaneously with dual-core peak load
-- **THEN** the 3.3V core supply rail SHALL not droop below 3.0V, preventing brownout resets or clock instability
+#### Scenario: Dual-core burst during Wi-Fi 6 transmission
+- **WHEN** Core 0 and Core 1 operate at maximum 320 MHz clock speed while the Wi-Fi 6 transmitter fires at peak output power
+- **THEN** the 3.3V core supply rail SHALL not droop below 3.0V, preventing brownout resets or clock phase jitter
 
-### Requirement: Fail-Safe Dual-Bank OTA Partitioning
-The flash storage layout SHALL provide two symmetric application partitions (ota_0 and ota_1) with Ed25519 cryptographic verification and automatic bootloader rollback on failed health validation.
+### Requirement: ESP32-S31 GPIO Mapping for Intercom Bus
+The hardware interface SHALL route the ESP32-S31 GPIO matrix to the IR204E building terminals, maintaining electrical isolation between building common and digital ground.
 
-#### Scenario: Incomplete or corrupted firmware update
-- **WHEN** an OTA update stream is interrupted or fails cryptographic signature verification
-- **THEN** the bootloader SHALL reject the update, leave otadata unchanged, and continue booting from the known-good active slot
+#### Scenario: Isolated strike actuation and ring detection
+- **WHEN** a ring signal occurs on terminal X or an unlock command is executed to terminals 2-3
+- **THEN** signals SHALL interface via optocouplers and PhotoMOS relays without ground loop noise coupling into I2S audio lines

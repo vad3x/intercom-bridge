@@ -2,27 +2,27 @@
 
 ## Purpose
 
-Defines real-time half-duplex audio intercom communication between the physical analog intercom bus and Matter/WebRTC clients, including Opus codec processing, adaptive jitter buffering, and direction switching matching the IR204E building amplifier.
+Defines the delta requirements for migrating audio streaming from the constrained single-core ESP32-C6 to the dual-core ESP32-S31 with external PSRAM, resolving call-stack exhaustion, CPU starvation during network bursts, and jitter buffer memory limits.
 
 ## ADDED Requirements
 
-### Requirement: Half-Duplex Direction Switching
-The audio pipeline SHALL switch between lobby listen mode (terminal 3 capture to WebRTC outbound) and apartment talk mode (WebRTC inbound to terminal 2 playback) without audio clipping or signal leakage between channels.
+### Requirement: Sustained Voiced Audio Stability Without Call-Stack Exhaustion
+The audio pipeline SHALL execute continuous Opus SILK encoding during high-amplitude voiced speech without task stack overflow or heap memory exhaustion.
 
-#### Scenario: Switching from listen to talk
-- **WHEN** a WebRTC talk stream is initiated by the controller while in listen mode
-- **THEN** the audio pipeline SHALL pause lobby microphone capture, engage the talk relay to terminal 2, and route decoded inbound audio to the building amplifier within 50 milliseconds
+#### Scenario: Continuous high-pitch voiced audio streaming
+- **WHEN** continuous voiced audio requiring recursive SILK pitch analysis (silk_pitch_analysis_core) is streamed through WebRTC for longer than 15 minutes
+- **THEN** Opus encoding SHALL complete every 20 millisecond frame without stack overflow, maintaining at least 16 KiB of unused stack headroom at all times
 
-### Requirement: Opus Codec Framing and Bitrate
-The audio pipeline SHALL encode microphone audio and decode inbound peer audio using the Opus codec in VoIP mode with 20 millisecond frame sizes at 16 kHz or 8 kHz sampling rates.
+### Requirement: Expanded PSRAM Network Jitter Buffering
+The WebRTC audio receiver SHALL maintain an adaptive jitter buffer in external PSRAM capable of absorbing residential Wi-Fi packet delay variations without consuming internal SRAM.
 
-#### Scenario: Opus encoding time budget
-- **WHEN** a 20 millisecond PCM audio frame is captured from the I2S microphone bus
-- **THEN** the DSP core SHALL complete Opus encoding within less than 5 milliseconds, leaving sufficient processing margin for networking and system tasks
+#### Scenario: Network delay jitter absorption
+- **WHEN** inbound SRTP audio packets experience network arrival jitter of up to 100 milliseconds (5 frames)
+- **THEN** the PSRAM jitter buffer SHALL deliver continuous, glitch-free PCM frames to the I2S speaker DMA without buffer underflow or internal SRAM allocation
 
-### Requirement: WebRTC Audio Jitter Buffering
-The audio pipeline SHALL maintain an adaptive jitter buffer in external PSRAM to absorb network packet delay variations and packet reordering without causing audio underruns or buffer exhaustion.
+### Requirement: Non-Blocking Audio Execution During Heavy Network I/O
+The audio subsystem SHALL maintain real-time 20 millisecond frame deadlines with zero dropped frames or audio clicks during concurrent high-throughput network activity.
 
-#### Scenario: Network delay jitter handling
-- **WHEN** incoming SRTP audio packets arrive with network jitter of up to 60 milliseconds
-- **THEN** the jitter buffer SHALL deliver continuous, glitch-free PCM audio frames to the I2S speaker DMA without buffer underflow or audible clipping
+#### Scenario: Simultaneous Matter TCP transfer and active listen stream
+- **WHEN** a high-throughput network burst, Matter-over-TCP session negotiation, or HTTP dashboard asset transfer occurs during an active audio stream
+- **THEN** microphone capture, Opus encoding, and packet transmission SHALL maintain continuous 20 millisecond cadence with zero missed audio deadlines
