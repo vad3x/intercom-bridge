@@ -17,3 +17,11 @@ context: |
   - Endpoint 1: Audio Doorbell (0x0141) with Switch, Chime, and WebRTC streaming. Audio signaling never unlocks the door.
   - Endpoint 2: Door Lock (0x000A) for strike unlock actuation.
   - In rs-matter cluster definitions, always prefix with_attrs with 'system;' to preserve global system attributes (0xFFF8-0xFFFD).
+
+rules:
+  tasks: |
+    - Mandatory TDD Prestep: Every implementation task MUST follow the strict two-beat rhythm:
+      1. An explicit [RED] prestep task to write a failing test first and verify failure with an exact CLI command.
+      2. An explicit [GREEN] task to implement the minimal code and verify it passes with that exact command.
+    - Every task MUST include the exact test file path, the assertions being tested, and the exact copy-paste terminal command.
+    - Never combine test authoring and implementation into a single unverified task.

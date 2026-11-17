@@ -40,6 +40,16 @@ Open the worktree directory itself in the editor. Merge or remove completed work
 
 When a task uses multiple repositories or worktrees, run `git rev-parse --show-toplevel`, `git status -sb`, and `git worktree list --porcelain` in the repository named by the task before editing. `.worktrees` entries can be symlinks to sibling repositories rather than Git worktrees; inspect them with `ls -la` and confirm the registered checkout path with `git worktree list`. Do not move a worktree with `mv`; if relocation is necessary, use `git worktree move <old-path> <new-path>` so Git updates its administrative metadata. Prefer a sibling worktree outside the primary checkout when the task allows it, avoiding nested Cargo config discovery; otherwise follow the nested-worktree Cargo commands below.
 
+## OpenSpec & Test-Driven Development (TDD) Workflow
+
+When creating, refining, or implementing OpenSpec changes (`tasks.md`), all agents MUST enforce strict Test-Driven Development (TDD):
+
+1. **Mandatory Two-Beat Task Structure:** Every implementation feature MUST be divided into an explicit sequential `[RED]` prestep followed by a `[GREEN]` implementation step:
+   - `- [ ] X.1 [RED] Write failing test in <file> asserting <condition>, verifying failure with: <exact-command>`
+   - `- [ ] X.2 [GREEN] Implement <feature> in <file>, verifying test passes with: <exact-command>`
+2. **Explicit Deterministic Commands:** Never write vague verification steps (e.g. "verify tests pass"). Every task MUST specify the exact, copy-pasteable terminal command targeting the host architecture (e.g. `mise exec -- cargo test -p intercom-media --test ramp_tests --target x86_64-apple-darwin`).
+3. **Evidence Before Assertions:** An implementation agent must run the command and confirm test failure (`[RED]`) before writing implementation code, and confirm clean exit code `0` (`[GREEN]`) before checking off any task. Combining test writing and implementation into a single unverified task is strictly forbidden.
+
 ## Build, Test & Flash
 
 ### Cargo from a nested worktree
