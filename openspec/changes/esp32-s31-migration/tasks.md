@@ -19,11 +19,11 @@
 - [ ] 3.2 Update WebRTC jitter buffers and DTLS scratchpads to allocate dynamically from the PSRAM heap, verifying internal SRAM remains >32 KiB
 - [ ] 3.3 Implement memory telemetry reporting in `/api/status` distinguishing internal SRAM vs PSRAM free heap, verifying output via HTTP curl test
 
-## 4. Full-Duplex AEC Audio Engine
+## 4. Half-Duplex Audio Engine & Opus Offload
 
-- [ ] 4.1 Implement SIMD-accelerated Acoustic Echo Cancellation (AEC) filter for microphone capture, verifying echo suppression attenuation >25 dB
-- [ ] 4.2 Upgrade WebRTC audio session pipeline from half-duplex turn-taking interlock to full-duplex continuous capture and playback, verifying concurrent audio flows
-- [ ] 4.3 Benchmark Opus SILK encoding and AEC execution duration on Core 1 at 320 MHz, verifying frame completion latency under 5 ms
+- [ ] 4.1 Implement half-duplex direction interlock between I2S DMA receive (terminal 3) and transmit (terminal 2) with click-free mute/unmute ramps, verifying clean audio switching
+- [ ] 4.2 Benchmark Opus SILK encoding execution duration on Core 1 at 320 MHz, verifying frame completion latency under 5 ms and zero stack overflow
+- [ ] 4.3 Verify continuous WebRTC listen stream stability (>180 seconds) without heap or stack degradation
 
 ## 5. Dual-Bank OTA Partitioning & Build Integration
 
