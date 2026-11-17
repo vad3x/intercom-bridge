@@ -2,22 +2,29 @@
 
 ## Purpose
 
-Defines hardware delta requirements for migrating from ESP32-C6 to ESP32-S31, resolving memory allocation limits, single-core CPU contention, 4 MB DevKit OTA limitations, and power transient stability at 320 MHz.
+Defines hardware delta requirements for migrating from ESP32-C6 to ESP32-S31, resolving memory allocation limits, single-core CPU contention, 4 MB DevKit OTA limitations, and power transient stability at 320 MHz, while maintaining dual-target firmware portability.
 
 ## ADDED Requirements
 
+### Requirement: Dual-Target Portability via Feature Configuration
+The firmware SHALL support compilation for either ESP32-C6 or ESP32-S31 from a single unified codebase, selecting hardware peripherals, multi-core execution, and memory allocators via mutually exclusive Cargo feature flags.
+
+#### Scenario: Compiling for ESP32-C6 vs ESP32-S31 targets
+- **WHEN** the firmware is built with the target feature flag (esp32c6 or esp32s31)
+- **THEN** the build system SHALL configure HAL drivers, memory allocators, and core execution models matching the selected silicon with zero manual source modifications
+
 ### Requirement: Core-Level Execution Isolation
-The microcontroller architecture SHALL physically isolate real-time audio I2S DMA and Opus encoding onto an independent execution core, preventing preemption by Wi-Fi MAC and network interrupts.
+When compiled for the ESP32-S31, the architecture SHALL physically isolate real-time audio I2S DMA and Opus encoding onto Core 1, preventing preemption by Wi-Fi MAC and network interrupts on Core 0.
 
 #### Scenario: Network burst does not preempt audio processing
 - **WHEN** maximum-throughput Wi-Fi 6 transmission bursts and Matter TCP handshakes execute on Core 0
 - **THEN** Core 1 audio I2S DMA servicing and Opus encoding SHALL experience zero interrupt delay or scheduling preemption
 
 ### Requirement: Tiered Memory Allocation and Headroom Guarantees
-The system memory allocator SHALL allocate all dynamic audio packet queues, WebRTC jitter buffers, and TLS session contexts from external PSRAM, guaranteeing internal SRAM stack margin under peak load.
+When compiled for the ESP32-S31, the system memory allocator SHALL allocate all dynamic audio packet queues, WebRTC jitter buffers, and TLS session contexts from external PSRAM, guaranteeing internal SRAM stack margin under peak load.
 
 #### Scenario: Memory headroom during active audio and network load
-- **WHEN** concurrent Matter-over-TCP, active WebRTC audio streaming, and HTTP dashboard requests run simultaneously
+- **WHEN** concurrent Matter-over-TCP, active WebRTC audio streaming, and HTTP dashboard requests run simultaneously on S31
 - **THEN** internal SRAM call-stack headroom SHALL remain above 32 KiB and all dynamic heap growth SHALL be served from external DDR PSRAM
 
 ### Requirement: Universal Dual-Bank A/B OTA Support
