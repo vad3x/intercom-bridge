@@ -1,20 +1,21 @@
-# Proposal: Upstream Wi-Fi 6 (802.11ax) & Fast Scanning in rs-matter-embassy
+# Proposal: Upstream Wi-Fi 6 (802.11ax), Scan Tuning & RSSI Filtering in rs-matter-embassy
 
 ## Why
 
-Upstream `sysgrok/rs-matter-embassy` currently defaults to 802.11b/g/n when configuring ESP-family Wi-Fi radios (`esp-radio`). For modern Wi-Fi 6 microcontrollers like the ESP32-C6, enabling 802.11ax negotiation improves spectrum efficiency, reduces contention latency, and ensures compatibility with AX-only or WPA3-enterprise networks. Furthermore, implementing fast BSS re-association and RSSI deduplication minimizes network drop recovery times.
+Upstream `sysgrok/rs-matter-embassy` leaves `esp-radio` station configuration on defaults, omitting `Protocol::AX` (802.11ax), active scan dwell tuning, `ScanMethod::AllChannels` + `failure_retry_cnt`, and AP scan result filtering. On ESP32-C6 and crowded 2.4 GHz environments, this prevents 802.11ax negotiation, causes missed APs during short default scans, and can flood Matter `NetworkCommissioning` `ScanNetworks` responses with duplicate BSSIDs or hidden SSIDs.
 
 ## What Changes
 
 - In `rs-matter-embassy/src/wifi/esp.rs`:
-  - Pass `Protocol::AX` in station configuration when building for 802.11ax-capable targets (ESP32-C6).
-  - Use `ScanMethod::Fast` for immediate reconnect on the last known channel before all-channel scan.
-  - Sort scan results descending by RSSI and deduplicate identical SSIDs, capping results to prevent heap exhaustion.
+  - Configure `Protocols::default().with_2_4(Protocol::B | Protocol::G | Protocol::N | Protocol::AX)` on both scan and connect `StationConfig`s (verify `Protocol::AX` availability across `esp-radio` chip features).
+  - Configure `ScanTypeConfig::Active { min: 30 ms, max: 100 ms }` in `scan` for reliable beacon discovery.
+  - Configure `ScanMethod::AllChannels` and `with_failure_retry_cnt(3)` in `connect`.
+  - Sort `scan_async` results descending by RSSI, skip empty/hidden SSIDs on open scans, deduplicate by SSID (keeping the strongest BSSID), and cap reported results at `MAX_SCAN_RESULTS = 10` (`CHIP_DEVICE_CONFIG_MAX_SCAN_NETWORKS_RESULTS`).
 
 ## Capabilities
 
 ### New Capabilities
-- `embassy-wifi6-fast-scan`: 802.11ax protocol negotiation, fast channel re-association scanning, and RSSI deduplication in `rs-matter-embassy`.
+- `embassy-wifi6-fast-scan`: 802.11ax protocol negotiation, tuned active/all-channel scanning with retry count, and RSSI-sorted deduplicated scan reporting in `rs-matter-embassy`.
 
 ### Modified Capabilities
 <!-- None -->
@@ -24,5 +25,5 @@ Upstream `sysgrok/rs-matter-embassy` currently defaults to 802.11b/g/n when conf
 - **Affected Repositories**:
   - `sysgrok/rs-matter-embassy` (`rs-matter-embassy/src/wifi/esp.rs`)
 - **API Surface**:
-  - Internal wireless driver tuning; public `EspWifiRadio` and `EspWifiDriver` signatures remain backward-compatible.
+  - Internal wireless driver tuning; public `EspWifiRadio`, `EspWifiDriver`, and `EspWifiController` signatures remain unchanged.
 - **Breaking Changes**: None.
