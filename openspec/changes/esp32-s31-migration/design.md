@@ -10,11 +10,12 @@ The migration introduces support for the **ESP32-S31** (dual-core 32-bit RISC-V 
 
 **Goals:**
 - Provide single-codebase dual-target support for both ESP32-C6 and ESP32-S31 selected via compile-time Cargo feature flags, defaulting to `esp32c6` for backwards compatibility.
+- Decouple hardware targets using a formal static-dispatch trait (`trait PlatformDriver`) implemented by `C6Platform`, `S31Platform`, and a host-capable `MockPlatform`.
 - On ESP32-S31: Enable dual-core task isolation (`ProCpu` for network/Embassy, `AppCpu` for audio DSP) communicating over typed `embassy_sync::channel::Channel` queues.
 - On ESP32-S31: Enable tiered memory architecture utilizing fast internal SRAM for DMA/ISR routines and DDR Octal PSRAM for audio frame queues, WebRTC jitter buffers, and TLS session arenas, with fail-fast panic on PSRAM failure.
 - On ESP32-C6: Retain the stable single-core cooperative Embassy async event loop and tuned 120 KiB internal SRAM allocation.
 - Centralize all target GPIO pin assignments in compile-time configuration modules (`src/platform/s31.rs` and `src/platform/c6.rs`).
-- Verify multi-core abstractions and S31 logic through host-capable unit testing (`cargo test --target x86_64-apple-darwin`).
+- Verify multi-core abstractions and S31 logic through host-capable unit testing (`cargo test --target x86_64-apple-darwin`) via `MockPlatform`.
 
 **Non-Goals:**
 - Physical PCB hardware redesign or EasyEDA schematic authoring: Hardware board layout and manufacturing revisions are explicitly **out of scope** for this firmware specification and will be addressed in a dedicated hardware revision.
@@ -25,14 +26,37 @@ The migration introduces support for the **ESP32-S31** (dual-core 32-bit RISC-V 
 
 ## Decisions
 
-### 1. Feature-Driven Dual-Target Architecture (`esp32c6` default vs `esp32s31`)
-- **Choice**: Structure target support in `crates/intercom-firmware` using mutually exclusive Cargo features:
-  - `esp32c6` (default): Compiles HAL with `esp-hal/esp32c6`, runs single-core Embassy runtime, sets `HEAP_SIZE = 120 KiB` in internal SRAM, and runs audio I2S tasks cooperatively.
-  - `esp32s31`: Compiles HAL with `esp-hal/esp32s31`, initializes `CpuControl` to boot Core 1 (`AppCpu`), runs dual independent Embassy executors, initializes DDR PSRAM allocator, and routes audio queues across inter-core channels.
-- **Rationale**: Preserves 100% backwards compatibility for existing C6 builds, CI workflows, and developers while unlocking next-generation S31 capabilities on demand.
+### 1. Formal Static-Dispatch Trait (`trait PlatformDriver`)
+- **Choice**: Define an explicit `PlatformDriver` trait in `crates/intercom-firmware/src/platform/mod.rs` implemented by `C6Platform`, `S31Platform`, and `MockPlatform`:
+  ```rust
+  pub trait PlatformDriver {
+      fn init_heap(&mut self);
+      fn spawn_audio_worker(
+          &mut self,
+          spawner: Spawner,
+          worker: impl Future<Output = ()> + Send + 'static,
+      );
+  }
+  ```
+  The active platform type is bound at compile time via type alias:
+  ```rust
+  #[cfg(feature = "esp32c6")]
+  pub type ActivePlatform = c6::C6Platform;
+  #[cfg(feature = "esp32s31")]
+  pub type ActivePlatform = s31::S31Platform;
+  #[cfg(test)]
+  pub type ActivePlatform = mock::MockPlatform;
+  ```
+- **Rationale**:
+  1. *Compile-time Type Safety*: Strict trait contract prevents signature drift between C6 and S31 builds.
+  2. *Host Mockability*: Enables `MockPlatform` on macOS (`x86_64-apple-darwin`) for CI verification without physical hardware.
+  3. *Zero Runtime Overhead*: Static dispatch guarantees monomorphic inlining with zero virtual dispatch (`dyn`) penalties.
+- **Alternatives Considered**:
+  - *Duck-typed module re-exports (Option A)*: Rejected; subtle method signature differences between platform files are only discovered when that exact feature build is triggered.
+  - *Separate fine-grained facades (Option C)*: Rejected; excessive parameter passing and wiring ceremony in `main.rs`.
 
 ### 2. Multi-Core Concurrency Model on S31: Dual Embassy Executors
-- **Choice**: When `feature = "esp32s31"` is enabled, instantiate an independent `embassy_executor::Executor` on each CPU core (`ProCpu` and `AppCpu`), communicating across core boundaries using static `embassy_sync::channel::Channel<CriticalSectionRawMutex, T, N>` queues carrying strongly typed 20 ms frame structures (`OpusPacket` and `PcmFrame`).
+- **Choice**: When `feature = "esp32s31"` is enabled, `S31Platform` initializes `CpuControl` to boot Core 1 (`AppCpu`) and runs an independent `embassy_executor::Executor`, communicating across core boundaries using static `embassy_sync::channel::Channel<CriticalSectionRawMutex, T, N>` queues carrying strongly typed 20 ms frame structures (`OpusPacket` and `PcmFrame`).
   ```
   +-----------------------------------------------------------------------------------------------+
   | Core 0: ProCpu (Executor 0)                                   | Core 1: AppCpu (Executor 1)   |
@@ -56,9 +80,9 @@ The migration introduces support for the **ESP32-S31** (dual-core 32-bit RISC-V 
   - On `esp32s31`:
     - **Internal SRAM (512 KiB)**: Reserved for ISR call stacks, RTOS task stacks, cache memory, Wi-Fi PHY descriptors, and I2S DMA ping-pong buffers.
     - **DDR Octal PSRAM (2 to 16 MB)**: Managed via `esp-alloc` external memory heap. Backs WebRTC jitter buffers, Opus encoder/decoder state structures, DTLS-SRTP packet scratchpads, and HTTP dashboard assets.
-    - **Fail-Fast Policy**: If PSRAM is not detected or fails initialization at boot, the firmware logs diagnostic telemetry and panics immediately, triggering watchdog reset.
+    - **Fail-Fast Policy**: If PSRAM is not detected or fails initialization at boot, `S31Platform` logs diagnostic telemetry and panics immediately, triggering watchdog reset.
   - On `esp32c6`:
-    - **Internal SRAM only**: Uses tuned `HEAP_SIZE = 120 KiB` in `.bss`, preserving 48 KiB for main task stack.
+    - **Internal SRAM only**: `C6Platform` sets tuned `HEAP_SIZE = 120 KiB` in `.bss`, preserving 48 KiB for main task stack.
 - **Rationale**: PSRAM is mandatory for S31 memory safety guarantees. Silently falling back to internal SRAM on an S31 build would recreate the C6 stack starvation issue.
 
 ### 4. Half-Duplex Analog Routing & Opus Codec Offload
@@ -66,7 +90,7 @@ The migration introduces support for the **ESP32-S31** (dual-core 32-bit RISC-V 
 - **Rationale**: Matches the physical single-channel analog building amplifier (TekTone IR204E / PK543A) and Matter 1.5 Audio Doorbell specification. On-device AEC is omitted; client smartphones (iOS CoreAudio) handle acoustic echo cancellation natively.
 
 ### 5. Centralized Platform Pin Configuration
-- **Choice**: Encapsulate all target-specific peripheral wiring in compile-time configuration modules (`src/platform/c6.rs` and `src/platform/s31.rs`), implementing a common `PlatformServices` trait.
+- **Choice**: Encapsulate all target-specific peripheral wiring in compile-time configuration modules (`src/platform/c6.rs` and `src/platform/s31.rs`), implementing the common `PlatformDriver` trait.
 - **Rationale**: Decouples firmware architecture from future PCB routing revisions. When the S31 PCB layout is finalized in a later hardware workstream, pin numbers can be adjusted in a single file without touching driver or domain code.
 
 ### 6. Flash Partition Scheme & Cryptographic OTA
@@ -75,18 +99,18 @@ The migration introduces support for the **ESP32-S31** (dual-core 32-bit RISC-V 
 ## Risks / Trade-offs
 
 - **[Risk] Upstream `esp-hal` support timeline for S31**: S31 HAL crate may lag behind silicon samples.
-  - *Mitigation*: Develop the dual-target abstraction now using the C6 implementation as the baseline; mock the S31 multi-core channel interface in host tests (`x86_64-apple-darwin`).
+  - *Mitigation*: Develop the dual-target abstraction now using `MockPlatform` on host tests (`x86_64-apple-darwin`) and `C6Platform` on physical hardware.
 - **[Risk] DDR PSRAM latency impact on audio**: DMA underrun if PSRAM bus is saturated by Wi-Fi traffic.
   - *Mitigation*: Pin all hardware I2S DMA circular buffers strictly in internal SRAM. Only push completed 20 ms PCM frames across the Channel boundary into PSRAM.
 
 ## Migration Plan
 
-1. **Phase 1: Feature Flag & Platform Encapsulation**
-   - Refactor `crates/intercom-firmware` to support `esp32c6` (default) and `esp32s31` features.
-   - Encapsulate hardware initialization into `platform/c6.rs` and `platform/s31.rs`.
+1. **Phase 1: Feature Flag & PlatformDriver Trait**
+   - Define `PlatformDriver` trait in `crates/intercom-firmware/src/platform/mod.rs`.
+   - Implement `C6Platform`, `S31Platform`, and `MockPlatform`.
 2. **Phase 2: Multi-Core Embassy IPC (S31)**
-   - Implement `CpuControl` boot of `AppCpu` and typed `Channel` audio queue pump under `cfg(feature = "esp32s31")`.
+   - Implement `CpuControl` boot of `AppCpu` and typed `Channel` audio queue pump in `S31Platform`.
 3. **Phase 3: Tiered PSRAM Allocator & Fail-Fast Safety (S31)**
    - Initialize DDR PSRAM heap with boot-time verification panic, configuring WebRTC jitter buffers to allocate from PSRAM on S31.
-4. **Phase 4: Dual-Target Build & OTA Validation**
-   - Verify both `cargo build-devkit` (C6) and `cargo build --features esp32s31` compile cleanly and pass automated host test suites on macOS.
+4. **Phase 4: Dual-Target Build & Host Verification**
+   - Verify both `cargo test --features esp32c6` and `cargo test --features esp32s31` compile cleanly and pass automated unit test suites on macOS.

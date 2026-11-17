@@ -1,20 +1,21 @@
 # Tasks: ESP32-S31 Firmware & Multi-Core Platform Migration
 
-## 1. Dual-Target Feature Configuration & Platform Encapsulation
+## 1. Dual-Target PlatformDriver Trait & Feature Architecture
 
 - [ ] 1.1 Configure mutually exclusive `esp32c6` (default) and `esp32s31` features in `crates/intercom-firmware/Cargo.toml` and verify default resolution
-- [ ] 1.2 Refactor platform initialization into modular submodules (`platform/c6.rs` and `platform/s31.rs`) behind a common `PlatformServices` trait, verifying clean compilation for both targets
+- [ ] 1.2 Define formal `PlatformDriver` trait in `crates/intercom-firmware/src/platform/mod.rs` and implement `C6Platform`, `S31Platform`, and `MockPlatform`, verifying host compilation on macOS
 - [ ] 1.3 Centralize S31 GPIO pin declarations in `src/platform/s31.rs` for easy future PCB trace alignment, verifying no scattered pin numbers across adapter crates
+- [ ] 1.4 Refactor `crates/intercom-firmware/src/main.rs` to interact strictly via `ActivePlatform: PlatformDriver` with zero target-specific `#[cfg]` checks in `main()`
 
 ## 2. Multi-Core Architecture & Embassy IPC Abstractions (S31)
 
 - [ ] 2.1 Define typed audio frame structs (`OpusPacket`, `PcmFrame`) and configure bounded `embassy_sync::channel::Channel<CriticalSectionRawMutex, _, _>` in `crates/intercom-core`, verifying with host unit tests
-- [ ] 2.2 Implement Core 1 (`AppCpu`) Embassy executor and async audio worker task gated under `cfg(feature = "esp32s31")`, verifying compile check on RISC-V target
+- [ ] 2.2 Implement Core 1 (`AppCpu`) Embassy executor and async audio worker task in `S31Platform`, verifying compile check on RISC-V target
 - [ ] 2.3 Implement half-duplex direction switching interlock between terminal 3 (listen) and terminal 2 (talk) on Core 1, verifying click-free mute/unmute ramps
 
 ## 3. Tiered PSRAM Memory Allocation & Fail-Fast Safety (S31)
 
-- [ ] 3.1 Configure `esp-alloc` external heap allocator for DDR Octal PSRAM under `cfg(feature = "esp32s31")` with fail-fast boot-time panic check, verifying initialization telemetry
+- [ ] 3.1 Configure `esp-alloc` external heap allocator for DDR Octal PSRAM under `S31Platform` with fail-fast boot-time panic check, verifying initialization telemetry
 - [ ] 3.2 Update WebRTC jitter buffers and DTLS scratchpads to allocate dynamically from the PSRAM heap on S31, verifying internal SRAM remains >32 KiB
 - [ ] 3.3 Implement memory telemetry reporting in `/api/status` distinguishing internal SRAM vs PSRAM free heap, verifying output via HTTP curl test
 
