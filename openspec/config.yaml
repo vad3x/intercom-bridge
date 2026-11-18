@@ -19,9 +19,16 @@ context: |
   - In rs-matter cluster definitions, always prefix with_attrs with 'system;' to preserve global system attributes (0xFFF8-0xFFFD).
 
 rules:
-  tasks: |
-    - Mandatory TDD Prestep: Every implementation task MUST follow the strict two-beat rhythm:
-      1. An explicit [RED] prestep task to write a failing test first and verify failure with an exact CLI command.
-      2. An explicit [GREEN] task to implement the minimal code and verify it passes with that exact command.
-    - Every task MUST include the exact test file path, the assertions being tested, and the exact copy-paste terminal command.
-    - Never combine test authoring and implementation into a single unverified task.
+  tasks:
+    - >-
+      Mandatory TDD Prestep: Every implementation task MUST follow the strict
+      two-beat rhythm. First, an explicit [RED] prestep task writes a failing
+      test and verifies failure with an exact CLI command. Then an explicit
+      [GREEN] task implements the minimal code and verifies it passes with that
+      same command.
+    - >-
+      Every task MUST include the exact test file path, the assertions being
+      tested, and the exact copy-paste terminal command.
+    - >-
+      Never combine test authoring and implementation into a single
+      unverified task.
