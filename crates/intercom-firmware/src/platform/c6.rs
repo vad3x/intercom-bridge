@@ -1,11 +1,11 @@
 //! ESP32-C6 platform initialization.
 
-#[cfg(target_arch = "riscv32")]
+#[cfg(target_os = "none")]
 use super::{PlatformDriver, PlatformDrivers, PlatformPeripherals};
 
 pub struct C6Platform;
 
-#[cfg(target_arch = "riscv32")]
+#[cfg(target_os = "none")]
 impl PlatformDriver for C6Platform {
     type Drivers = PlatformDrivers<PlatformPeripherals>;
 

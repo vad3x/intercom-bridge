@@ -5,137 +5,155 @@
 //!
 //! Hardware: PCB v2.0 with ESP32-C6
 //! Protocol: Matter over WiFi (BLE for commissioning)
-#![cfg_attr(target_arch = "riscv32", no_std)]
-#![cfg_attr(target_arch = "riscv32", no_main)]
+#![cfg_attr(target_os = "none", no_std)]
+#![cfg_attr(target_os = "none", no_main)]
 #![recursion_limit = "256"]
 #![allow(unexpected_cfgs, async_fn_in_trait)]
 
-#[cfg(not(target_arch = "riscv32"))]
+#[cfg(not(target_os = "none"))]
 fn main() {}
 
-#[cfg(target_arch = "riscv32")]
+#[cfg(target_os = "none")]
 extern crate alloc;
 
-#[cfg(target_arch = "riscv32")]
+#[cfg(target_os = "none")]
 mod config;
-#[cfg(target_arch = "riscv32")]
-mod hardware_info;
-#[cfg(target_arch = "riscv32")]
+#[cfg(target_os = "none")]
 mod reset;
-#[cfg(target_arch = "riscv32")]
+#[cfg(target_os = "none")]
 mod utils;
-#[cfg(target_arch = "riscv32")]
+#[cfg(target_os = "none")]
 mod version;
 
-#[cfg(target_arch = "riscv32")]
-use core::mem::MaybeUninit;
-#[cfg(target_arch = "riscv32")]
-use core::pin::pin;
+#[cfg(target_os = "none")]
+use {
+    self::reset::{FirmwarePersistenceReporter, FirmwareResetDriver},
+    core::{mem::MaybeUninit, pin::pin},
+    embassy_executor::Spawner,
+    embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel},
+    esp_alloc::heap_allocator,
+    esp_backtrace as _,
+    intercom_adapter_gpio::{
+        boot_button::{GpioBootButtonConfig, GpioBootButtonDriver},
+        bus::{GpioBusConfig, GpioBusDriver},
+        ring::{GpioRingConfig, GpioRingDriver},
+    },
+    intercom_adapter_http::{HttpAudioMedia, HttpServer, HttpServerConfig},
+    intercom_adapter_matter::{
+        ClusterReadinessBarrier, DeviceInfo, IntercomAudioAvCluster, IntercomChime,
+        IntercomDoorLock, IntercomDoorLockConfig, IntercomDoorbellSwitch, IntercomWebRtcHooks,
+        MatterAccessControlDriver, MatterController, MatterControllerConfig, MatterPeripherals,
+    },
+    intercom_adapter_webrtc::{
+        dtls::{DtlsSrtpResourceCell, DtlsSrtpResources},
+        session::{WebRtcMediaEngine, WebRtcSessionConfig, WebRtcSessionHandle},
+        signaling::{SecureRandom, SignalingError, WebRtcSignalingFacade},
+    },
+    intercom_core::{
+        app::App,
+        events::{SystemStateSender, SystemStateWatch},
+        ports::inbound::{AccessControllerHandle, CommandChannel},
+        service::DiagnosticsService,
+    },
+    intercom_firmware::{
+        hardware_info::{self, FirmwareHardwareInfo},
+        platform::{ActivePlatform, PlatformDriver},
+    },
+    log::{info, warn},
+    static_cell::StaticCell,
+};
 
-#[cfg(target_arch = "riscv32")]
-use embassy_executor::Spawner;
-#[cfg(target_arch = "riscv32")]
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-#[cfg(target_arch = "riscv32")]
-use embassy_sync::channel::Channel;
-#[cfg(all(target_arch = "riscv32", feature = "esp32c6", not(feature = "devkit")))]
+#[cfg(all(
+    target_os = "none",
+    any(all(feature = "esp32c6", not(feature = "devkit")), feature = "esp32s3")
+))]
 use embassy_sync::signal::Signal;
-#[cfg(target_arch = "riscv32")]
-#[cfg(target_arch = "riscv32")]
-use esp_alloc::heap_allocator;
-#[cfg(target_arch = "riscv32")]
-use esp_backtrace as _;
-#[cfg(target_arch = "riscv32")]
-#[cfg(feature = "esp32c6")]
-use esp_hal::ram;
-#[cfg(target_arch = "riscv32")]
-#[cfg(feature = "esp32c6")]
-use esp_metadata_generated::memory_range;
-#[cfg(target_arch = "riscv32")]
-use log::{info, warn};
-#[cfg(target_arch = "riscv32")]
-use static_cell::StaticCell;
 
-#[cfg(target_arch = "riscv32")]
-#[cfg(feature = "dummy-persist")]
+#[cfg(all(target_os = "none", any(feature = "esp32c6", feature = "esp32s3")))]
+use esp_hal::ram;
+#[cfg(all(target_os = "none", any(feature = "esp32c6", feature = "esp32s3")))]
+use esp_metadata_generated::memory_range;
+
+#[cfg(all(target_os = "none", not(feature = "ota-disabled")))]
+use edf_ota::driver::FlashOtaDriver;
+#[cfg(all(target_os = "none", not(feature = "led-smartled")))]
+use intercom_adapter_gpio::led::GpioLedDriver;
+#[cfg(all(target_os = "none", not(feature = "esp32s3")))]
+use intercom_adapter_webrtc::session::WebRtcMediaResources;
+#[cfg(all(target_os = "none", feature = "ota-disabled"))]
+use intercom_firmware::disabled_ota::DisabledOtaDriver;
+#[cfg(all(target_os = "none", feature = "esp32s3"))]
+use intercom_firmware::platform;
+#[cfg(all(target_os = "none", feature = "dummy-persist"))]
 use rs_matter_embassy::matter::persist::DummyKvBlobStore;
 
-#[cfg(target_arch = "riscv32")]
-use intercom_core::app::App;
-#[cfg(target_arch = "riscv32")]
-use intercom_core::events::{SystemStateSender, SystemStateWatch};
-#[cfg(target_arch = "riscv32")]
-use intercom_core::ports::inbound::{AccessControllerHandle, CommandChannel};
-#[cfg(target_arch = "riscv32")]
-use intercom_core::service::DiagnosticsService;
-
-#[cfg(target_arch = "riscv32")]
-#[cfg(not(feature = "ota-disabled"))]
-use edf_ota::driver::FlashOtaDriver;
-#[cfg(target_arch = "riscv32")]
-use intercom_adapter_http::{HttpAudioMedia, HttpServer, HttpServerConfig};
-#[cfg(target_arch = "riscv32")]
-use intercom_adapter_webrtc::dtls::{DtlsSrtpResourceCell, DtlsSrtpResources};
-#[cfg(target_arch = "riscv32")]
-use intercom_adapter_webrtc::session::{
-    WebRtcMediaEngine, WebRtcMediaResources, WebRtcSessionConfig, WebRtcSessionHandle,
-};
-#[cfg(target_arch = "riscv32")]
-use intercom_adapter_webrtc::signaling::{SecureRandom, SignalingError, WebRtcSignalingFacade};
-#[cfg(target_arch = "riscv32")]
-#[cfg(feature = "ota-disabled")]
-use intercom_firmware::disabled_ota::DisabledOtaDriver;
-
-#[cfg(target_arch = "riscv32")]
-use intercom_adapter_gpio::boot_button::{GpioBootButtonConfig, GpioBootButtonDriver};
-#[cfg(target_arch = "riscv32")]
-use intercom_adapter_gpio::bus::{GpioBusConfig, GpioBusDriver};
-#[cfg(target_arch = "riscv32")]
-#[cfg(not(feature = "led-smartled"))]
-use intercom_adapter_gpio::led::GpioLedDriver;
-#[cfg(target_arch = "riscv32")]
-use intercom_adapter_gpio::ring::{GpioRingConfig, GpioRingDriver};
-
-#[cfg(target_arch = "riscv32")]
-use intercom_adapter_matter::{
-    ClusterReadinessBarrier, DeviceInfo, IntercomAudioAvCluster, IntercomChime, IntercomDoorLock,
-    IntercomDoorLockConfig, IntercomDoorbellSwitch, IntercomWebRtcHooks, MatterAccessControlDriver,
-    MatterController, MatterControllerConfig, MatterPeripherals,
-};
-
-#[cfg(target_arch = "riscv32")]
-use self::hardware_info::FirmwareHardwareInfo;
-#[cfg(target_arch = "riscv32")]
-use self::reset::{FirmwarePersistenceReporter, FirmwareResetDriver};
-#[cfg(target_arch = "riscv32")]
-use intercom_firmware::platform::{ActivePlatform, PlatformDriver};
-
-#[cfg(all(target_arch = "riscv32", feature = "esp32c6"))]
+#[cfg(all(target_os = "none", any(feature = "esp32c6", feature = "esp32s3")))]
 const RECLAIMED_RAM: usize =
     memory_range!("DRAM2_UNINIT").end - memory_range!("DRAM2_UNINIT").start;
 
-#[cfg(target_arch = "riscv32")]
+#[cfg(all(target_os = "none", feature = "esp32s3"))]
+const S3_INTERNAL_HEAP_LAYOUT: platform::s3::InternalHeapLayout =
+    platform::s3::internal_heap_layout(
+        config::HEAP_SIZE,
+        RECLAIMED_RAM,
+        platform::s3::DCACHE_RECLAIMED_BYTES,
+        core::mem::size_of::<DtlsSrtpResources>(),
+        core::mem::size_of::<esp_hal::system::Stack<32_768>>(),
+    );
+
+#[cfg(target_os = "none")]
 fn media_free_heap_bytes() -> u32 {
-    esp_alloc::HEAP.free().min(u32::MAX as usize) as u32
+    let low_water = hardware_info::FirmwareHardwareInfo::record_media_resource_sample();
+    #[cfg(feature = "esp32s3")]
+    {
+        static SAMPLE_COUNT: portable_atomic::AtomicU32 = portable_atomic::AtomicU32::new(0);
+        let sample = SAMPLE_COUNT.fetch_add(1, portable_atomic::Ordering::Relaxed);
+        if sample % 50 == 0 {
+            info!(
+                "WebRTC media resource low water min_internal_free_bytes={} min_audio_stack_free_bytes={} latest_psram_free_bytes={}",
+                low_water.min_internal_free_bytes,
+                low_water.min_audio_stack_free_bytes,
+                low_water.latest_psram_free_bytes,
+            );
+        }
+    }
+    low_water.min_internal_free_bytes.min(u32::MAX as usize) as u32
 }
 
-#[cfg(target_arch = "riscv32")]
+#[cfg(all(target_os = "none", feature = "esp32s3"))]
+fn fill_s3_secure_random(output: &mut [u8]) -> bool {
+    platform::entropy::fill_global(output).is_ok()
+}
+
+#[cfg(all(target_os = "none", feature = "esp32s3"))]
+fn start_s3_radio_entropy() -> bool {
+    platform::entropy::mark_radio_starting().is_ok()
+}
+
+#[cfg(target_os = "none")]
 struct HardwareSecureRandom;
 
-#[cfg(all(target_arch = "riscv32", feature = "esp32c6", not(feature = "devkit")))]
+#[cfg(all(
+    target_os = "none",
+    any(all(feature = "esp32c6", not(feature = "devkit")), feature = "esp32s3")
+))]
 #[embassy_executor::task]
 async fn i2s_audio_worker(
     pipeline: intercom_adapter_audio::I2sAudioPipeline,
     rx_audio: &'static intercom_media::RxAudioChannel,
     tx_audio: &'static intercom_media::TxAudioChannel,
+    capture_source: intercom_adapter_audio::I2sCaptureSource,
 ) {
-    if let Err(error) = pipeline.run(rx_audio.sender(), tx_audio.receiver()).await {
+    if let Err(error) = pipeline
+        .run_with_capture_source(rx_audio.sender(), tx_audio.receiver(), capture_source)
+        .await
+    {
         warn!("I2S DMA stream failed: {:?}", error);
         custom_halt();
     }
 }
 
-#[cfg(all(target_arch = "riscv32", feature = "esp32s31"))]
+#[cfg(all(target_os = "none", feature = "esp32s31"))]
 #[embassy_executor::task]
 async fn s31_synthetic_audio_worker(
     rx_audio: &'static intercom_media::RxAudioChannel,
@@ -204,7 +222,7 @@ async fn s31_synthetic_audio_worker(
     }
 }
 
-#[cfg(target_arch = "riscv32")]
+#[cfg(target_os = "none")]
 impl SecureRandom for HardwareSecureRandom {
     fn fill(&self, out: &mut [u8]) -> Result<(), SignalingError> {
         #[cfg(feature = "esp32c6")]
@@ -212,13 +230,17 @@ impl SecureRandom for HardwareSecureRandom {
             let trng = esp_hal::rng::Trng::try_new().map_err(|_| SignalingError::NotReady)?;
             trng.read(out);
         }
+        #[cfg(feature = "esp32s3")]
+        if !fill_s3_secure_random(out) {
+            return Err(SignalingError::NotReady);
+        }
         #[cfg(feature = "esp32s31")]
         esp_hal::rng::Rng::new().read(out);
         Ok(())
     }
 }
 
-#[cfg(target_arch = "riscv32")]
+#[cfg(target_os = "none")]
 esp_bootloader_esp_idf::esp_app_desc!(
     version::SW_VER_STR,
     "intercom-bridge",
@@ -237,7 +259,7 @@ esp_bootloader_esp_idf::esp_app_desc!(
 
 /// Called by `esp-backtrace` after printing the backtrace on panic.
 /// Triggers a software reset so the device recovers automatically.
-#[cfg(target_arch = "riscv32")]
+#[cfg(target_os = "none")]
 #[unsafe(no_mangle)]
 pub fn custom_halt() -> ! {
     crate::reset::force_bus_relays_low();
@@ -248,13 +270,15 @@ pub fn custom_halt() -> ! {
 // Main entry point
 // ============================================================================
 
-#[cfg(target_arch = "riscv32")]
+#[cfg(target_os = "none")]
 #[esp_rtos::main]
 async fn main(spawner: Spawner) {
     if let Err(error) = utils::uptime_logger::init(log::LevelFilter::Info) {
         esp_println::println!("Failed to initialize uptime logger: {error:?}");
         custom_halt();
     }
+
+    reset::force_bus_relays_low();
 
     info!(
         "Smart Intercom v{} (build: {}, date: {}, rev: {})",
@@ -271,6 +295,11 @@ async fn main(spawner: Spawner) {
     }
     #[cfg(feature = "esp32s31")]
     heap_allocator!(size: config::HEAP_SIZE);
+    #[cfg(feature = "esp32s3")]
+    {
+        heap_allocator!(size: S3_INTERNAL_HEAP_LAYOUT.standard_bytes);
+        heap_allocator!(#[ram(reclaimed)] size: S3_INTERNAL_HEAP_LAYOUT.boot_reclaimed_bytes);
+    }
 
     let (mut platform, platform_drivers) = ActivePlatform::init();
     let peripherals = platform_drivers.peripherals;
@@ -301,6 +330,7 @@ async fn main(spawner: Spawner) {
         Channel::new();
     static WEBRTC_STATE: portable_atomic::AtomicU8 = portable_atomic::AtomicU8::new(0);
     static WEBRTC_HANDLE: StaticCell<WebRtcSessionHandle<'static>> = StaticCell::new();
+    #[cfg(not(feature = "esp32s3"))]
     static mut WEBRTC_RESOURCES: WebRtcMediaResources = WebRtcMediaResources::new();
     #[esp_hal::ram(reclaimed)]
     static mut WEBRTC_DTLS_RESOURCES: MaybeUninit<DtlsSrtpResources> = MaybeUninit::uninit();
@@ -324,10 +354,19 @@ async fn main(spawner: Spawner) {
     };
     let dtls_resource_cell =
         WEBRTC_DTLS_RESOURCE_CELL.init(DtlsSrtpResourceCell::new(dtls_resources));
+    #[cfg(not(feature = "esp32s3"))]
     let webrtc_resources = unsafe { &mut *core::ptr::addr_of_mut!(WEBRTC_RESOURCES) };
+    #[cfg(feature = "esp32s3")]
+    let webrtc_resources = intercom_firmware::platform::s3::allocate_webrtc_media_resources();
     #[cfg(feature = "esp32s31")]
     let webrtc_jitter_buffer = intercom_firmware::platform::s31::allocate_webrtc_jitter_buffer();
+    #[cfg(feature = "esp32s3")]
+    let webrtc_jitter_buffer = intercom_firmware::platform::s3::allocate_webrtc_jitter_buffer();
     #[cfg(feature = "esp32s31")]
+    let opus_channel = Some(&OPUS_CHANNEL);
+    #[cfg(feature = "esp32s3")]
+    let opus_channel = None;
+    #[cfg(any(feature = "esp32s31", feature = "esp32s3"))]
     let (mut webrtc_engine, webrtc_session_handle) =
         WebRtcMediaEngine::new_with_opus_channel_and_jitter_buffer(
             &WEBRTC_REQUESTS,
@@ -335,12 +374,12 @@ async fn main(spawner: Spawner) {
             access_handle,
             RX_AUDIO_CHANNEL.receiver(),
             TX_AUDIO_CHANNEL.sender(),
-            Some(&OPUS_CHANNEL),
+            opus_channel,
             webrtc_jitter_buffer,
             webrtc_resources,
             dtls_resource_cell,
         );
-    #[cfg(not(feature = "esp32s31"))]
+    #[cfg(not(any(feature = "esp32s31", feature = "esp32s3")))]
     let (mut webrtc_engine, webrtc_session_handle) = WebRtcMediaEngine::new(
         &WEBRTC_REQUESTS,
         &WEBRTC_STATE,
@@ -412,9 +451,11 @@ async fn main(spawner: Spawner) {
         MatterControllerConfig {
             peripherals: MatterPeripherals {
                 wifi: peripherals.WIFI,
-                #[cfg(feature = "esp32c6")]
+                #[cfg(any(feature = "esp32c6", feature = "esp32s3"))]
                 bt: peripherals.BT,
+                #[cfg(not(feature = "esp32s3"))]
                 rng: peripherals.RNG,
+                #[cfg(not(feature = "esp32s3"))]
                 adc1: peripherals.ADC1,
             },
             device_info: DeviceInfo {
@@ -430,6 +471,10 @@ async fn main(spawner: Spawner) {
             },
             store,
             comm_data: None,
+            #[cfg(feature = "esp32s3")]
+            secure_random: fill_s3_secure_random,
+            #[cfg(feature = "esp32s3")]
+            start_radio_entropy: start_s3_radio_entropy,
         },
         state_sender,
         readiness,
@@ -451,9 +496,17 @@ async fn main(spawner: Spawner) {
     // Create GPIO + access control drivers → wire into App
     // ========================================================================
 
+    #[cfg(not(feature = "esp32s3"))]
     let ring = GpioRingDriver::new(GpioRingConfig::new(peripherals.GPIO2));
+    #[cfg(feature = "esp32s3")]
+    let ring = GpioRingDriver::new(GpioRingConfig::new(peripherals.GPIO4));
+    #[cfg(not(feature = "esp32s3"))]
     let bus = intercom_core::service::BusSafetyInterlock::new(GpioBusDriver::new(
         GpioBusConfig::new(peripherals.GPIO7, peripherals.GPIO10, peripherals.GPIO18),
+    ));
+    #[cfg(feature = "esp32s3")]
+    let bus = intercom_core::service::BusSafetyInterlock::new(GpioBusDriver::new(
+        GpioBusConfig::new(peripherals.GPIO17, peripherals.GPIO18, peripherals.GPIO40),
     ));
     // Start I2S clocks before releasing the C6 codec reset.
     #[cfg(all(feature = "esp32c6", not(feature = "devkit")))]
@@ -472,8 +525,45 @@ async fn main(spawner: Spawner) {
             )
             .expect("I2S0 init");
             audio_spawner.spawn(
-                i2s_audio_worker(i2s_pipeline, &RX_AUDIO_CHANNEL, &TX_AUDIO_CHANNEL)
-                    .expect("Failed to create I2S audio worker task"),
+                i2s_audio_worker(
+                    i2s_pipeline,
+                    &RX_AUDIO_CHANNEL,
+                    &TX_AUDIO_CHANNEL,
+                    intercom_adapter_audio::I2sCaptureSource::Codec,
+                )
+                .expect("Failed to create I2S audio worker task"),
+            );
+            I2S_PIPELINE_READY.signal(());
+        });
+
+        I2S_PIPELINE_READY.wait().await;
+    }
+
+    // The S3 dev board uses physical I2S playback, but the codec capture path
+    // is fed from the embedded test recording while no live intercom is wired.
+    #[cfg(feature = "esp32s3")]
+    {
+        static I2S_PIPELINE_READY: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+        platform.spawn_audio_worker(spawner, move |audio_spawner| {
+            let i2s_pipeline = intercom_adapter_audio::I2sAudioPipeline::new(
+                peripherals.I2S0,
+                peripherals.DMA_CH0,
+                peripherals.GPIO10,
+                peripherals.GPIO11,
+                peripherals.GPIO12,
+                peripherals.GPIO13,
+                peripherals.GPIO14,
+            )
+            .expect("S3 I2S0 init");
+            audio_spawner.spawn(
+                i2s_audio_worker(
+                    i2s_pipeline,
+                    &RX_AUDIO_CHANNEL,
+                    &TX_AUDIO_CHANNEL,
+                    intercom_adapter_audio::I2sCaptureSource::EmbeddedTestSample,
+                )
+                .expect("Failed to create S3 I2S audio worker task"),
             );
             I2S_PIPELINE_READY.signal(());
         });
@@ -517,24 +607,60 @@ async fn main(spawner: Spawner) {
         }
         audio_ctrl
     };
+    #[cfg(feature = "esp32s3")]
+    let audio_ctrl = {
+        let i2c_config = esp_hal::i2c::master::Config::default()
+            .with_frequency(esp_hal::time::Rate::from_khz(400));
+        let i2c0 = esp_hal::i2c::master::I2c::new(peripherals.I2C0, i2c_config)
+            .expect("S3 I2C0 init")
+            .with_sda(peripherals.GPIO8)
+            .with_scl(peripherals.GPIO9);
+        let codec_rst = esp_hal::gpio::Output::new(
+            peripherals.GPIO21,
+            esp_hal::gpio::Level::Low,
+            esp_hal::gpio::OutputConfig::default(),
+        );
+        let mut audio_ctrl = intercom_adapter_audio::Aic3204AudioDriver::new(i2c0, codec_rst);
+        if let Err(error) = audio_ctrl.init(initial_rx_gain, initial_tx_gain).await {
+            warn!(
+                "S3 TLV320AIC3204 init failed (bench without codec?): {:?}",
+                error
+            );
+        }
+        audio_ctrl
+    };
     #[cfg(feature = "esp32s31")]
     let audio_ctrl = intercom_core::ports::NoopAudioControlDriver;
 
     #[cfg(not(feature = "led-smartled"))]
+    #[cfg(not(feature = "esp32s3"))]
     static INDICATOR: StaticCell<GpioLedDriver> = StaticCell::new();
     #[cfg(not(feature = "led-smartled"))]
+    #[cfg(not(feature = "esp32s3"))]
     let indicator: &'static GpioLedDriver =
         &*INDICATOR.init(GpioLedDriver::new(peripherals.GPIO19));
+    #[cfg(all(not(feature = "led-smartled"), feature = "esp32s3"))]
+    static INDICATOR: StaticCell<GpioLedDriver> = StaticCell::new();
+    #[cfg(all(not(feature = "led-smartled"), feature = "esp32s3"))]
+    let indicator: &'static GpioLedDriver =
+        &*INDICATOR.init(GpioLedDriver::new(peripherals.GPIO47));
 
-    #[cfg(feature = "led-smartled")]
+    #[cfg(all(feature = "led-smartled", not(feature = "esp32s3")))]
     static DEVKIT_INDICATOR: StaticCell<intercom_firmware::devkit_led::DevKitLedDriver> =
         StaticCell::new();
-    #[cfg(feature = "led-smartled")]
+    #[cfg(all(feature = "led-smartled", not(feature = "esp32s3")))]
     let indicator: &'static intercom_firmware::devkit_led::DevKitLedDriver = &*DEVKIT_INDICATOR
         .init(intercom_firmware::devkit_led::DevKitLedDriver::new(
             peripherals.RMT,
             peripherals.GPIO8,
         ));
+    #[cfg(all(feature = "led-smartled", feature = "esp32s3"))]
+    static S3_INDICATOR: StaticCell<intercom_firmware::devkit_led::DevKitLedDriver> =
+        StaticCell::new();
+    #[cfg(all(feature = "led-smartled", feature = "esp32s3"))]
+    let indicator: &'static intercom_firmware::devkit_led::DevKitLedDriver = &*S3_INDICATOR.init(
+        intercom_firmware::devkit_led::DevKitLedDriver::new(peripherals.RMT, peripherals.GPIO47),
+    );
 
     let access_driver = MatterAccessControlDriver::new(&door_lock, &doorbell_switch);
     let call_broadcaster =
@@ -546,12 +672,21 @@ async fn main(spawner: Spawner) {
     );
 
     #[cfg(not(feature = "led-smartled"))]
+    #[cfg(not(feature = "esp32s3"))]
     let boot_button = GpioBootButtonDriver::new(
         GpioBootButtonConfig::new(peripherals.GPIO9).with_indicator(indicator),
     );
-    #[cfg(feature = "led-smartled")]
+    #[cfg(all(not(feature = "led-smartled"), feature = "esp32s3"))]
+    let boot_button = GpioBootButtonDriver::new(
+        GpioBootButtonConfig::new(peripherals.GPIO16).with_indicator(indicator),
+    );
+    #[cfg(all(feature = "led-smartled", not(feature = "esp32s3")))]
     let boot_button = GpioBootButtonDriver::new(
         GpioBootButtonConfig::new(peripherals.GPIO9).with_hold_feedback(indicator),
+    );
+    #[cfg(all(feature = "led-smartled", feature = "esp32s3"))]
+    let boot_button = GpioBootButtonDriver::new(
+        GpioBootButtonConfig::new(peripherals.GPIO16).with_hold_feedback(indicator),
     );
 
     let app = App::with_duration(
@@ -573,8 +708,24 @@ async fn main(spawner: Spawner) {
         config::AVAILABLE_ECOSYSTEMS,
         &STATE_WATCH,
     );
-    #[cfg(not(feature = "ota-disabled"))]
+    #[cfg(all(not(feature = "ota-disabled"), not(feature = "esp32s3")))]
     let mut ota_driver = FlashOtaDriver::new(config::OTA_PUBLIC_KEY);
+    #[cfg(all(not(feature = "ota-disabled"), feature = "esp32s3"))]
+    let mut ota_driver = FlashOtaDriver::new_with_profile(
+        config::OTA_PUBLIC_KEY,
+        edf_ota::OtaImageProfile {
+            chip_id: edf_ota::ESP32_S3_CHIP_ID,
+            slot_size: config::S3_ACTIVE_LAYOUT.app_partitions[0]
+                .expect("S3 OTA profile must define app slot 0")
+                .size as usize,
+            ota_0_offset: config::S3_ACTIVE_LAYOUT.app_partitions[0]
+                .expect("S3 OTA profile must define app slot 0")
+                .offset,
+            ota_1_offset: config::S3_ACTIVE_LAYOUT.app_partitions[1]
+                .expect("S3 OTA profile must define app slot 1")
+                .offset,
+        },
+    );
     #[cfg(feature = "ota-disabled")]
     let mut ota_driver = DisabledOtaDriver;
     // ========================================================================
@@ -643,9 +794,9 @@ async fn main(spawner: Spawner) {
 
     info!("Matter Controller Running");
 
-    #[cfg(not(feature = "devkit"))]
+    #[cfg(not(any(feature = "devkit", feature = "esp32s3")))]
     let audio_input_future = core::future::pending::<()>();
-    #[cfg(feature = "devkit")]
+    #[cfg(any(feature = "devkit", feature = "esp32s3"))]
     let audio_input_future = async {
         let mut speech = intercom_media::Pcm16LeLoopingSource::new(
             include_bytes!("../assets/devkit_test_speech_short.pcm"),
@@ -661,7 +812,7 @@ async fn main(spawner: Spawner) {
             levels.rms_dbfs,
             levels.peak_dbfs,
         );
-        info!("DevKit audio input: embedded 16 kHz mono speech sample, 1 s repeat pause");
+        info!("Test audio input: embedded 16 kHz mono speech sample, 1 s repeat pause");
         loop {
             let now_ms = embassy_time::Instant::now().as_millis();
             embassy_time::Timer::after_millis(schedule.delay_until_next_ms(now_ms)).await;
@@ -672,7 +823,7 @@ async fn main(spawner: Spawner) {
                 let queue_dropped = RX_AUDIO_CHANNEL.try_send(speech.next_frame()).is_err();
                 if let Some(queue_drops) = drop_window.record(queue_dropped) {
                     info!(
-                        "DevKit audio capture frames=50 simulated_dma_overruns={} queue_drops={}",
+                        "Test audio frames=50 simulated_overruns={} queue_drops={}",
                         simulated_dma_overruns, queue_drops,
                     );
                     simulated_dma_overruns = 0;

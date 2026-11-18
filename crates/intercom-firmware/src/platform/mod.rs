@@ -1,13 +1,28 @@
 //! Hardware platform selection and lifecycle abstraction.
 
-#[cfg(any(not(target_arch = "riscv32"), feature = "esp32c6"))]
+#[cfg(feature = "esp32s3")]
+pub mod audio_startup;
+#[cfg(feature = "esp32s3")]
+pub mod entropy;
+pub mod target_selection;
+
+#[cfg(any(not(target_os = "none"), feature = "esp32c6"))]
 pub mod c6;
-#[cfg(not(target_arch = "riscv32"))]
+#[cfg(not(target_os = "none"))]
 pub mod mock;
-#[cfg(any(not(target_arch = "riscv32"), feature = "esp32s31"))]
+#[cfg(any(not(target_os = "none"), feature = "esp32s3"))]
+pub mod s3;
+#[cfg(any(not(target_os = "none"), feature = "esp32s31"))]
 pub mod s31;
 #[cfg(feature = "esp32s31")]
 pub mod synthetic_audio;
+
+#[cfg(all(
+    feature = "esp32s3",
+    feature = "flash-4mb",
+    not(feature = "ota-disabled")
+))]
+compile_error!("the S3 4 MiB factory-only profile requires `ota-disabled`");
 
 /// Peripheral ownership transferred from platform startup to the application.
 pub struct PlatformDrivers<P> {
@@ -27,13 +42,15 @@ pub fn take_audio_state_updates(
 
 /// Peripherals shared by the C6 and S31 application wiring after platform-owned
 /// timer and Core 1 peripherals have been consumed.
-#[cfg(target_arch = "riscv32")]
+#[cfg(target_os = "none")]
 #[allow(non_snake_case)]
 pub struct PlatformPeripherals {
     pub WIFI: esp_hal::peripherals::WIFI<'static>,
-    #[cfg(feature = "esp32c6")]
+    #[cfg(any(feature = "esp32c6", feature = "esp32s3"))]
     pub BT: esp_hal::peripherals::BT<'static>,
+    #[cfg(not(feature = "esp32s3"))]
     pub RNG: esp_hal::peripherals::RNG<'static>,
+    #[cfg(not(feature = "esp32s3"))]
     pub ADC1: esp_hal::peripherals::ADC1<'static>,
     pub I2C0: esp_hal::peripherals::I2C0<'static>,
     pub GPIO0: esp_hal::peripherals::GPIO0<'static>,
@@ -49,12 +66,32 @@ pub struct PlatformPeripherals {
     pub GPIO19: esp_hal::peripherals::GPIO19<'static>,
     pub GPIO20: esp_hal::peripherals::GPIO20<'static>,
     pub GPIO21: esp_hal::peripherals::GPIO21<'static>,
+    #[cfg(any(feature = "esp32c6", feature = "esp32s31"))]
     pub GPIO22: esp_hal::peripherals::GPIO22<'static>,
+    #[cfg(any(feature = "esp32c6", feature = "esp32s31"))]
     pub GPIO23: esp_hal::peripherals::GPIO23<'static>,
-    #[cfg(feature = "esp32c6")]
+    #[cfg(any(feature = "esp32c6", feature = "esp32s3"))]
     pub I2S0: esp_hal::peripherals::I2S0<'static>,
-    #[cfg(feature = "esp32c6")]
+    #[cfg(any(feature = "esp32c6", feature = "esp32s3"))]
     pub DMA_CH0: esp_hal::peripherals::DMA_CH0<'static>,
+    #[cfg(feature = "esp32s3")]
+    pub GPIO4: esp_hal::peripherals::GPIO4<'static>,
+    #[cfg(feature = "esp32s3")]
+    pub GPIO12: esp_hal::peripherals::GPIO12<'static>,
+    #[cfg(feature = "esp32s3")]
+    pub GPIO13: esp_hal::peripherals::GPIO13<'static>,
+    #[cfg(feature = "esp32s3")]
+    pub GPIO14: esp_hal::peripherals::GPIO14<'static>,
+    #[cfg(feature = "esp32s3")]
+    pub GPIO16: esp_hal::peripherals::GPIO16<'static>,
+    #[cfg(feature = "esp32s3")]
+    pub GPIO17: esp_hal::peripherals::GPIO17<'static>,
+    #[cfg(feature = "esp32s3")]
+    pub GPIO40: esp_hal::peripherals::GPIO40<'static>,
+    #[cfg(feature = "esp32s3")]
+    pub GPIO47: esp_hal::peripherals::GPIO47<'static>,
+    #[cfg(feature = "esp32s3")]
+    pub GPIO48: esp_hal::peripherals::GPIO48<'static>,
     pub RMT: esp_hal::peripherals::RMT<'static>,
 }
 
@@ -71,41 +108,46 @@ pub trait PlatformDriver: Sized {
     );
 }
 
-#[cfg(not(target_arch = "riscv32"))]
+#[cfg(not(target_os = "none"))]
 pub type ActivePlatform = mock::MockPlatform;
 
-#[cfg(all(
-    target_arch = "riscv32",
-    feature = "esp32c6",
-    not(feature = "esp32s31")
-))]
+#[cfg(all(target_os = "none", feature = "esp32c6", not(feature = "esp32s31")))]
 pub type ActivePlatform = c6::C6Platform;
 
-#[cfg(all(
-    target_arch = "riscv32",
-    feature = "esp32s31",
-    not(feature = "esp32c6")
-))]
+#[cfg(all(target_os = "none", feature = "esp32s31", not(feature = "esp32c6")))]
 pub type ActivePlatform = s31::S31Platform;
 
-#[cfg(all(target_arch = "riscv32", feature = "esp32c6", feature = "esp32s31"))]
-compile_error!("features `esp32c6` and `esp32s31` are mutually exclusive");
-
 #[cfg(all(
-    target_arch = "riscv32",
+    target_os = "none",
+    feature = "esp32s3",
     not(any(feature = "esp32c6", feature = "esp32s31"))
 ))]
-compile_error!("enable exactly one platform feature: `esp32c6` or `esp32s31`");
+pub type ActivePlatform = s3::S3Platform;
+
+#[cfg(all(target_os = "none", feature = "esp32c6", feature = "esp32s31"))]
+compile_error!("chip features `esp32c6`, `esp32s31`, and `esp32s3` are mutually exclusive");
+
+#[cfg(all(
+    target_os = "none",
+    not(any(feature = "esp32c6", feature = "esp32s31", feature = "esp32s3"))
+))]
+compile_error!("enable exactly one platform feature: `esp32c6`, `esp32s31`, or `esp32s3`");
+
+#[cfg(all(target_os = "none", feature = "esp32c6", feature = "esp32s3"))]
+compile_error!("chip features `esp32c6`, `esp32s31`, and `esp32s3` are mutually exclusive");
+
+#[cfg(all(target_os = "none", feature = "esp32s31", feature = "esp32s3"))]
+compile_error!("chip features `esp32c6`, `esp32s31`, and `esp32s3` are mutually exclusive");
 
 #[cfg(test)]
 mod tests {
     use std::boxed::Box;
     use std::sync::{
-        Arc,
         atomic::{AtomicBool, Ordering},
+        Arc,
     };
 
-    use super::{PlatformDriver, mock::MockPlatform};
+    use super::{mock::MockPlatform, PlatformDriver};
     use embassy_executor::Executor;
     use intercom_core::domain::intercom::{CallState, SessionOwner};
     use intercom_core::events::{

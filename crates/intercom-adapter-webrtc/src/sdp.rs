@@ -415,8 +415,8 @@ mod tests {
     extern crate std;
 
     use super::{
-        DtlsSetupRole, LocalSdpParams, SdpError, SdpMediaDirection, parse_sdp_offer,
-        write_sdp_answer, write_sdp_offer,
+        parse_sdp_offer, write_sdp_answer, write_sdp_offer, DtlsSetupRole, LocalSdpParams,
+        SdpError, SdpMediaDirection,
     };
 
     const CONTROLLER_OFFER: &str = "v=0\r\n\
@@ -634,11 +634,8 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n",
 
         // Assert
         assert!(offer.contains("a=candidate:1 1 UDP 2130706431 192.168.1.142 50000 typ host\r\n"));
-        assert!(
-            offer.contains(
-                "a=candidate:2 1 UDP 2130706430 2001:db8:1:2:0:0:0:142 50000 typ host\r\n"
-            )
-        );
+        assert!(offer
+            .contains("a=candidate:2 1 UDP 2130706430 2001:db8:1:2:0:0:0:142 50000 typ host\r\n"));
     }
 
     #[test]

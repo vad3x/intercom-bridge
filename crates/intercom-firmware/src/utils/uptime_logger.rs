@@ -1,8 +1,8 @@
 //! Intercom composition for the shared uptime logger.
 
-use core::sync::atomic::{AtomicU32, Ordering, fence};
+use core::sync::atomic::{fence, AtomicU32, Ordering};
 use edf_logger::{
-    DEFAULT_SUPPRESSED_DEBUG_EXACT, DEFAULT_SUPPRESSED_DEBUG_PREFIXES, LogTimestamp, UptimeLogger,
+    LogTimestamp, UptimeLogger, DEFAULT_SUPPRESSED_DEBUG_EXACT, DEFAULT_SUPPRESSED_DEBUG_PREFIXES,
 };
 use intercom_core::ports::ClockSyncDriver;
 
@@ -99,11 +99,11 @@ pub fn get_buffered_logs(buf: &mut [u8]) -> usize {
 }
 
 fn uptime_millis() -> u64 {
-    #[cfg(target_arch = "riscv32")]
+    #[cfg(target_os = "none")]
     {
         embassy_time::Instant::now().as_millis()
     }
-    #[cfg(not(target_arch = "riscv32"))]
+    #[cfg(not(target_os = "none"))]
     {
         0
     }
@@ -132,18 +132,18 @@ pub fn is_clock_synchronized() -> bool {
 }
 
 fn write_uart_record(level: log::Level, record: core::fmt::Arguments<'_>) {
-    #[cfg(target_arch = "riscv32")]
+    #[cfg(target_os = "none")]
     {
         let (color, reset) = uart_colors(level);
         esp_println::println!("{color}{record}{reset}");
     }
-    #[cfg(not(target_arch = "riscv32"))]
+    #[cfg(not(target_os = "none"))]
     {
         let _ = (level, record);
     }
 }
 
-#[cfg(any(target_arch = "riscv32", test))]
+#[cfg(any(target_os = "none", test))]
 fn uart_colors(level: log::Level) -> (&'static str, &'static str) {
     match level {
         log::Level::Error => ("\x1b[31m", "\x1b[0m"),
@@ -155,8 +155,8 @@ fn uart_colors(level: log::Level) -> (&'static str, &'static str) {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClockOffset, FirmwareClockSyncDriver, LOGGER, get_buffered_logs, is_clock_synchronized,
-        log_timestamp, uart_colors,
+        get_buffered_logs, is_clock_synchronized, log_timestamp, uart_colors, ClockOffset,
+        FirmwareClockSyncDriver, LOGGER,
     };
     use edf_logger::{LogTimestamp, UptimeLogger};
     use intercom_core::ports::ClockSyncDriver;

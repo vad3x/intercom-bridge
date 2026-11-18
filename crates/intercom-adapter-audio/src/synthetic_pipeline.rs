@@ -3,9 +3,9 @@
 use embassy_time::{Instant, Timer};
 use intercom_core::domain::diagnostics::update_rx_levels_dbfs;
 use intercom_media::{
-    AUDIO_FRAME_DROP_WINDOW_FRAMES, AUDIO_SAMPLE_RATE_HZ, AudioCaptureSchedule,
-    AudioFrameDropWindow, AudioFrameSink, AudioFrameSource, BenchToneGenerator, RxAudioSender,
-    TxAudioReceiver,
+    AudioCaptureSchedule, AudioFrameDropWindow, AudioFrameSink, AudioFrameSource,
+    BenchToneGenerator, RxAudioSender, TxAudioReceiver, AUDIO_FRAME_DROP_WINDOW_FRAMES,
+    AUDIO_SAMPLE_RATE_HZ,
 };
 
 /// A benchmark audio source and sink that exercises the firmware PCM channels.

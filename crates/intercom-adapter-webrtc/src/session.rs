@@ -1,20 +1,20 @@
 //! Half-duplex WebRTC turn-taking policy and active media session runner.
 
-use embassy_net::{IpEndpoint, IpListenEndpoint, Stack, udp::PacketMetadata};
+use embassy_net::{udp::PacketMetadata, IpEndpoint, IpListenEndpoint, Stack};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::{Channel, Receiver, Sender};
 use embassy_time::{Instant, Timer};
 use intercom_core::domain::intercom::SessionOwner;
 use intercom_core::ports::IntercomControllerHandle;
 use intercom_media::{
-    MAX_OPUS_PACKET_BYTES as MEDIA_MAX_OPUS_PACKET_BYTES, OpusChannel, OpusPacket, RxAudioReceiver,
-    TxAudioSender,
+    OpusChannel, OpusPacket, RxAudioReceiver, TxAudioSender,
+    MAX_OPUS_PACKET_BYTES as MEDIA_MAX_OPUS_PACKET_BYTES,
 };
 
 use crate::dtls::{DtlsError, DtlsRole, DtlsSrtpEngine, DtlsSrtpResourceCell};
 use crate::ice::IceLiteAgent;
 use crate::jitter_buffer::JitterBuffer;
-use crate::mux::{DemuxedPacket, classify_rfc7983_packet};
+use crate::mux::{classify_rfc7983_packet, DemuxedPacket};
 use crate::opus::{HalfDuplexOpusCodec, MAX_OPUS_PACKET_BYTES};
 use crate::srtp::SrtpSession;
 
@@ -454,6 +454,16 @@ impl PendingDtlsDatagrams {
 }
 
 impl WebRtcMediaResources {
+    /// Initialize the caller's storage without constructing a large value on the stack.
+    pub fn init_in(storage: &mut core::mem::MaybeUninit<Self>) -> &mut Self {
+        static INITIAL: WebRtcMediaResources = WebRtcMediaResources::new();
+        // SAFETY: The caller owns aligned storage for one value, separate from INITIAL.
+        unsafe {
+            core::ptr::copy_nonoverlapping(&INITIAL, storage.as_mut_ptr(), 1);
+            storage.assume_init_mut()
+        }
+    }
+
     pub const fn new() -> Self {
         Self {
             codec: HalfDuplexOpusCodec::new(),
@@ -1167,11 +1177,11 @@ impl TurnTakingPolicy {
 #[cfg(test)]
 mod tests {
     use super::{
-        AudioSendPacer, DtlsRole, MediaBenchmarkStats, OPUS_DTX_MAX_BYTES, PendingDtlsDatagrams,
-        RtpPayloadRange, SESSION_ACTIVE, SESSION_IDLE, SESSION_IDLE_TIMEOUT_MS,
-        SESSION_PHASE_ACTIVE, SESSION_PHASE_QUEUED, SESSION_STOP_ACTIVE, SESSION_STOP_QUEUED,
-        SessionLiveness, TurnAction, TurnTakingPolicy, WebRtcSessionConfig, WebRtcSessionHandle,
-        WebRtcSessionRequestError, build_rtp_header, session_state,
+        build_rtp_header, session_state, AudioSendPacer, DtlsRole, MediaBenchmarkStats,
+        PendingDtlsDatagrams, RtpPayloadRange, SessionLiveness, TurnAction, TurnTakingPolicy,
+        WebRtcSessionConfig, WebRtcSessionHandle, WebRtcSessionRequestError, OPUS_DTX_MAX_BYTES,
+        SESSION_ACTIVE, SESSION_IDLE, SESSION_IDLE_TIMEOUT_MS, SESSION_PHASE_ACTIVE,
+        SESSION_PHASE_QUEUED, SESSION_STOP_ACTIVE, SESSION_STOP_QUEUED,
     };
     use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
     use embassy_sync::channel::Channel;
@@ -1808,5 +1818,16 @@ mod tests {
         assert_eq!(action, None);
         assert_eq!(idle, None);
         assert!(!turn.is_talking());
+    }
+
+    #[test]
+    fn initializes_media_resources_in_caller_storage() {
+        let mut storage = alloc::boxed::Box::<super::WebRtcMediaResources>::new_uninit();
+        let destination = storage.as_mut_ptr();
+        let resources = super::WebRtcMediaResources::init_in(&mut storage);
+
+        assert_eq!(core::ptr::from_mut(resources), destination);
+        assert!(resources.rx_buffer.iter().all(|&byte| byte == 0));
+        assert_eq!(resources.pending_dtls.count, 0);
     }
 }

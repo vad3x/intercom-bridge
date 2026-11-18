@@ -69,7 +69,7 @@ impl<const N: usize> JitterBuffer<N> {
 #[cfg(test)]
 mod tests {
     use super::JitterBuffer;
-    use intercom_media::{MAX_OPUS_PACKET_BYTES, OpusPacket};
+    use intercom_media::{OpusPacket, MAX_OPUS_PACKET_BYTES};
 
     fn packet(value: u8) -> OpusPacket {
         let mut payload = [0; MAX_OPUS_PACKET_BYTES];

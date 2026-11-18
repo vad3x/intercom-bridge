@@ -26,6 +26,16 @@ esp32s31 = [
     "rs-matter-embassy/wifi-only",
     "rs-matter/large-buffers-4096",
 ]
+esp32s3 = [
+    "esp-radio/esp32s3",
+    "esp-radio/ble",
+    "esp-radio/coex",
+    "esp-hal/esp32s3",
+    "esp-rtos/esp32s3",
+    "esp-alloc/esp32s3",
+    "rs-matter-embassy/trouble",
+    "rs-matter/large-buffers-4096",
+]
 
 [dependencies]
 intercom-core = { path = "../intercom-core" }

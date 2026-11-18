@@ -1698,6 +1698,7 @@ dependencies = [
  "esp-println",
  "heapless 0.9.3",
  "riscv",
+ "semihosting",
  "xtensa-lx",
 ]
 
@@ -1773,7 +1774,7 @@ dependencies = [
  "esp32h2",
  "esp32p4",
  "esp32s2",
- "esp32s3",
+ "esp32s3 0.36.0",
  "esp32s31 0.3.0",
  "fugit",
  "instability",
@@ -1841,8 +1842,10 @@ dependencies = [
  "esp-metadata-generated",
  "esp-sync",
  "esp-wifi-sys-esp32c6",
+ "esp-wifi-sys-esp32s3",
  "esp-wifi-sys-esp32s31",
  "esp32c6 0.25.0",
+ "esp32s3 0.37.0",
  "esp32s31 0.3.0",
  "log",
 ]
@@ -1897,6 +1900,7 @@ dependencies = [
  "esp-wifi-sys-esp32s3",
  "esp-wifi-sys-esp32s31",
  "esp32c6 0.25.0",
+ "esp32s3 0.37.0",
  "esp32s31 0.3.0",
  "heapless 0.9.3",
  "ieee802154",
@@ -1907,6 +1911,7 @@ dependencies = [
  "portable-atomic",
  "portable_atomic_enum",
  "xarxa-driver",
+ "xtensa-lx-rt",
 ]
 
 [[package]]
@@ -1939,6 +1944,7 @@ dependencies = [
  "document-features",
  "esp-metadata-generated",
  "esp32c6 0.24.0",
+ "esp32s3 0.36.0",
  "esp32s31 0.2.0",
 ]
 
@@ -1981,6 +1987,7 @@ dependencies = [
  "esp-rom-sys",
  "esp-sync",
  "esp32c6 0.24.0",
+ "esp32s3 0.36.0",
  "esp32s31 0.2.0",
 ]
 
@@ -2167,6 +2174,15 @@ name = "esp32s3"
 version = "0.36.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab08eb1f516ba72b7eb272cdd88cd74899552292a294b831b2143a3e60f1666a"
+dependencies = [
+ "vcell",
+]
+
+[[package]]
+name = "esp32s3"
+version = "0.37.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3e2e7d1a9bd72304ef0e55c90405195489ff902c908a57cd81fc8a4d51ff4ae"
 dependencies = [
  "vcell",
 ]
@@ -2781,8 +2797,10 @@ dependencies = [
  "esp-println",
  "esp-rtos",
  "esp-wifi-sys-esp32c6",
+ "esp-wifi-sys-esp32s3",
  "esp-wifi-sys-esp32s31",
  "futures",
+ "hmac 0.12.1",
  "intercom-adapter-audio",
  "intercom-adapter-gpio",
  "intercom-adapter-http",
@@ -2794,6 +2812,7 @@ dependencies = [
  "portable-atomic",
  "rs-matter",
  "rs-matter-embassy",
+ "sha2 0.10.9",
  "smart-leds",
  "static_cell",
 ]
@@ -4411,6 +4430,12 @@ dependencies = [
  "subtle",
  "zeroize",
 ]
+
+[[package]]
+name = "semihosting"
+version = "0.1.25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f8e4abf97879f4e80db69a9fba7bd64998e9bdad25f58ef045a778e191172fd4"
 
 [[package]]
 name = "semver"

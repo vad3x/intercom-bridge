@@ -41,7 +41,7 @@ impl S31SyntheticAudioPipeline {
 #[cfg(test)]
 mod tests {
     use super::S31SyntheticAudioPipeline;
-    use intercom_media::{OpusChannel, compute_frame_levels_dbfs};
+    use intercom_media::{compute_frame_levels_dbfs, OpusChannel};
 
     #[test]
     fn s31_pipeline_opus_roundtrip_crosses_the_ipc_channel() {

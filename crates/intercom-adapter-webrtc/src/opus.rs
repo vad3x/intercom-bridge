@@ -1,7 +1,7 @@
 //! Zero-malloc fixed-point Opus 8 kHz listen encoder and 16 kHz talk decoder (`RV32IMAC`).
 
 use core::ffi::{c_int, c_uchar, c_void};
-use intercom_media::{AUDIO_FRAME_SAMPLES, AUDIO_SAMPLE_RATE_HZ, PcmFrame};
+use intercom_media::{PcmFrame, AUDIO_FRAME_SAMPLES, AUDIO_SAMPLE_RATE_HZ};
 
 pub const MAX_OPUS_PACKET_BYTES: usize = 256;
 const OPUS_ARENA_U64_WORDS: usize = 3_077; // 24,616 B, 8-byte aligned.
@@ -230,7 +230,7 @@ const _: *const c_void = core::ptr::null();
 mod tests {
     use super::*;
 
-    use intercom_media::{BenchToneGenerator, compute_frame_levels_dbfs};
+    use intercom_media::{compute_frame_levels_dbfs, BenchToneGenerator};
 
     #[test]
     fn fixed_point_opus_encodes_20ms_8khz_listen_packet_and_decodes_one_frame() {

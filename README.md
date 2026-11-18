@@ -101,6 +101,34 @@ mise exec -- cargo build -p intercom-firmware
 
 The resulting binary is located at `target/riscv32imac-unknown-none-elf/debug/intercom-bridge`.
 
+#### ESP32-S3-N16R8
+
+The S3-N16R8 profile has 16 MiB Quad SPI flash, 8 MiB Octal SPI PSRAM, and a WS2812 RGB indicator routed to GPIO47 in the supplied board pinout. The shared RMT LED driver uses GRB color order. Build the Xtensa target in the pinned Linux container `espressif/idf-rust:esp32s3_1.95.0.0` (Rust `1.95.0.0`, target `xtensa-esp32s3-none-elf`, `rust-src`, and Xtensa GCC/binutils `15.2.0`). This image uses the Espressif toolchain directly (`cargo +esp`); `mise` is not installed in the image. After `source /home/esp/export-esp.sh`, the compiler and archiver used by `cc` are `xtensa-esp32s3-elf-gcc` and `xtensa-esp32s3-elf-ar`. `.cargo/config.toml` sets the target C compiler's `-mlongcalls` flag, required by the S3 link. Set `ESP_HAL_CONFIG_DATA_CACHE_SIZE=32KB` so the firmware reserves the 32 KiB reclaimed data-cache region for its Core 1 audio stack and the remaining reclaimed memory for heap:
+
+```bash
+source /home/esp/export-esp.sh
+export CARGO_TARGET_DIR=/Volumes/samsung-t7-black-2tb-ssd0/cargo-target
+export CC_xtensa_esp32s3_none_elf=xtensa-esp32s3-elf-gcc
+export AR_xtensa_esp32s3_none_elf=xtensa-esp32s3-elf-ar
+export ESP_HAL_CONFIG_DATA_CACHE_SIZE=32KB
+cargo +esp build -p intercom-firmware --release \
+    --no-default-features --features esp32s3 --target xtensa-esp32s3-none-elf
+```
+
+The current rollback-capable partition table uses the first 8 MiB of flash. Confirm the release ELF fits its `0x350000`-byte app slot before packaging or flashing. Board-specific pins and bring-up checks are listed in [docs/hardware/esp32-s3-bring-up.md](docs/hardware/esp32-s3-bring-up.md); verify the exact dev-board revision before connecting fixtures.
+
+### Signed OTA image packaging
+
+`scripts/ota.py` keeps the ESP32-C6 / 8 MiB defaults. For an S3-N16R8 build, pass the chip, flash capacity, partition table, and target app partition explicitly:
+
+```bash
+python3 scripts/ota.py --target "$S3_IP" --chip esp32s3 --flash-size 16mb \
+    --partition-table partitions.csv --target-app-partition ota_0 \
+    target/xtensa-esp32s3-none-elf/release/intercom-bridge
+```
+
+The OTA tool uses the selected app partition's capacity to reject oversized images and checks the ESP image chip ID. `espflash save-image` receives its supported `--chip` and `--flash-size` options; the OTA server chooses the inactive slot when it stages the signed upload.
+
 ### 3. Flash & Monitor
 
 Build, flash to the connected ESP32-C6 (8 MB production board), and open the serial monitor in one command:

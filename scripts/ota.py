@@ -6,6 +6,7 @@ signs firmware binaries with Ed25519 private key, and streams signed updates ove
 """
 
 import argparse
+import csv
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import hashlib
@@ -21,6 +22,8 @@ import sys
 import tempfile
 import threading
 import time
+import unittest
+from unittest import mock
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -44,6 +47,66 @@ OTA_HEADER_MAGIC = b"ICOT"
 OTA_HEADER_LEN = 72  # 4 (magic) + 4 (len) + 64 (sig)
 MAX_APP_SLOT_SIZE = 0x350000  # 3.4 MB (3,473,408 bytes)
 DEFAULT_KEY_PATH = Path.home() / ".intercom" / "ota_key.pem"
+DEFAULT_PARTITION_TABLE = Path(__file__).resolve().parent.parent / "partitions.csv"
+
+
+@dataclass(frozen=True)
+class OtaImageProfile:
+    chip: str
+    flash_size: str
+    partition_table: Path
+    target_app_partition: str
+    max_app_slot_size: int
+    image_chip_id: int
+
+    @classmethod
+    def default(cls) -> "OtaImageProfile":
+        return cls("esp32c6", "8mb", DEFAULT_PARTITION_TABLE, "ota_0", MAX_APP_SLOT_SIZE, 0x000D)
+
+    def validate_image(self, header: bytes, image_size: int) -> None:
+        if len(header) < 24 or header[0] != 0xE9:
+            raise ValueError("Invalid ESP application image header (expected magic 0xE9)")
+        image_chip_id = int.from_bytes(header[12:14], "little")
+        if image_chip_id != self.image_chip_id:
+            raise ValueError(
+                f"Image chip ID 0x{image_chip_id:04x} does not match {self.chip} "
+                f"(0x{self.image_chip_id:04x})"
+            )
+        if image_size > self.max_app_slot_size:
+            raise ValueError(
+                f"Image size {image_size} exceeds {self.target_app_partition} capacity "
+                f"{self.max_app_slot_size}"
+            )
+
+
+def app_partition_capacity(partition_table: Path, app_partition: str) -> int:
+    """Read an application partition size from an ESP-IDF CSV partition table."""
+    with partition_table.open(newline="", encoding="utf-8") as table_file:
+        for row in csv.reader(table_file, skipinitialspace=True):
+            if not row or row[0].strip().startswith("#"):
+                continue
+            fields = [field.strip() for field in row]
+            if len(fields) >= 5 and fields[0] == app_partition:
+                if fields[1] != "app":
+                    raise ValueError(f"Partition {app_partition} is not an application partition")
+                return int(fields[4], 0)
+    raise ValueError(f"Application partition {app_partition} not found in {partition_table}")
+
+
+def image_profile(chip: str, flash_size: str, partition_table: Path, app_partition: str) -> OtaImageProfile:
+    chip_ids = {"esp32c6": 0x000D, "esp32s3": 0x0009}
+    try:
+        chip_id = chip_ids[chip]
+    except KeyError as error:
+        raise ValueError(f"OTA packaging does not support chip {chip}") from error
+    return OtaImageProfile(
+        chip=chip,
+        flash_size=flash_size,
+        partition_table=partition_table,
+        target_app_partition=app_partition,
+        max_app_slot_size=app_partition_capacity(partition_table, app_partition),
+        image_chip_id=chip_id,
+    )
 
 
 @dataclass
@@ -325,17 +388,18 @@ def find_espflash() -> Optional[str]:
     return None
 
 
-def convert_elf_to_bin(elf_path: Path) -> Path:
-    """Convert an ELF executable to an ESP32-C6 flat binary image using espflash."""
+def convert_elf_to_bin(elf_path: Path, profile: Optional[OtaImageProfile] = None) -> Path:
+    """Convert an ELF executable to a flat image for the selected ESP chip."""
+    profile = profile or OtaImageProfile.default()
     espflash_cmd = find_espflash()
     if not espflash_cmd:
         sys.stderr.write(
             f"Error: '{elf_path.name}' is an ELF executable, but 'espflash' was not found in PATH.\n"
-            f"espflash is required to convert ELF images to ESP32-C6 flat binaries.\n"
+            f"espflash is required to convert ELF images for {profile.chip}.\n"
             f"Please install espflash using:\n"
             f"    cargo install espflash --locked\n"
             f"Or convert manually to a flat binary first:\n"
-            f"    espflash save-image --chip esp32c6 --flash-size 8mb {elf_path} firmware.bin\n"
+            f"    espflash save-image --chip {profile.chip} --flash-size {profile.flash_size} {elf_path} firmware.bin\n"
         )
         sys.exit(1)
 
@@ -348,9 +412,9 @@ def convert_elf_to_bin(elf_path: Path) -> Path:
         espflash_cmd,
         "save-image",
         "--chip",
-        "esp32c6",
+        profile.chip,
         "--flash-size",
-        "8mb",
+        profile.flash_size,
         str(elf_path),
         str(out_path),
     ]
@@ -381,7 +445,7 @@ def convert_elf_to_bin(elf_path: Path) -> Path:
         sys.exit(1)
 
     out_size = out_path.stat().st_size
-    print(f"Detected ELF executable. Converting to ESP32-C6 flat binary via espflash ({out_size} bytes)...")
+    print(f"Detected ELF executable. Converting to {profile.chip} flat binary via espflash ({out_size} bytes)...")
     return out_path
 
 
@@ -495,6 +559,56 @@ def push_ota_to_device(
                 pass
 
 
+class OtaImageProfileTests(unittest.TestCase):
+    def test_uses_selected_chip_layout_and_slot_capacity(self) -> None:
+        profile = OtaImageProfile(
+            chip="esp32s3",
+            flash_size="16mb",
+            partition_table=Path("partitions.csv"),
+            target_app_partition="ota_0",
+            max_app_slot_size=0x350000,
+            image_chip_id=0x0009,
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            elf = Path(directory) / "firmware.elf"
+            elf.write_bytes(b"\x7fELF" + bytes(20))
+
+            def fake_run(command, **_kwargs):
+                Path(command[-1]).write_bytes(bytes(24))
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            with mock.patch("scripts.ota.find_espflash", return_value="espflash"), mock.patch(
+                "scripts.ota.subprocess.run", side_effect=fake_run
+            ) as run:
+                convert_elf_to_bin(elf, profile)
+
+            command = run.call_args.args[0]
+            self.assertEqual(command[command.index("--chip") + 1], "esp32s3")
+            self.assertEqual(command[command.index("--flash-size") + 1], "16mb")
+            self.assertNotIn("--partition-table", command)
+            self.assertNotIn("--target-app-partition", command)
+            self.assertEqual(profile.partition_table, Path("partitions.csv"))
+            self.assertEqual(profile.target_app_partition, "ota_0")
+
+        valid_s3_header = bytearray(24)
+        valid_s3_header[0] = 0xE9
+        valid_s3_header[12:14] = (0x0009).to_bytes(2, "little")
+        profile.validate_image(bytes(valid_s3_header), 1024)
+
+        wrong_chip_header = bytearray(valid_s3_header)
+        wrong_chip_header[12:14] = (0x000D).to_bytes(2, "little")
+        with self.assertRaises(ValueError):
+            profile.validate_image(bytes(wrong_chip_header), 1024)
+        with self.assertRaises(ValueError):
+            profile.validate_image(bytes(valid_s3_header), profile.max_app_slot_size + 1)
+
+        c6_profile = OtaImageProfile.default()
+        self.assertEqual(c6_profile.chip, "esp32c6")
+        self.assertEqual(c6_profile.flash_size, "8mb")
+        self.assertEqual(c6_profile.max_app_slot_size, MAX_APP_SLOT_SIZE)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Smart Intercom Over-The-Air (OTA) Firmware Updater",
@@ -542,8 +656,23 @@ def main() -> None:
         default=60.0,
         help="HTTP upload timeout in seconds (default: 60.0)",
     )
+    parser.add_argument("--chip", default="esp32c6", choices=("esp32c6", "esp32s3"), help="Image target chip (default: esp32c6)")
+    parser.add_argument("--flash-size", default="8mb", help="Target flash size (default: 8mb)")
+    parser.add_argument("--partition-table", default=str(DEFAULT_PARTITION_TABLE), help="ESP partition CSV used for capacity preflight")
+    parser.add_argument("--target-app-partition", default="ota_0", help="Application partition whose capacity limits the image")
 
     args = parser.parse_args()
+
+    try:
+        profile = image_profile(
+            args.chip,
+            args.flash_size,
+            Path(args.partition_table).expanduser().resolve(),
+            args.target_app_partition,
+        )
+    except (OSError, ValueError) as error:
+        sys.stderr.write(f"Error: Invalid OTA image profile: {error}\n")
+        sys.exit(1)
 
     # 1. Validate firmware binary path and size
     binary_path = Path(args.firmware).resolve()
@@ -556,17 +685,19 @@ def main() -> None:
         magic = f.read(4)
 
     if magic == b"\x7fELF":
-        binary_path = convert_elf_to_bin(binary_path)
+        binary_path = convert_elf_to_bin(binary_path, profile)
 
     binary_len = binary_path.stat().st_size
     if binary_len == 0:
         sys.stderr.write(f"Error: Firmware binary is empty: {binary_path}\n")
         sys.exit(1)
 
-    if binary_len > MAX_APP_SLOT_SIZE:
+    try:
+        with binary_path.open("rb") as firmware_file:
+            profile.validate_image(firmware_file.read(24), binary_len)
+    except ValueError as error:
         sys.stderr.write(
-            f"Error: Firmware binary size ({binary_len} bytes / {binary_len/(1024*1024):.2f} MB) "
-            f"exceeds maximum OTA partition capacity ({MAX_APP_SLOT_SIZE} bytes / 3.4 MB).\n"
+            f"Error: Firmware image is incompatible with the selected target profile: {error}.\n"
         )
         sys.exit(1)
 

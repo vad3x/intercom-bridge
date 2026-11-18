@@ -1,7 +1,6 @@
 //! DevKit WS2812 RGB LED Indicator Driver
 //!
-//! Controls the onboard addressable WS2812B RGB LED on GPIO 8 of the
-//! ESP32-C6-DevKitM-1 via the RMT peripheral.
+//! Controls the onboard addressable WS2812 RGB LED via the RMT peripheral.
 
 use core::cell::RefCell;
 use edf_core::events::{SystemState, SystemStateReceiver};
@@ -14,16 +13,16 @@ use intercom_core::ports::reporter::{IntercomReporter, LockState};
 #[allow(unused_imports)]
 use log::info;
 
-#[cfg(all(target_arch = "riscv32", feature = "led-smartled"))]
+#[cfg(all(target_os = "none", feature = "led-smartled"))]
 use esp_hal::rmt::Rmt;
-#[cfg(all(target_arch = "riscv32", feature = "led-smartled"))]
+#[cfg(all(target_os = "none", feature = "led-smartled"))]
 use esp_hal::time::Rate;
-#[cfg(all(target_arch = "riscv32", feature = "led-smartled"))]
+#[cfg(all(target_os = "none", feature = "led-smartled"))]
 use esp_hal_smartled::{buffer_size, color_order, RmtSmartLeds, WS2812B_TIMING};
-#[cfg(all(target_arch = "riscv32", feature = "led-smartled"))]
+#[cfg(all(target_os = "none", feature = "led-smartled"))]
 use smart_leds::{SmartLedsWrite, RGB8};
 
-#[cfg(not(all(target_arch = "riscv32", feature = "led-smartled")))]
+#[cfg(not(all(target_os = "none", feature = "led-smartled")))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct RGB8 {
     pub r: u8,
@@ -60,9 +59,9 @@ pub enum LedCommand {
     Restore,
 }
 
-/// Addressable RGB LED driver for ESP32-C6-DevKitM-1.
+/// Addressable RGB LED driver for the C6 and S3 DevKit profiles.
 pub struct DevKitLedDriver {
-    #[cfg(all(target_arch = "riscv32", feature = "led-smartled"))]
+    #[cfg(all(target_os = "none", feature = "led-smartled"))]
     led: RefCell<
         RmtSmartLeds<
             'static,
@@ -72,20 +71,20 @@ pub struct DevKitLedDriver {
             color_order::Grb,
         >,
     >,
-    #[cfg(not(all(target_arch = "riscv32", feature = "led-smartled")))]
+    #[cfg(not(all(target_os = "none", feature = "led-smartled")))]
     last_color: RefCell<RGB8>,
     signal: Signal<CriticalSectionRawMutex, LedCommand>,
     current_state: RefCell<Option<SystemState>>,
 }
 
 impl DevKitLedDriver {
-    /// Create a new DevKit LED driver on RISC-V with RMT and GPIO8.
-    #[cfg(all(target_arch = "riscv32", feature = "led-smartled"))]
+    /// Create a new DevKit LED driver with an RMT peripheral and GPIO output.
+    #[cfg(all(target_os = "none", feature = "led-smartled"))]
     pub fn new(
         rmt_periph: esp_hal::peripherals::RMT<'static>,
-        pin: esp_hal::peripherals::GPIO8<'static>,
+        pin: impl esp_hal::gpio::interconnect::PeripheralOutput<'static>,
     ) -> Self {
-        info!("DevKitLedDriver: initializing WS2812 on GPIO 8 via RMT");
+        info!("DevKitLedDriver: initializing WS2812 RGB LED via RMT");
         let rmt = Rmt::new(rmt_periph, Rate::from_mhz(80)).expect("RMT init failed");
         let led = RmtSmartLeds::<{ buffer_size::<RGB8>(1) }, _, RGB8, color_order::Grb>::new(
             WS2812B_TIMING,
@@ -105,7 +104,7 @@ impl DevKitLedDriver {
     }
 
     /// Create a new DevKit LED driver on host or when smartled is disabled.
-    #[cfg(not(all(target_arch = "riscv32", feature = "led-smartled")))]
+    #[cfg(not(all(target_os = "none", feature = "led-smartled")))]
     pub fn new() -> Self {
         Self {
             last_color: RefCell::new(COLOR_OFF),
@@ -115,19 +114,19 @@ impl DevKitLedDriver {
     }
 
     fn write_color(&self, color: RGB8) {
-        #[cfg(all(target_arch = "riscv32", feature = "led-smartled"))]
+        #[cfg(all(target_os = "none", feature = "led-smartled"))]
         {
             if let Ok(mut led) = self.led.try_borrow_mut() {
                 let _ = led.write([color]);
             }
         }
-        #[cfg(not(all(target_arch = "riscv32", feature = "led-smartled")))]
+        #[cfg(not(all(target_os = "none", feature = "led-smartled")))]
         {
             *self.last_color.borrow_mut() = color;
         }
     }
 
-    #[cfg(not(all(target_arch = "riscv32", feature = "led-smartled")))]
+    #[cfg(not(all(target_os = "none", feature = "led-smartled")))]
     pub fn last_color(&self) -> RGB8 {
         *self.last_color.borrow()
     }

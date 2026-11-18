@@ -29,8 +29,8 @@ pub struct S31Platform {
 }
 
 #[cfg(target_arch = "riscv32")]
-pub fn allocate_webrtc_jitter_buffer()
--> &'static mut intercom_adapter_webrtc::session::WebRtcJitterBuffer {
+pub fn allocate_webrtc_jitter_buffer(
+) -> &'static mut intercom_adapter_webrtc::session::WebRtcJitterBuffer {
     let layout = core::alloc::Layout::new::<intercom_adapter_webrtc::session::WebRtcJitterBuffer>();
     let allocation =
         unsafe { esp_alloc::HEAP.alloc_caps(esp_alloc::MemoryCapability::External.into(), layout) };
