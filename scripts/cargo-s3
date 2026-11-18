@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Cargo subcommand (`cargo s3 <build|factory|flash>`) that builds ESP32-S3
+# Xtensa firmware inside the pinned Linux container and flashes from the host.
+
+IMAGE="${INTERCOM_S3_IMAGE:-espressif/idf-rust:esp32s3_1.95.0.0}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+PARENT_DIR="$(dirname "$REPO_ROOT")"
+REPO_NAME="$(basename "$REPO_ROOT")"
+
+# Keep Linux proc-macro / build-script artifacts separate from macOS host builds.
+LINUX_TARGET_REL="${INTERCOM_S3_TARGET_DIR:-target/s3-linux}"
+FACTORY_TARGET_REL="${INTERCOM_S3_FACTORY_TARGET_DIR:-target/s3-factory}"
+LINUX_TARGET_ROOT="${CARGO_TARGET_DIR:+$CARGO_TARGET_DIR/s3-linux}"
+FACTORY_TARGET_ROOT="${CARGO_TARGET_DIR:+$CARGO_TARGET_DIR/s3-factory}"
+LINUX_TARGET_ROOT="${LINUX_TARGET_ROOT:-$REPO_ROOT/$LINUX_TARGET_REL}"
+FACTORY_TARGET_ROOT="${FACTORY_TARGET_ROOT:-$REPO_ROOT/$FACTORY_TARGET_REL}"
+
+usage() {
+    cat <<'EOF'
+Usage: cargo s3 <command> [args...]
+
+Commands:
+  build     Build ESP32-S3 release ELF inside Docker (default)
+  factory   Build ESP32-S3 4MB factory-only ELF inside Docker
+  flash     Flash the built ESP32-S3 ELF from the macOS host via espflash
+  shell     Open an interactive shell inside the S3 build container
+EOF
+}
+
+run_in_container() {
+    local target_rel="$1"
+    local features="$2"
+    shift 2
+
+    local cache_dir="${INTERCOM_S3_CARGO_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/intercom-s3-cargo}"
+    local target_dir="/work/$REPO_NAME/$target_rel"
+    mkdir -p "$cache_dir/registry" "$cache_dir/git"
+
+    local mounts=(
+        -v "$REPO_ROOT:/work/$REPO_NAME"
+        -v "$cache_dir/registry:/home/esp/.cargo/registry"
+        -v "$cache_dir/git:/home/esp/.cargo/git"
+    )
+    if [[ -n "${CARGO_TARGET_DIR:-}" ]]; then
+        mkdir -p "$CARGO_TARGET_DIR"
+        mounts+=(-v "$CARGO_TARGET_DIR:$CARGO_TARGET_DIR")
+        if [[ "$target_rel" == "$LINUX_TARGET_REL" ]]; then
+            target_dir="$LINUX_TARGET_ROOT"
+        else
+            target_dir="$FACTORY_TARGET_ROOT"
+        fi
+    fi
+    if [[ -f "$REPO_ROOT/.git" ]]; then
+        local git_common_dir
+        git_common_dir="$(cd "$REPO_ROOT" && git rev-parse --git-common-dir 2>/dev/null || true)"
+        if [[ -n "$git_common_dir" && -d "$git_common_dir" ]]; then
+            mounts+=(-v "$git_common_dir:$git_common_dir:ro")
+        fi
+    fi
+    local dep
+    for dep in embedded-device-foundation rs-matter rs-matter-embassy; do
+        if [[ -e "$PARENT_DIR/$dep" ]]; then
+            local resolved
+            resolved="$(cd "$PARENT_DIR/$dep" && pwd -P)"
+            mounts+=(-v "$resolved:/work/$dep")
+        fi
+    done
+
+    docker run --rm \
+        "${mounts[@]}" \
+        -w "/work/$REPO_NAME" \
+        "$IMAGE" \
+        bash -lc "
+            set -euo pipefail
+            source /home/esp/export-esp.sh
+            export CC_xtensa_esp32s3_none_elf=xtensa-esp32s3-elf-gcc
+            export AR_xtensa_esp32s3_none_elf=xtensa-esp32s3-elf-ar
+            export ESP_HAL_CONFIG_DATA_CACHE_SIZE=32KB
+            export CARGO_TARGET_DIR='$target_dir'
+            export GIT_CONFIG_COUNT=1
+            export GIT_CONFIG_KEY_0=safe.directory
+            export GIT_CONFIG_VALUE_0='*'
+            cargo +esp build --locked -p intercom-firmware --release \
+                --no-default-features --features '$features' \
+                --target xtensa-esp32s3-none-elf $*
+        "
+}
+
+cmd="${1:-build}"
+if [[ "$cmd" == "s3" ]]; then
+    shift
+    cmd="${1:-build}"
+fi
+if [[ $# -gt 0 ]]; then
+    shift
+fi
+
+case "$cmd" in
+    build)
+        run_in_container "$LINUX_TARGET_REL" "esp32s3" "$@"
+        echo "Built ELF: $LINUX_TARGET_ROOT/xtensa-esp32s3-none-elf/release/intercom-bridge"
+        ;;
+    factory)
+        run_in_container "$FACTORY_TARGET_REL" "esp32s3,flash-4mb,ota-disabled" "$@"
+        echo "Built ELF: $FACTORY_TARGET_ROOT/xtensa-esp32s3-none-elf/release/intercom-bridge"
+        ;;
+    flash)
+        elf="$LINUX_TARGET_ROOT/xtensa-esp32s3-none-elf/release/intercom-bridge"
+        if [[ ! -f "$elf" ]]; then
+            echo "Error: S3 ELF not found at $elf. Run 'cargo build-s3' first." >&2
+            exit 1
+        fi
+        exec espflash flash --chip esp32s3 --partition-table "$REPO_ROOT/partitions.csv" --monitor "$@" "$elf"
+        ;;
+    shell)
+        exec docker run --rm -it \
+            -v "$PARENT_DIR:/work" \
+            -w "/work/$REPO_NAME" \
+            "$IMAGE" \
+            bash -lc 'source /home/esp/export-esp.sh; exec bash'
+        ;;
+    -h|--help|help)
+        usage
+        ;;
+    *)
+        echo "Unknown subcommand: $cmd" >&2
+        usage >&2
+        exit 2
+        ;;
+esac

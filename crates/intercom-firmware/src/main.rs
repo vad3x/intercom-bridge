@@ -28,7 +28,7 @@ mod version;
 #[cfg(target_os = "none")]
 use {
     self::reset::{FirmwarePersistenceReporter, FirmwareResetDriver},
-    core::{mem::MaybeUninit, pin::pin},
+    core::pin::pin,
     embassy_executor::Spawner,
     embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel},
     esp_alloc::heap_allocator,
@@ -43,6 +43,7 @@ use {
         ClusterReadinessBarrier, DeviceInfo, IntercomAudioAvCluster, IntercomChime,
         IntercomDoorLock, IntercomDoorLockConfig, IntercomDoorbellSwitch, IntercomWebRtcHooks,
         MatterAccessControlDriver, MatterController, MatterControllerConfig, MatterPeripherals,
+        MatterStackStorage,
     },
     intercom_adapter_webrtc::{
         dtls::{DtlsSrtpResourceCell, DtlsSrtpResources},
@@ -97,7 +98,7 @@ const S3_INTERNAL_HEAP_LAYOUT: platform::s3::InternalHeapLayout =
         config::HEAP_SIZE,
         RECLAIMED_RAM,
         platform::s3::DCACHE_RECLAIMED_BYTES,
-        core::mem::size_of::<DtlsSrtpResources>(),
+        0,
         core::mem::size_of::<esp_hal::system::Stack<32_768>>(),
     );
 
@@ -291,14 +292,24 @@ async fn main(spawner: Spawner) {
     #[cfg(feature = "esp32c6")]
     {
         heap_allocator!(size: config::HEAP_SIZE - RECLAIMED_RAM);
-        heap_allocator!(#[ram(reclaimed)] size: RECLAIMED_RAM - core::mem::size_of::<DtlsSrtpResources>());
+        heap_allocator!(#[ram(reclaimed)] size: RECLAIMED_RAM - core::mem::size_of::<intercom_firmware::platform::ReclaimedCell<DtlsSrtpResources>>());
     }
     #[cfg(feature = "esp32s31")]
     heap_allocator!(size: config::HEAP_SIZE);
     #[cfg(feature = "esp32s3")]
     {
-        heap_allocator!(size: S3_INTERNAL_HEAP_LAYOUT.standard_bytes);
-        heap_allocator!(#[ram(reclaimed)] size: S3_INTERNAL_HEAP_LAYOUT.boot_reclaimed_bytes);
+        info!(
+            "S3 internal heap layout standard={} reclaimed={} dcache_reclaimed={}",
+            S3_INTERNAL_HEAP_LAYOUT.standard_bytes,
+            S3_INTERNAL_HEAP_LAYOUT.boot_reclaimed_bytes,
+            S3_INTERNAL_HEAP_LAYOUT.dcache_reclaimed_bytes
+        );
+        if platform::s3::heap_region_is_present(S3_INTERNAL_HEAP_LAYOUT.standard_bytes) {
+            heap_allocator!(size: S3_INTERNAL_HEAP_LAYOUT.standard_bytes);
+        }
+        if platform::s3::heap_region_is_present(S3_INTERNAL_HEAP_LAYOUT.boot_reclaimed_bytes) {
+            heap_allocator!(#[ram(reclaimed)] size: S3_INTERNAL_HEAP_LAYOUT.boot_reclaimed_bytes);
+        }
     }
 
     let (mut platform, platform_drivers) = ActivePlatform::init();
@@ -331,9 +342,15 @@ async fn main(spawner: Spawner) {
     static WEBRTC_STATE: portable_atomic::AtomicU8 = portable_atomic::AtomicU8::new(0);
     static WEBRTC_HANDLE: StaticCell<WebRtcSessionHandle<'static>> = StaticCell::new();
     #[cfg(not(feature = "esp32s3"))]
-    static mut WEBRTC_RESOURCES: WebRtcMediaResources = WebRtcMediaResources::new();
+    static WEBRTC_RESOURCES: StaticCell<WebRtcMediaResources> = StaticCell::new();
+    #[cfg(not(feature = "esp32s3"))]
     #[esp_hal::ram(reclaimed)]
-    static mut WEBRTC_DTLS_RESOURCES: MaybeUninit<DtlsSrtpResources> = MaybeUninit::uninit();
+    static WEBRTC_DTLS_RESOURCES: intercom_firmware::platform::ReclaimedCell<DtlsSrtpResources> =
+        intercom_firmware::platform::ReclaimedCell::new();
+    #[cfg(feature = "esp32s3")]
+    let dtls_resources = platform::s3::allocate_dtls_srtp_resources();
+    #[cfg(not(feature = "esp32s3"))]
+    let dtls_resources = WEBRTC_DTLS_RESOURCES.init(DtlsSrtpResources::new());
     static WEBRTC_DTLS_RESOURCE_CELL: StaticCell<DtlsSrtpResourceCell<'static>> = StaticCell::new();
 
     static COMMAND_CHANNEL: CommandChannel = CommandChannel::new();
@@ -343,19 +360,10 @@ async fn main(spawner: Spawner) {
     static READINESS: StaticCell<ClusterReadinessBarrier> = StaticCell::new();
     let readiness = READINESS.init(ClusterReadinessBarrier::new(state_sender));
 
-    let dtls_resources = unsafe {
-        let storage = core::ptr::addr_of_mut!(WEBRTC_DTLS_RESOURCES);
-        core::ptr::write_bytes(
-            storage.cast::<u8>(),
-            0,
-            core::mem::size_of::<DtlsSrtpResources>(),
-        );
-        (&mut *storage).assume_init_mut()
-    };
     let dtls_resource_cell =
         WEBRTC_DTLS_RESOURCE_CELL.init(DtlsSrtpResourceCell::new(dtls_resources));
     #[cfg(not(feature = "esp32s3"))]
-    let webrtc_resources = unsafe { &mut *core::ptr::addr_of_mut!(WEBRTC_RESOURCES) };
+    let webrtc_resources = WEBRTC_RESOURCES.init(WebRtcMediaResources::new());
     #[cfg(feature = "esp32s3")]
     let webrtc_resources = intercom_firmware::platform::s3::allocate_webrtc_media_resources();
     #[cfg(feature = "esp32s31")]
@@ -447,6 +455,12 @@ async fn main(spawner: Spawner) {
     // Matter controller — register cluster handlers via builder
     // ========================================================================
 
+    #[cfg(not(feature = "esp32s3"))]
+    static MATTER_STACK_STORAGE: StaticCell<MatterStackStorage> = StaticCell::new();
+    #[cfg(not(feature = "esp32s3"))]
+    let matter_stack_storage = MATTER_STACK_STORAGE.uninit();
+    #[cfg(feature = "esp32s3")]
+    let matter_stack_storage = platform::s3::alloc_psram_uninit::<MatterStackStorage>();
     let matter = MatterController::new(
         MatterControllerConfig {
             peripherals: MatterPeripherals {
@@ -479,6 +493,7 @@ async fn main(spawner: Spawner) {
         state_sender,
         readiness,
         FirmwareResetDriver,
+        matter_stack_storage,
     );
     let webrtc_prov_cluster = matter.webrtc_prov_cluster(IntercomWebRtcHooks::new(
         access_handle,
@@ -735,6 +750,11 @@ async fn main(spawner: Spawner) {
     let app_future = app.run(state_sender, &command_receiver, access_handle);
     static CLOCK_SYNC_DRIVER: utils::uptime_logger::FirmwareClockSyncDriver =
         utils::uptime_logger::FirmwareClockSyncDriver;
+    #[cfg(feature = "esp32s3")]
+    info!(
+        "S3 internal heap free before Matter startup: {} bytes",
+        esp_alloc::HEAP.free_caps(esp_alloc::MemoryCapability::Internal.into())
+    );
     let matter_future = pin!(matter.run(&CLOCK_SYNC_DRIVER));
     let led_future = indicator.run(state_receiver);
     let http_future = async {

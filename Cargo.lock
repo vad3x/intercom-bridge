@@ -2679,7 +2679,10 @@ dependencies = [
  "embassy-futures",
  "embassy-sync 0.8.0",
  "embassy-time",
+ "embedded-storage",
+ "embedded-storage-async",
  "esp-hal",
+ "esp-storage",
  "intercom-core",
  "log",
 ]

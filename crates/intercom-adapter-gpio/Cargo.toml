@@ -7,15 +7,20 @@ description = "Hardware GPIO adapter for Intercom Bridge (IR204E & ESP32-C6)"
 
 [features]
 default = ["esp32c6"]
-esp32c6 = ["esp-hal/esp32c6", "edf-gpio/esp32c6"]
-esp32s31 = ["esp-hal/esp32s31", "edf-gpio/esp32s31"]
-esp32s3 = ["esp-hal/esp32s3", "edf-gpio/esp32s3"]
+esp32c6 = ["esp-hal/esp32c6", "edf-gpio/esp32c6", "esp-storage/esp32c6"]
+esp32s31 = ["esp-hal/esp32s31", "edf-gpio/esp32s31", "esp-storage/esp32s31"]
+esp32s3 = ["esp-hal/esp32s3", "edf-gpio/esp32s3", "esp-storage/esp32s3"]
 
 [dependencies]
 intercom-core = { path = "../intercom-core" }
 edf-gpio = { workspace = true }
+embedded-storage = { workspace = true }
+embedded-storage-async = { workspace = true }
 log = { workspace = true }
 embassy-sync = { workspace = true }
 embassy-futures = { workspace = true }
 embassy-time = { workspace = true, features = ["generic-queue-8"] }
 esp-hal = { workspace = true, features = ["log-04", "unstable"] }
+
+[target.'cfg(target_os = "none")'.dependencies]
+esp-storage = { workspace = true, features = ["bytewise-read", "critical-section"] }

@@ -229,6 +229,9 @@ impl Matcher for ClusterMatcher {
 static DESC_DATAVER_COUNTER: portable_atomic::AtomicU32 = portable_atomic::AtomicU32::new(100);
 const ROOT_ENDPOINT: Endpoint<'static> = rs_matter::root_endpoint!(wifi, time_sync());
 
+/// Opaque caller-owned storage for the Matter protocol stack.
+pub type MatterStackStorage = MatterStack<'static, BUMP_SIZE, EmbassyWifiNetwork>;
+
 pub struct MatterController<S: KvBlobStore, R: SystemResetDriver, H = EmptyHandler> {
     handler: H,
     endpoint_metas: Vec<ClusterRegistrationMeta>,
@@ -236,7 +239,7 @@ pub struct MatterController<S: KvBlobStore, R: SystemResetDriver, H = EmptyHandl
     state_sender: SystemStateSender<'static>,
     readiness: &'static ClusterReadinessBarrier,
     reset: R,
-    stack: &'static MatterStack<'static, BUMP_SIZE, EmbassyWifiNetwork>,
+    stack: &'static MatterStackStorage,
     hostname: &'static str,
 }
 
@@ -245,11 +248,14 @@ impl<S: KvBlobStore, R: SystemResetDriver> MatterController<S, R> {
     ///
     /// Lifecycle state transitions are dispatched to `state_sender`.
     /// Hardware reset/erasure is dispatched to `reset`.
+    // Keep constructor stack use separate from the Embassy root task for ELF auditing.
+    #[inline(never)]
     pub fn new(
         config: MatterControllerConfig<S>,
         state_sender: SystemStateSender<'static>,
         readiness: &'static ClusterReadinessBarrier,
         reset: R,
+        stack_storage: &'static mut core::mem::MaybeUninit<MatterStackStorage>,
     ) -> Self {
         let mac = esp_hal::efuse::base_mac_address();
         let mac_bytes: [u8; 6] = mac.as_bytes().try_into().unwrap();
@@ -299,9 +305,7 @@ impl<S: KvBlobStore, R: SystemResetDriver> MatterController<S, R> {
             static_cell::StaticCell::new();
         let dev_det = DEV_DET_CELL.init(dev_det(&config.device_info, serial_no));
 
-        static STACK_CELL: static_cell::StaticCell<MatterStack<BUMP_SIZE, EmbassyWifiNetwork>> =
-            static_cell::StaticCell::new();
-        let stack = STACK_CELL.uninit().init_with(MatterStack::init(
+        let stack = stack_storage.init_with(MatterStack::init(
             dev_det,
             rs_matter::DevCommData::Passcode(comm_data),
             &TEST_DEV_ATT,

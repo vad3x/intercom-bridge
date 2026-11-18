@@ -14,9 +14,6 @@ use rs_matter::persist::{KvBlobStore, NETWORKS_KEY};
 
 #[cfg(target_os = "none")]
 #[cfg(not(feature = "dummy-persist"))]
-use esp_hal::rom::spiflash;
-#[cfg(target_os = "none")]
-#[cfg(not(feature = "dummy-persist"))]
 use intercom_adapter_gpio::flash::EspFlash;
 #[cfg(target_os = "none")]
 #[cfg(not(feature = "dummy-persist"))]
@@ -329,23 +326,10 @@ pub fn erase_flash_range(range: &core::ops::Range<u32>, label: &str) {
         (range.end - range.start) / SECTOR_SIZE
     );
 
-    let ret = unsafe { spiflash::esp_rom_spiflash_unlock() };
-    if ret != spiflash::ESP_ROM_SPIFLASH_RESULT_OK {
-        warn!("Flash unlock failed for {}: {}", label, ret);
+    let mut flash = EspFlash::new(range.clone());
+    if let Err(err) = flash.erase_range_blocking() {
+        warn!("Flash erase for {} failed: {:?}", label, err);
         return;
-    }
-
-    let mut addr = range.start;
-    while addr < range.end {
-        let sector = addr / SECTOR_SIZE;
-        let ret = unsafe { spiflash::esp_rom_spiflash_erase_sector(sector) };
-        if ret != spiflash::ESP_ROM_SPIFLASH_RESULT_OK {
-            warn!(
-                "Flash erase sector {} for {} failed: {}",
-                sector, label, ret
-            );
-        }
-        addr += SECTOR_SIZE;
     }
 
     info!("{} erased successfully", label);

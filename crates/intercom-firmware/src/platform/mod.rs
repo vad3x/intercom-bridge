@@ -1,5 +1,24 @@
 //! Hardware platform selection and lifecycle abstraction.
 
+/// A `StaticCell` wrapper that can reside in the bootloader-reclaimed RAM section.
+#[repr(transparent)]
+pub struct ReclaimedCell<T>(static_cell::StaticCell<T>);
+
+#[cfg(target_os = "none")]
+// SAFETY: StaticCell stores its value in MaybeUninit behind UnsafeCell. Its
+// constructor requires no initialized bytes, which is the reclaimed section's contract.
+unsafe impl<T> esp_hal::Uninit for ReclaimedCell<T> {}
+
+impl<T> ReclaimedCell<T> {
+    pub const fn new() -> Self {
+        Self(static_cell::StaticCell::new())
+    }
+
+    pub fn init(&'static self, value: T) -> &'static mut T {
+        self.0.init(value)
+    }
+}
+
 #[cfg(feature = "esp32s3")]
 pub mod audio_startup;
 #[cfg(feature = "esp32s3")]
@@ -147,7 +166,7 @@ mod tests {
         Arc,
     };
 
-    use super::{mock::MockPlatform, PlatformDriver};
+    use super::{mock::MockPlatform, PlatformDriver, ReclaimedCell};
     use embassy_executor::Executor;
     use intercom_core::domain::intercom::{CallState, SessionOwner};
     use intercom_core::events::{
@@ -155,6 +174,13 @@ mod tests {
         SystemStateSender, SystemStateWatch,
     };
     use intercom_core::ports::IntercomReporter;
+
+    #[test]
+    fn reclaimed_cell_initializes_value_in_shared_platform_module() {
+        static CELL: ReclaimedCell<u32> = ReclaimedCell::new();
+
+        assert_eq!(*CELL.init(42), 42);
+    }
 
     #[test]
     fn mock_platform_initializes_and_runs_audio_worker() {

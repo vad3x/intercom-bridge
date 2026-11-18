@@ -456,12 +456,7 @@ impl PendingDtlsDatagrams {
 impl WebRtcMediaResources {
     /// Initialize the caller's storage without constructing a large value on the stack.
     pub fn init_in(storage: &mut core::mem::MaybeUninit<Self>) -> &mut Self {
-        static INITIAL: WebRtcMediaResources = WebRtcMediaResources::new();
-        // SAFETY: The caller owns aligned storage for one value, separate from INITIAL.
-        unsafe {
-            core::ptr::copy_nonoverlapping(&INITIAL, storage.as_mut_ptr(), 1);
-            storage.assume_init_mut()
-        }
+        storage.write(const { Self::new() })
     }
 
     pub const fn new() -> Self {

@@ -5,6 +5,43 @@ use super::{PlatformDriver, PlatformDrivers, PlatformPeripherals};
 
 #[cfg(target_os = "none")]
 const AUDIO_STACK_BYTES: usize = 32_768;
+
+#[cfg(target_os = "none")]
+#[repr(transparent)]
+struct ReclaimedCell<T>(core::cell::UnsafeCell<core::mem::MaybeUninit<T>>);
+
+#[cfg(target_os = "none")]
+// SAFETY: Access is serialized by the one-time initialization guard below.
+unsafe impl<T> esp_hal::Uninit for ReclaimedCell<T> {}
+#[cfg(target_os = "none")]
+unsafe impl<T> Sync for ReclaimedCell<T> {}
+
+#[cfg(target_os = "none")]
+static APP_CORE_STACK_INITIALIZED: portable_atomic::AtomicBool =
+    portable_atomic::AtomicBool::new(false);
+
+#[cfg(target_os = "none")]
+impl<T> ReclaimedCell<T> {
+    const fn new() -> Self {
+        Self(core::cell::UnsafeCell::new(core::mem::MaybeUninit::uninit()))
+    }
+
+    fn init(&'static self, value: T) -> &'static mut T {
+        assert!(
+            APP_CORE_STACK_INITIALIZED
+                .compare_exchange(
+                    false,
+                    true,
+                    portable_atomic::Ordering::AcqRel,
+                    portable_atomic::Ordering::Relaxed,
+                )
+                .is_ok(),
+            "S3 Core 1 stack can only be initialized once"
+        );
+        unsafe { (*self.0.get()).write(value) }
+    }
+}
+
 #[cfg(any(
     all(target_os = "none", feature = "esp32s3"),
     all(test, feature = "esp32s3")
@@ -14,6 +51,9 @@ const STACK_WATERMARK: u8 = 0xA5;
 #[cfg(target_os = "none")]
 static AUDIO_STACK_LOW_WATER: portable_atomic::AtomicUsize =
     portable_atomic::AtomicUsize::new(usize::MAX);
+
+#[cfg(target_os = "none")]
+static AUDIO_STACK_BOTTOM: portable_atomic::AtomicUsize = portable_atomic::AtomicUsize::new(0);
 
 #[cfg(target_os = "none")]
 fn fill_radio_entropy(output: &mut [u8]) -> bool {
@@ -141,8 +181,7 @@ pub struct S3Platform {
 
 #[cfg(target_os = "none")]
 #[esp_hal::ram(unstable(dcache_reclaimed))]
-static mut APP_CORE_STACK: core::mem::MaybeUninit<esp_hal::system::Stack<32_768>> =
-    core::mem::MaybeUninit::uninit();
+static APP_CORE_STACK: ReclaimedCell<esp_hal::system::Stack<32_768>> = ReclaimedCell::new();
 
 #[cfg(target_os = "none")]
 static CORE1_EXECUTOR: static_cell::StaticCell<esp_rtos::embassy::Executor> =
@@ -152,12 +191,11 @@ static CORE1_EXECUTOR: static_cell::StaticCell<esp_rtos::embassy::Executor> =
 #[embassy_executor::task]
 async fn sample_audio_stack_watermark() {
     loop {
-        let bottom = core::ptr::addr_of!(APP_CORE_STACK).cast::<u8>();
-        let stack = unsafe { core::slice::from_raw_parts(bottom, AUDIO_STACK_BYTES) };
-        AUDIO_STACK_LOW_WATER.fetch_min(
-            stack_watermark_bytes(stack),
-            portable_atomic::Ordering::Relaxed,
-        );
+        let bottom = AUDIO_STACK_BOTTOM.load(portable_atomic::Ordering::Acquire) as *const u8;
+        let untouched = (0..AUDIO_STACK_BYTES)
+            .take_while(|offset| unsafe { core::ptr::read_volatile(bottom.add(*offset)) } == STACK_WATERMARK)
+            .count();
+        AUDIO_STACK_LOW_WATER.fetch_min(untouched, portable_atomic::Ordering::Relaxed);
         embassy_time::Timer::after_millis(250).await;
     }
 }
@@ -171,36 +209,109 @@ pub fn audio_stack_free_low_water_bytes() -> usize {
 #[cfg(target_os = "none")]
 pub fn allocate_webrtc_jitter_buffer(
 ) -> &'static mut intercom_adapter_webrtc::session::WebRtcJitterBuffer {
-    let layout = core::alloc::Layout::new::<intercom_adapter_webrtc::session::WebRtcJitterBuffer>();
+    match alloc_psram_in_place::<intercom_adapter_webrtc::session::WebRtcJitterBuffer>(
+        PsramInitialization::InPlace(|storage| {
+            storage.write(intercom_adapter_webrtc::session::WebRtcJitterBuffer::new(0))
+        }),
+    ) {
+        PsramAllocation::Initialized(value) => value,
+        PsramAllocation::Uninitialized(_) => unreachable!(),
+    }
+}
+
+/// Allocate uninitialized storage for one value in S3 PSRAM.
+#[cfg(target_os = "none")]
+pub fn alloc_psram_uninit<T: 'static>() -> &'static mut core::mem::MaybeUninit<T> {
+    match alloc_psram_in_place::<T>(PsramInitialization::Uninitialized) {
+        PsramAllocation::Uninitialized(storage) => storage,
+        PsramAllocation::Initialized(_) => unreachable!(),
+    }
+}
+
+/// Types whose valid initialized representation is all zero bytes.
+#[cfg(target_os = "none")]
+trait PsramZeroValid {}
+
+#[cfg(target_os = "none")]
+impl PsramZeroValid for intercom_adapter_webrtc::dtls::DtlsSrtpResources {}
+
+#[cfg(target_os = "none")]
+enum PsramInitialization<T> {
+    Uninitialized,
+    Zeroed,
+    InPlace(for<'a> fn(&'a mut core::mem::MaybeUninit<T>) -> &'a mut T),
+}
+
+#[cfg(target_os = "none")]
+enum PsramAllocation<T: 'static> {
+    Uninitialized(&'static mut core::mem::MaybeUninit<T>),
+    Initialized(&'static mut T),
+}
+
+#[cfg(target_os = "none")]
+fn zeroed_psram_initialization<T: PsramZeroValid>() -> PsramInitialization<T> {
+    PsramInitialization::Zeroed
+}
+
+/// Allocate and initialize one S3 PSRAM value in place.
+///
+/// The `Zeroed` initializer is constructed only for `DtlsSrtpResources`, whose fields
+/// are integer arrays and accept an all-zero representation. Allocation alignment and
+/// size come from `Layout::new::<T>()`; the allocator owns the returned region forever.
+#[cfg(target_os = "none")]
+fn alloc_psram_in_place<T: 'static>(initialize: PsramInitialization<T>) -> PsramAllocation<T> {
+    let layout = core::alloc::Layout::new::<T>();
+    log::info!(
+        "S3 PSRAM allocation requested: size={} align={} free={}",
+        layout.size(),
+        layout.align(),
+        esp_alloc::HEAP.free_caps(esp_alloc::MemoryCapability::External.into())
+    );
     let allocation =
         unsafe { esp_alloc::HEAP.alloc_caps(esp_alloc::MemoryCapability::External.into(), layout) };
-    assert!(
-        !allocation.is_null(),
-        "S3 PSRAM cannot hold the WebRTC jitter buffer"
+    assert!(!allocation.is_null(), "S3 PSRAM allocation failed");
+    log::info!(
+        "S3 PSRAM allocation complete: size={} free={}",
+        layout.size(),
+        esp_alloc::HEAP.free_caps(esp_alloc::MemoryCapability::External.into())
     );
+    // SAFETY: `allocation` is non-null, aligned to `layout.align()`, and sized for `T`.
+    let storage = unsafe { &mut *allocation.cast::<core::mem::MaybeUninit<T>>() };
+    match initialize {
+        PsramInitialization::Uninitialized => PsramAllocation::Uninitialized(storage),
+        PsramInitialization::Zeroed => {
+            // SAFETY: This variant is only built through `zeroed_psram_initialization`,
+            // whose bound restricts it to the audited integer-array DTLS resource type.
+            unsafe {
+                core::ptr::write_bytes(storage.as_mut_ptr().cast::<u8>(), 0, layout.size());
+                PsramAllocation::Initialized(storage.assume_init_mut())
+            }
+        }
+        PsramInitialization::InPlace(initialize) => {
+            PsramAllocation::Initialized(initialize(storage))
+        }
+    }
+}
 
-    let buffer = allocation.cast::<intercom_adapter_webrtc::session::WebRtcJitterBuffer>();
-    unsafe {
-        buffer.write(intercom_adapter_webrtc::session::WebRtcJitterBuffer::new(0));
-        &mut *buffer
+/// Allocate and zero the fixed integer-array DTLS storage directly in PSRAM.
+#[cfg(target_os = "none")]
+pub fn allocate_dtls_srtp_resources(
+) -> &'static mut intercom_adapter_webrtc::dtls::DtlsSrtpResources {
+    match alloc_psram_in_place(zeroed_psram_initialization()) {
+        PsramAllocation::Initialized(resources) => resources,
+        PsramAllocation::Uninitialized(_) => unreachable!(),
     }
 }
 
 #[cfg(target_os = "none")]
 pub fn allocate_webrtc_media_resources(
 ) -> &'static mut intercom_adapter_webrtc::session::WebRtcMediaResources {
-    let layout =
-        core::alloc::Layout::new::<intercom_adapter_webrtc::session::WebRtcMediaResources>();
-    let allocation =
-        unsafe { esp_alloc::HEAP.alloc_caps(esp_alloc::MemoryCapability::External.into(), layout) };
-    assert!(
-        !allocation.is_null(),
-        "S3 PSRAM cannot hold the WebRTC media resources"
-    );
-
-    // SAFETY: The non-null allocation is aligned and sized for one resource value.
-    let storage = unsafe { &mut *allocation.cast::<core::mem::MaybeUninit<_>>() };
-    intercom_adapter_webrtc::session::WebRtcMediaResources::init_in(storage)
+    match alloc_psram_in_place(PsramInitialization::InPlace(
+        intercom_adapter_webrtc::session::WebRtcMediaResources::init_in,
+    )) {
+        PsramAllocation::Initialized(resources) => resources,
+        PsramAllocation::Uninitialized(_) => unreachable!(),
+    }
 }
 
 #[cfg(target_os = "none")]
@@ -340,8 +451,8 @@ impl PlatformDriver for S3Platform {
             .take()
             .expect("Core 1 interrupt can only be consumed once");
         let stack = unsafe {
-            let stack =
-                (*core::ptr::addr_of_mut!(APP_CORE_STACK)).write(esp_hal::system::Stack::new());
+            let stack = APP_CORE_STACK.init(esp_hal::system::Stack::new());
+            AUDIO_STACK_BOTTOM.store(stack.bottom() as usize, portable_atomic::Ordering::Release);
             core::ptr::write_bytes(
                 stack.bottom().cast::<u8>(),
                 STACK_WATERMARK,
@@ -430,11 +541,16 @@ pub const fn heap_region_sizes(
     }
 }
 
+#[cfg(any(target_os = "none", test))]
+pub const fn heap_region_is_present(bytes: usize) -> bool {
+    bytes != 0
+}
+
 /// S3 data-cache reclaimable RAM when `ESP_HAL_CONFIG_DATA_CACHE_SIZE=32KB`.
 pub const DCACHE_RECLAIMED_BYTES: usize = 32 * 1024;
 
 /// S3 internal heap budget selected to preserve the linker-managed main stack.
-pub const INTERNAL_HEAP_BYTES: usize = 48 * 1024;
+pub const INTERNAL_HEAP_BYTES: usize = 120 * 1024;
 
 /// Build the S3 internal heap layout while keeping the shared configured budget.
 pub const fn internal_heap_layout(
@@ -480,9 +596,9 @@ impl S3MemoryProfile {
 #[cfg(all(test, feature = "esp32s3"))]
 mod tests {
     use super::{
-        heap_region_sizes, internal_heap_layout, reclaimed_heap_size, stack_watermark_bytes,
-        BoardPins, GpioClearMasks, MemoryPlacement, MemoryProfileError, RelayPins, S3MemoryProfile,
-        EXPOSED_PINS, RESERVED_PINS,
+        heap_region_is_present, heap_region_sizes, internal_heap_layout, reclaimed_heap_size,
+        stack_watermark_bytes, BoardPins, GpioClearMasks, MemoryPlacement, MemoryProfileError,
+        RelayPins, S3MemoryProfile, EXPOSED_PINS, RESERVED_PINS,
     };
 
     #[test]
@@ -567,31 +683,31 @@ mod tests {
 
     #[test]
     fn s3_release_heap_preserves_the_linker_main_stack_reserve() {
-        let layout = internal_heap_layout(
-            crate::config::HEAP_SIZE,
-            73_744,
-            32 * 1024,
-            32 * 1024,
-            32 * 1024,
-        );
+        let layout = internal_heap_layout(120 * 1024, 73_744, 32 * 1024, 0, 32 * 1024);
 
         assert_eq!(
             layout.standard_bytes + layout.boot_reclaimed_bytes + layout.dcache_reclaimed_bytes,
             crate::config::HEAP_SIZE
         );
-        assert_eq!(crate::config::HEAP_SIZE, 48 * 1024);
-        assert_eq!(layout.boot_reclaimed_bytes, 40_976);
+        assert_eq!(crate::config::HEAP_SIZE, 120 * 1024);
+        assert_eq!(layout.boot_reclaimed_bytes, 73_744);
         assert_eq!(layout.dcache_reclaimed_bytes, 0);
-        assert_eq!(layout.standard_bytes, 8_176);
+        assert_eq!(layout.standard_bytes, 49_136);
+    }
+
+    #[test]
+    fn empty_heap_regions_are_not_registered() {
+        assert!(!heap_region_is_present(0));
+        assert!(heap_region_is_present(1));
     }
 
     #[test]
     fn reserves_dcache_reclaimed_ram_for_the_audio_worker_stack() {
-        let layout = heap_region_sizes(48 * 1024, 73_744, 32 * 1024, 32 * 1024, 32 * 1024);
+        let layout = heap_region_sizes(120 * 1024, 73_744, 32 * 1024, 0, 32 * 1024);
 
-        assert_eq!(layout.boot_reclaimed_bytes, 40_976);
+        assert_eq!(layout.boot_reclaimed_bytes, 73_744);
         assert_eq!(layout.dcache_reclaimed_bytes, 0);
-        assert_eq!(layout.standard_bytes, 8_176);
+        assert_eq!(layout.standard_bytes, 49_136);
     }
 
     #[test]

@@ -36,6 +36,7 @@ pub use commissioning::{
     derive_intercom_identity, DeviceIdentity, IdentityError, HOSTNAME_PREFIX, SERIAL_PREFIX,
 };
 pub use config::{AUDIO_DOORBELL_ENDPOINT_ID, DOOR_LOCK_ENDPOINT_ID, MATTER_ECOSYSTEM};
+pub use controller::MatterStackStorage;
 pub use controller::{DeviceInfo, MatterController, MatterControllerConfig, MatterPeripherals};
 pub use door_lock::{IntercomDoorLock, IntercomDoorLockConfig};
 pub use doorbell_switch::IntercomDoorbellSwitch;

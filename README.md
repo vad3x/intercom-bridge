@@ -103,16 +103,17 @@ The resulting binary is located at `target/riscv32imac-unknown-none-elf/debug/in
 
 #### ESP32-S3-N16R8
 
-The S3-N16R8 profile has 16 MiB Quad SPI flash, 8 MiB Octal SPI PSRAM, and a WS2812 RGB indicator routed to GPIO47 in the supplied board pinout. The shared RMT LED driver uses GRB color order. Build the Xtensa target in the pinned Linux container `espressif/idf-rust:esp32s3_1.95.0.0` (Rust `1.95.0.0`, target `xtensa-esp32s3-none-elf`, `rust-src`, and Xtensa GCC/binutils `15.2.0`). This image uses the Espressif toolchain directly (`cargo +esp`); `mise` is not installed in the image. After `source /home/esp/export-esp.sh`, the compiler and archiver used by `cc` are `xtensa-esp32s3-elf-gcc` and `xtensa-esp32s3-elf-ar`. `.cargo/config.toml` sets the target C compiler's `-mlongcalls` flag, required by the S3 link. Set `ESP_HAL_CONFIG_DATA_CACHE_SIZE=32KB` so the firmware reserves the 32 KiB reclaimed data-cache region for its Core 1 audio stack and the remaining reclaimed memory for heap:
+The S3-N16R8 profile has 16 MiB Quad SPI flash, 8 MiB Octal SPI PSRAM, and a WS2812 RGB indicator routed to GPIO47 in the supplied board pinout. The shared RMT LED driver uses GRB color order. Because prebuilt Xtensa Rust toolchains are not distributed for x86_64 macOS, `scripts/cargo-s3` encapsulates the build inside the pinned Linux container `espressif/idf-rust:esp32s3_1.95.0.0` (Rust `1.95.0.0`, target `xtensa-esp32s3-none-elf`, `rust-src`, and Xtensa GCC/binutils `15.2.0`), while flashing runs on the macOS host via `espflash`:
 
 ```bash
-source /home/esp/export-esp.sh
-export CARGO_TARGET_DIR=/Volumes/samsung-t7-black-2tb-ssd0/cargo-target
-export CC_xtensa_esp32s3_none_elf=xtensa-esp32s3-elf-gcc
-export AR_xtensa_esp32s3_none_elf=xtensa-esp32s3-elf-ar
-export ESP_HAL_CONFIG_DATA_CACHE_SIZE=32KB
-cargo +esp build -p intercom-firmware --release \
-    --no-default-features --features esp32s3 --target xtensa-esp32s3-none-elf
+# Build S3 release ELF (via Docker container):
+mise exec -- cargo build-s3
+
+# Build S3 4MB factory-only ELF (via Docker container):
+mise exec -- cargo build-s3-factory
+
+# Flash the built S3 ELF from the macOS host:
+mise exec -- cargo flash-s3 --port "$S3_PORT"
 ```
 
 The current rollback-capable partition table uses the first 8 MiB of flash. Confirm the release ELF fits its `0x350000`-byte app slot before packaging or flashing. Board-specific pins and bring-up checks are listed in [docs/hardware/esp32-s3-bring-up.md](docs/hardware/esp32-s3-bring-up.md); verify the exact dev-board revision before connecting fixtures.
