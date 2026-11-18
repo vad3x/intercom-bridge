@@ -1,7 +1,7 @@
 //! Smart Intercom - Firmware Composition Root Configuration
 //!
 //! Target hardware version, product identification, and flash memory layout
-//! specific to the ESP32-C6 Intercom Bridge firmware.
+//! for the Intercom Bridge firmware.
 
 use core::ops::Range;
 
@@ -460,6 +460,7 @@ impl S3FlashLayout {
     }
 
     /// Whether the profile has both OTA slots and an OTA metadata partition.
+    #[cfg(test)]
     pub const fn ota_capable(&self) -> bool {
         self.app_partitions[0].is_some()
             && self.app_partitions[1].is_some()
@@ -467,6 +468,7 @@ impl S3FlashLayout {
     }
 
     /// Ensure all defined partitions fit and do not overlap.
+    #[cfg(test)]
     pub fn validate(&self) -> bool {
         let mut partitions = [None; 6];
         partitions[0] = Some(self.nvs);

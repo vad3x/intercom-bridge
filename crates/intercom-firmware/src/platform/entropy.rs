@@ -147,6 +147,7 @@ impl EntropyProvider {
     }
 
     /// Whether the ADC peripheral has been released for radio startup.
+    #[cfg(test)]
     pub const fn seed_source_released(&self) -> bool {
         self.seed_source_released
     }

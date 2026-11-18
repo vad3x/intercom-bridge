@@ -20,8 +20,6 @@ impl<T> ReclaimedCell<T> {
 }
 
 #[cfg(feature = "esp32s3")]
-pub mod audio_startup;
-#[cfg(feature = "esp32s3")]
 pub mod entropy;
 pub mod target_selection;
 
@@ -59,7 +57,7 @@ pub fn take_audio_state_updates(
     (call_state.try_changed(), system_state.try_changed())
 }
 
-/// Peripherals shared by the C6 and S31 application wiring after platform-owned
+/// Peripherals shared by the C6, S3, and S31 application wiring after platform-owned
 /// timer and Core 1 peripherals have been consumed.
 #[cfg(target_os = "none")]
 #[allow(non_snake_case)]
@@ -109,8 +107,6 @@ pub struct PlatformPeripherals {
     pub GPIO40: esp_hal::peripherals::GPIO40<'static>,
     #[cfg(feature = "esp32s3")]
     pub GPIO47: esp_hal::peripherals::GPIO47<'static>,
-    #[cfg(feature = "esp32s3")]
-    pub GPIO48: esp_hal::peripherals::GPIO48<'static>,
     pub RMT: esp_hal::peripherals::RMT<'static>,
 }
 

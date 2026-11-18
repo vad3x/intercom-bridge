@@ -62,10 +62,7 @@ fn fill_radio_entropy(output: &mut [u8]) -> bool {
 }
 
 /// Return the untouched low-address prefix of a downward-growing stack.
-#[cfg(any(
-    all(target_os = "none", feature = "esp32s3"),
-    all(test, feature = "esp32s3")
-))]
+#[cfg(all(test, feature = "esp32s3"))]
 fn stack_watermark_bytes(stack: &[u8]) -> usize {
     stack
         .iter()
@@ -133,9 +130,11 @@ impl BoardPins {
 }
 
 /// Pins that the board profile must keep available for application wiring.
+#[cfg(test)]
 pub const EXPOSED_PINS: &[u8] = &[4, 8, 9, 10, 11, 12, 13, 14, 16, 17, 18, 21, 40, 47, 48];
 
 /// GPIOs reserved for module memory, flash, USB/UART consoles, or boot strapping.
+#[cfg(test)]
 pub const RESERVED_PINS: &[u8] = &[
     0, 3, 19, 20, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 43, 44, 45, 46,
 ];
@@ -348,8 +347,6 @@ impl PlatformDriver for S3Platform {
             8 * 1024 * 1024,
             "ESP32-S3-N16R8 requires 8 MiB Octal SPI PSRAM"
         );
-        S3MemoryProfile::initialize(psram_size)
-            .expect("ESP32-S3 profile requires initialized PSRAM");
         unsafe {
             esp_alloc::HEAP.add_region(esp_alloc::HeapRegion::new(
                 psram_start,
@@ -388,7 +385,6 @@ impl PlatformDriver for S3Platform {
             GPIO21,
             GPIO40,
             GPIO47,
-            GPIO48,
             I2S0,
             DMA_CH0,
             RMT,
@@ -423,7 +419,6 @@ impl PlatformDriver for S3Platform {
                 GPIO17,
                 GPIO40,
                 GPIO47,
-                GPIO48,
                 RMT,
             },
         };
@@ -469,19 +464,6 @@ impl PlatformDriver for S3Platform {
             });
         });
     }
-}
-
-/// Memory capability requested for a subsystem allocation.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum MemoryPlacement {
-    Internal,
-    External,
-}
-
-/// Failure to initialize the required S3 PSRAM profile.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum MemoryProfileError {
-    PsramUnavailable,
 }
 
 /// Return the portion of the internal heap that can use bootloader-reclaimed RAM.
@@ -569,36 +551,11 @@ pub const fn internal_heap_layout(
     )
 }
 
-/// Allocation policy for an S3 board with external PSRAM.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct S3MemoryProfile {
-    pub media_resources: MemoryPlacement,
-    pub jitter_buffer: MemoryPlacement,
-    pub audio_worker_stack: MemoryPlacement,
-    pub dma_buffers: MemoryPlacement,
-}
-
-impl S3MemoryProfile {
-    /// Validate PSRAM initialization and return the required allocation policy.
-    pub const fn initialize(psram_bytes: usize) -> Result<Self, MemoryProfileError> {
-        if psram_bytes == 0 {
-            return Err(MemoryProfileError::PsramUnavailable);
-        }
-        Ok(Self {
-            media_resources: MemoryPlacement::External,
-            jitter_buffer: MemoryPlacement::External,
-            audio_worker_stack: MemoryPlacement::Internal,
-            dma_buffers: MemoryPlacement::Internal,
-        })
-    }
-}
-
 #[cfg(all(test, feature = "esp32s3"))]
 mod tests {
     use super::{
         heap_region_is_present, heap_region_sizes, internal_heap_layout, reclaimed_heap_size,
-        stack_watermark_bytes, BoardPins, GpioClearMasks, MemoryPlacement, MemoryProfileError,
-        RelayPins, S3MemoryProfile, EXPOSED_PINS, RESERVED_PINS,
+        stack_watermark_bytes, BoardPins, GpioClearMasks, RelayPins, EXPOSED_PINS, RESERVED_PINS,
     };
 
     #[test]
@@ -630,23 +587,6 @@ mod tests {
         assert_eq!(relay_masks.gpio_low, (1 << 17) | (1 << 18));
         assert_eq!(relay_masks.gpio_high, 1 << (40 - 32));
         assert!(RESERVED_PINS.contains(&38));
-    }
-
-    #[test]
-    fn requires_psram_and_keeps_dma_and_stack_internal() {
-        // Arrange
-        let no_psram = S3MemoryProfile::initialize(0);
-
-        // Act
-        let profile = S3MemoryProfile::initialize(8 * 1024 * 1024);
-
-        // Assert
-        assert_eq!(no_psram, Err(MemoryProfileError::PsramUnavailable));
-        let profile = profile.unwrap();
-        assert_eq!(profile.jitter_buffer, MemoryPlacement::External);
-        assert_eq!(profile.media_resources, MemoryPlacement::External);
-        assert_eq!(profile.audio_worker_stack, MemoryPlacement::Internal);
-        assert_eq!(profile.dma_buffers, MemoryPlacement::Internal);
     }
 
     #[test]

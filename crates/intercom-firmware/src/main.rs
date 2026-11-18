@@ -46,7 +46,7 @@ use {
         MatterStackStorage,
     },
     intercom_adapter_webrtc::{
-        dtls::{DtlsSrtpResourceCell, DtlsSrtpResources},
+        dtls::DtlsSrtpResourceCell,
         session::{WebRtcMediaEngine, WebRtcSessionConfig, WebRtcSessionHandle},
         signaling::{SecureRandom, SignalingError, WebRtcSignalingFacade},
     },
@@ -80,7 +80,7 @@ use edf_ota::driver::FlashOtaDriver;
 #[cfg(all(target_os = "none", not(feature = "led-smartled")))]
 use intercom_adapter_gpio::led::GpioLedDriver;
 #[cfg(all(target_os = "none", not(feature = "esp32s3")))]
-use intercom_adapter_webrtc::session::WebRtcMediaResources;
+use intercom_adapter_webrtc::dtls::DtlsSrtpResources;
 #[cfg(all(target_os = "none", feature = "ota-disabled"))]
 use intercom_firmware::disabled_ota::DisabledOtaDriver;
 #[cfg(all(target_os = "none", feature = "esp32s3"))]
@@ -649,17 +649,10 @@ async fn main(spawner: Spawner) {
     let audio_ctrl = intercom_core::ports::NoopAudioControlDriver;
 
     #[cfg(not(feature = "led-smartled"))]
-    #[cfg(not(feature = "esp32s3"))]
     static INDICATOR: StaticCell<GpioLedDriver> = StaticCell::new();
     #[cfg(not(feature = "led-smartled"))]
-    #[cfg(not(feature = "esp32s3"))]
     let indicator: &'static GpioLedDriver =
         &*INDICATOR.init(GpioLedDriver::new(peripherals.GPIO19));
-    #[cfg(all(not(feature = "led-smartled"), feature = "esp32s3"))]
-    static INDICATOR: StaticCell<GpioLedDriver> = StaticCell::new();
-    #[cfg(all(not(feature = "led-smartled"), feature = "esp32s3"))]
-    let indicator: &'static GpioLedDriver =
-        &*INDICATOR.init(GpioLedDriver::new(peripherals.GPIO47));
 
     #[cfg(all(feature = "led-smartled", not(feature = "esp32s3")))]
     static DEVKIT_INDICATOR: StaticCell<intercom_firmware::devkit_led::DevKitLedDriver> =
@@ -688,13 +681,8 @@ async fn main(spawner: Spawner) {
     );
 
     #[cfg(not(feature = "led-smartled"))]
-    #[cfg(not(feature = "esp32s3"))]
     let boot_button = GpioBootButtonDriver::new(
         GpioBootButtonConfig::new(peripherals.GPIO9).with_indicator(indicator),
-    );
-    #[cfg(all(not(feature = "led-smartled"), feature = "esp32s3"))]
-    let boot_button = GpioBootButtonDriver::new(
-        GpioBootButtonConfig::new(peripherals.GPIO16).with_indicator(indicator),
     );
     #[cfg(all(feature = "led-smartled", not(feature = "esp32s3")))]
     let boot_button = GpioBootButtonDriver::new(
