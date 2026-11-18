@@ -436,13 +436,13 @@ async fn main(spawner: Spawner) {
 
     let doorbell_switch = IntercomDoorbellSwitch::new(readiness);
     let audio_av_cluster = IntercomAudioAvCluster::new(access_handle);
-    #[cfg(feature = "devkit")]
+    #[cfg(any(feature = "devkit", feature = "esp32s3"))]
     {
         let stream_id = audio_av_cluster
             .allocate_synthetic_audio_stream()
             .await
-            .expect("allocate DevKit synthetic audio stream");
-        info!("DevKit synthetic audio stream allocated: {}", stream_id);
+            .expect("allocate synthetic audio stream");
+        info!("Synthetic audio stream allocated: {}", stream_id);
     }
     let chime_cluster = IntercomChime::new();
     let door_lock = IntercomDoorLock::new(IntercomDoorLockConfig {
@@ -842,7 +842,7 @@ async fn main(spawner: Spawner) {
             for _ in 0..batch.frames {
                 let queue_dropped = RX_AUDIO_CHANNEL.try_send(speech.next_frame()).is_err();
                 if let Some(queue_drops) = drop_window.record(queue_dropped) {
-                    info!(
+                    log::debug!(
                         "Test audio frames=50 simulated_overruns={} queue_drops={}",
                         simulated_dma_overruns, queue_drops,
                     );

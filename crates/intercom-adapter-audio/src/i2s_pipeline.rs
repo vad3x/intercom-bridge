@@ -148,7 +148,7 @@ impl I2sAudioPipeline {
                 false
             };
             if let Some(queue_drops) = input_window.record(queue_dropped) {
-                log::info!(
+                log::debug!(
                     "I2S audio input window frames={} queue_drops={} max_dma_backlog_frames={}",
                     AUDIO_FRAME_DROP_WINDOW_FRAMES,
                     queue_drops,
