@@ -1,5 +1,22 @@
 # ESP32-S3-N16R8 Bring-up
 
+## Boot failure at checkpoint `d1ab74d` (2026-11-18)
+
+USB flashing succeeded with the factory test build (`esp32s3,flash-4mb,ota-disabled`, `partitions-4mb.csv`, partition `factory`, physical flash size 16 MB). On three boots the uncommissioned board reached Matter Wi-Fi/BLE startup, hit the Core 0 stack guard in `Bump::alloc_with`, and rebooted.
+
+| Evidence from the flashed ELF and crash trace | Bytes |
+|---|---:|
+| Linked Core 0 stack (`0x3fcd6110` to `0x3fcdb700`) | 22,000 |
+| Stack headroom above the guard on entry to the failing call | 948 |
+| Xtensa stack frame for the call | 4,768 |
+| Space still available in the Matter bump arena | 42,160 |
+
+The frame exceeds the available stack headroom. The disassembly shows a 904-byte copy crossing the guard. Core 1 has a separate 32 KiB stack. The local serial capture is at `/private/tmp/intercom-s3-stack-fix-boot.log`.
+
+An earlier overflow occurred while constructing `WebRtcMediaResources`. Its current `init_in` workaround let the board reach Matter startup. Replacing its unsafe copy remains open. Verify a replacement against the optimized Xtensa output as well as the host test so a large stack temporary does not return.
+
+The proposed Core 0 target of 55 KiB requires freeing about 33.5 KiB of internal RAM in this build. It has not been implemented or tested. Propose an application-side change for review before editing firmware or companion libraries. Stable boot, BLE commissioning, synthetic-audio streaming, and dual-bank OTA still await hardware verification. The C6 release build passed, the S31 release link exceeded RAM, and companion revision pinning remains open.
+
 ## Module profile
 
 The selected board is ESP32-S3-DevKitC-1 with an ESP32-S3-N16R8 module: 16 MiB Quad SPI flash and 8 MiB Octal SPI PSRAM. Read the board revision from the attached hardware. GPIO routing below is a candidate profile and must be checked against its silkscreen and board schematic before connecting the codec or relay fixture.
