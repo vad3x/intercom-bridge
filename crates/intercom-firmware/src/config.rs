@@ -94,11 +94,16 @@ pub const DEFAULT_DOOR_DURATION_SEC: u32 = intercom_core::config::DEFAULT_DOOR_U
 // Memory & Logging Configuration
 // ============================================================================
 
-/// Total heap size allocated to the esp-alloc runtime, balancing free heap with main task stack space.
+/// Internal heap budget for the S3 profile; PSRAM supplies a separate external heap region.
+#[cfg(feature = "esp32s3")]
+pub const HEAP_SIZE: usize = crate::platform::s3::INTERNAL_HEAP_BYTES;
+
+/// C6 internal heap budget, balancing runtime allocations with the main task stack.
 ///
 /// Peak heap usage with WebRTC DTLS+SRTP and Matter TCP is ~108 KiB.
 /// 120 KiB leaves ~12 KiB free heap margin while giving the main task stack ~48 KiB
 /// of headroom to safely run Opus Silk fixed-point pitch analysis.
+#[cfg(not(feature = "esp32s3"))]
 pub const HEAP_SIZE: usize = 120 * 1024;
 
 /// Diagnostic log history (2 KiB), leaving room for two HTTP sockets and audio.
@@ -151,9 +156,9 @@ pub const OTA_PUBLIC_KEY: [u8; 32] = *include_bytes!("../ota_public_key.bin");
 // Smart Home Ecosystems
 // ============================================================================
 
-#[cfg(target_arch = "riscv32")]
+#[cfg(target_os = "none")]
 use intercom_adapter_matter::MATTER_ECOSYSTEM;
-#[cfg(not(target_arch = "riscv32"))]
+#[cfg(not(target_os = "none"))]
 const MATTER_ECOSYSTEM: EcosystemId = EcosystemId::new("Matter");
 
 use intercom_core::domain::{EcosystemId, EcosystemType};
@@ -288,5 +293,204 @@ mod pcb_v2_tests {
     }
 }
 
+#[cfg(all(test, feature = "esp32s3"))]
+mod s3_layout_tests {
+    use super::{S3FlashLayout, S3Partition};
+
+    #[test]
+    fn s3_layout_matches_partition_table() {
+        // Arrange: fixtures mirror partitions.csv and partitions-4mb.csv.
+        let dual_bank = S3FlashLayout::dual_bank_8mb();
+        let factory_only = S3FlashLayout::factory_only_4mb();
+
+        // Act
+        let dual_valid = dual_bank.validate();
+        let factory_valid = factory_only.validate();
+
+        // Assert
+        assert!(dual_valid);
+        assert!(factory_valid);
+        assert!(dual_bank.ota_capable());
+        assert!(!factory_only.ota_capable());
+        assert_eq!(dual_bank.flash_bytes, 0x800000);
+        assert_eq!(
+            dual_bank.app_partitions[0],
+            Some(S3Partition {
+                offset: 0x020000,
+                size: 0x350000
+            })
+        );
+        assert_eq!(
+            dual_bank.app_partitions[1],
+            Some(S3Partition {
+                offset: 0x370000,
+                size: 0x350000
+            })
+        );
+        assert_eq!(
+            dual_bank.system_kvs,
+            S3Partition {
+                offset: 0x6c0000,
+                size: 0x2000
+            }
+        );
+        assert_eq!(
+            dual_bank.matter_kvs,
+            S3Partition {
+                offset: 0x6c2000,
+                size: 0x6000
+            }
+        );
+        assert_eq!(factory_only.flash_bytes, 0x400000);
+        assert_eq!(
+            factory_only.app_partitions[0],
+            Some(S3Partition {
+                offset: 0x020000,
+                size: 0x3b0000
+            })
+        );
+        assert_eq!(
+            factory_only.system_kvs,
+            S3Partition {
+                offset: 0x3d0000,
+                size: 0x2000
+            }
+        );
+        assert_eq!(
+            factory_only.matter_kvs,
+            S3Partition {
+                offset: 0x3d2000,
+                size: 0x6000
+            }
+        );
+    }
+}
+
 pub const AUDIO_RX_GAIN_KEY: u16 = 0x1002;
 pub const AUDIO_TX_GAIN_KEY: u16 = 0x1003;
+
+/// A flash partition's start and length in bytes.
+#[cfg(feature = "esp32s3")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct S3Partition {
+    pub offset: u32,
+    pub size: u32,
+}
+
+/// S3 flash geometry represented by the checked-in partition CSV profiles.
+#[cfg(feature = "esp32s3")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct S3FlashLayout {
+    pub flash_bytes: u32,
+    pub nvs: S3Partition,
+    pub ota_data: Option<S3Partition>,
+    pub app_partitions: [Option<S3Partition>; 2],
+    pub system_kvs: S3Partition,
+    pub matter_kvs: S3Partition,
+}
+
+#[cfg(feature = "esp32s3")]
+impl S3FlashLayout {
+    /// The current 8 MiB rollback-capable partition table.
+    pub const fn dual_bank_8mb() -> Self {
+        Self {
+            flash_bytes: 0x800000,
+            nvs: S3Partition {
+                offset: 0x9000,
+                size: 0x6000,
+            },
+            ota_data: Some(S3Partition {
+                offset: 0xf000,
+                size: 0x2000,
+            }),
+            app_partitions: [
+                Some(S3Partition {
+                    offset: 0x020000,
+                    size: 0x350000,
+                }),
+                Some(S3Partition {
+                    offset: 0x370000,
+                    size: 0x350000,
+                }),
+            ],
+            system_kvs: S3Partition {
+                offset: 0x6c0000,
+                size: 0x2000,
+            },
+            matter_kvs: S3Partition {
+                offset: 0x6c2000,
+                size: 0x6000,
+            },
+        }
+    }
+
+    /// The current 4 MiB factory-only recovery layout.
+    pub const fn factory_only_4mb() -> Self {
+        Self {
+            flash_bytes: 0x400000,
+            nvs: S3Partition {
+                offset: 0x9000,
+                size: 0x6000,
+            },
+            ota_data: None,
+            app_partitions: [
+                Some(S3Partition {
+                    offset: 0x020000,
+                    size: 0x3b0000,
+                }),
+                None,
+            ],
+            system_kvs: S3Partition {
+                offset: 0x3d0000,
+                size: 0x2000,
+            },
+            matter_kvs: S3Partition {
+                offset: 0x3d2000,
+                size: 0x6000,
+            },
+        }
+    }
+
+    /// Whether the profile has both OTA slots and an OTA metadata partition.
+    pub const fn ota_capable(&self) -> bool {
+        self.app_partitions[0].is_some()
+            && self.app_partitions[1].is_some()
+            && self.ota_data.is_some()
+    }
+
+    /// Ensure all defined partitions fit and do not overlap.
+    pub fn validate(&self) -> bool {
+        let mut partitions = [None; 6];
+        partitions[0] = Some(self.nvs);
+        partitions[1] = self.ota_data;
+        partitions[2] = self.app_partitions[0];
+        partitions[3] = self.app_partitions[1];
+        partitions[4] = Some(self.system_kvs);
+        partitions[5] = Some(self.matter_kvs);
+
+        for (index, partition) in partitions.iter().enumerate() {
+            let Some(partition) = partition else { continue };
+            let Some(end) = partition.offset.checked_add(partition.size) else {
+                return false;
+            };
+            if partition.size == 0 || end > self.flash_bytes {
+                return false;
+            }
+            for other in partitions.iter().skip(index + 1).flatten() {
+                let Some(other_end) = other.offset.checked_add(other.size) else {
+                    return false;
+                };
+                if partition.offset < other_end && other.offset < end {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+}
+
+/// Active S3 partition geometry selected by the release feature set.
+#[cfg(all(feature = "esp32s3", feature = "flash-4mb"))]
+pub const S3_ACTIVE_LAYOUT: S3FlashLayout = S3FlashLayout::factory_only_4mb();
+#[cfg(all(feature = "esp32s3", not(feature = "flash-4mb")))]
+pub const S3_ACTIVE_LAYOUT: S3FlashLayout = S3FlashLayout::dual_bank_8mb();

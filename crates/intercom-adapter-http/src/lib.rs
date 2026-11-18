@@ -20,7 +20,10 @@ pub mod ws_audio;
 pub use ws_audio::HttpAudioMedia;
 
 pub use config::HttpServerConfig;
-pub use router::{format_status_json, parse_route, Route};
+pub use router::{
+    format_status_json, format_status_json_with_memory, parse_route, MemoryRegion, MemorySnapshot,
+    Route,
+};
 pub use server::HttpServer;
 
 /// Pre-gzipped single-page dashboard application compiled into the binary.

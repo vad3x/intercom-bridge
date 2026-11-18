@@ -583,12 +583,12 @@ a=ssrc:3210117597 msid:- 621af9a1-27a2-4ec8-9433-d9f87063ac7f\r\n";
         facade.set_local_ipv4([192, 168, 1, 50]);
         let mut answer = [0u8; 2048];
 
-        let result = facade.accept_offer_for_owner(
-            CONTROLLER_OFFER,
-            &mut answer,
-            SessionOwner::HttpDebug,
-        );
-        let config = requests.receiver().try_receive().expect("shared engine queued");
+        let result =
+            facade.accept_offer_for_owner(CONTROLLER_OFFER, &mut answer, SessionOwner::HttpDebug);
+        let config = requests
+            .receiver()
+            .try_receive()
+            .expect("shared engine queued");
 
         assert!(result.is_ok());
         assert_eq!(config.owner, SessionOwner::HttpDebug);

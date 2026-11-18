@@ -329,6 +329,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "block-device-driver"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "44c051592f59fe68053524b4c4935249b806f72c1f544cfb7abe4f57c3be258e"
+dependencies = [
+ "aligned",
+]
+
+[[package]]
 name = "brownstone"
 version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1477,6 +1486,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "embassy-usb-synopsys-otg"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6efd0c0e0b21bcf91b475b8fa47347c1df32c9a99728ae1e1b0e6625862dfd1a"
+dependencies = [
+ "critical-section",
+ "embassy-sync 0.8.0",
+ "embassy-time",
+ "embassy-usb-driver",
+ "portable-atomic",
+]
+
+[[package]]
 name = "embedded-can"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1676,6 +1698,7 @@ dependencies = [
  "esp-println",
  "heapless 0.9.3",
  "riscv",
+ "semihosting",
  "xtensa-lx",
 ]
 
@@ -1726,6 +1749,8 @@ dependencies = [
  "embassy-embedded-hal",
  "embassy-futures",
  "embassy-sync 0.8.0",
+ "embassy-usb-driver",
+ "embassy-usb-synopsys-otg",
  "embedded-can",
  "embedded-hal 1.0.0",
  "embedded-hal-async",
@@ -1749,8 +1774,8 @@ dependencies = [
  "esp32h2",
  "esp32p4",
  "esp32s2",
- "esp32s3",
- "esp32s31",
+ "esp32s3 0.36.0",
+ "esp32s31 0.3.0",
  "fugit",
  "instability",
  "log",
@@ -1761,6 +1786,7 @@ dependencies = [
  "rand_core 0.6.4",
  "rand_core 0.9.5",
  "riscv",
+ "sdio",
  "somni-template",
  "static_cell",
  "strum 0.27.2",
@@ -1816,7 +1842,11 @@ dependencies = [
  "esp-metadata-generated",
  "esp-sync",
  "esp-wifi-sys-esp32c6",
+ "esp-wifi-sys-esp32s3",
+ "esp-wifi-sys-esp32s31",
  "esp32c6 0.25.0",
+ "esp32s3 0.37.0",
+ "esp32s31 0.3.0",
  "log",
 ]
 
@@ -1870,6 +1900,8 @@ dependencies = [
  "esp-wifi-sys-esp32s3",
  "esp-wifi-sys-esp32s31",
  "esp32c6 0.25.0",
+ "esp32s3 0.37.0",
+ "esp32s31 0.3.0",
  "heapless 0.9.3",
  "ieee802154",
  "instability",
@@ -1879,6 +1911,7 @@ dependencies = [
  "portable-atomic",
  "portable_atomic_enum",
  "xarxa-driver",
+ "xtensa-lx-rt",
 ]
 
 [[package]]
@@ -1911,6 +1944,8 @@ dependencies = [
  "document-features",
  "esp-metadata-generated",
  "esp32c6 0.24.0",
+ "esp32s3 0.36.0",
+ "esp32s31 0.2.0",
 ]
 
 [[package]]
@@ -1952,6 +1987,8 @@ dependencies = [
  "esp-rom-sys",
  "esp-sync",
  "esp32c6 0.24.0",
+ "esp32s3 0.36.0",
+ "esp32s31 0.2.0",
 ]
 
 [[package]]
@@ -2138,6 +2175,25 @@ version = "0.36.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab08eb1f516ba72b7eb272cdd88cd74899552292a294b831b2143a3e60f1666a"
 dependencies = [
+ "vcell",
+]
+
+[[package]]
+name = "esp32s3"
+version = "0.37.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3e2e7d1a9bd72304ef0e55c90405195489ff902c908a57cd81fc8a4d51ff4ae"
+dependencies = [
+ "vcell",
+]
+
+[[package]]
+name = "esp32s31"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a0c27f1306a6588a4944e8e6dfd691ea4b675866fddd64e51be277f33ecd8ccf"
+dependencies = [
+ "critical-section",
  "vcell",
 ]
 
@@ -2623,7 +2679,10 @@ dependencies = [
  "embassy-futures",
  "embassy-sync 0.8.0",
  "embassy-time",
+ "embedded-storage",
+ "embedded-storage-async",
  "esp-hal",
+ "esp-storage",
  "intercom-core",
  "log",
 ]
@@ -2671,6 +2730,7 @@ dependencies = [
  "intercom-core",
  "log",
  "portable-atomic",
+ "rand_core 0.9.5",
  "rs-matter",
  "rs-matter-embassy",
  "static_cell",
@@ -2740,7 +2800,10 @@ dependencies = [
  "esp-println",
  "esp-rtos",
  "esp-wifi-sys-esp32c6",
+ "esp-wifi-sys-esp32s3",
+ "esp-wifi-sys-esp32s31",
  "futures",
+ "hmac 0.12.1",
  "intercom-adapter-audio",
  "intercom-adapter-gpio",
  "intercom-adapter-http",
@@ -2752,6 +2815,7 @@ dependencies = [
  "portable-atomic",
  "rs-matter",
  "rs-matter-embassy",
+ "sha2 0.10.9",
  "smart-leds",
  "static_cell",
 ]
@@ -3868,7 +3932,6 @@ dependencies = [
 [[package]]
 name = "rs-matter"
 version = "0.4.1"
-source = "git+https://github.com/project-chip/rs-matter?branch=main#c86233d310902503995738b3137884a3a7dc1764"
 dependencies = [
  "bitflags 2.13.2",
  "defmt",
@@ -3897,7 +3960,6 @@ dependencies = [
 [[package]]
 name = "rs-matter-bdx"
 version = "0.4.1"
-source = "git+https://github.com/project-chip/rs-matter?branch=main#c86233d310902503995738b3137884a3a7dc1764"
 dependencies = [
  "defmt",
  "log",
@@ -3911,7 +3973,6 @@ dependencies = [
 [[package]]
 name = "rs-matter-cert"
 version = "0.4.1"
-source = "git+https://github.com/project-chip/rs-matter?branch=main#c86233d310902503995738b3137884a3a7dc1764"
 dependencies = [
  "defmt",
  "der",
@@ -3928,7 +3989,6 @@ dependencies = [
 [[package]]
 name = "rs-matter-codegen"
 version = "0.4.1"
-source = "git+https://github.com/project-chip/rs-matter?branch=main#c86233d310902503995738b3137884a3a7dc1764"
 dependencies = [
  "convert_case 0.6.0",
  "miette",
@@ -3947,7 +4007,6 @@ dependencies = [
 [[package]]
 name = "rs-matter-crypto"
 version = "0.4.1"
-source = "git+https://github.com/project-chip/rs-matter?branch=main#c86233d310902503995738b3137884a3a7dc1764"
 dependencies = [
  "aes 0.9.3",
  "ccm 0.6.1",
@@ -3977,7 +4036,6 @@ dependencies = [
 [[package]]
 name = "rs-matter-dm"
 version = "0.4.1"
-source = "git+https://github.com/project-chip/rs-matter?branch=main#c86233d310902503995738b3137884a3a7dc1764"
 dependencies = [
  "async-channel",
  "bitflags 2.13.2",
@@ -4006,7 +4064,6 @@ dependencies = [
 [[package]]
 name = "rs-matter-dm-clusters"
 version = "0.4.1"
-source = "git+https://github.com/project-chip/rs-matter?branch=main#c86233d310902503995738b3137884a3a7dc1764"
 dependencies = [
  "bitflags 2.13.2",
  "defmt",
@@ -4021,7 +4078,6 @@ dependencies = [
 [[package]]
 name = "rs-matter-dm-core"
 version = "0.4.1"
-source = "git+https://github.com/project-chip/rs-matter?branch=main#c86233d310902503995738b3137884a3a7dc1764"
 dependencies = [
  "cfg-if",
  "defmt",
@@ -4069,7 +4125,6 @@ dependencies = [
 [[package]]
 name = "rs-matter-im"
 version = "0.4.1"
-source = "git+https://github.com/project-chip/rs-matter?branch=main#c86233d310902503995738b3137884a3a7dc1764"
 dependencies = [
  "defmt",
  "log",
@@ -4086,7 +4141,6 @@ dependencies = [
 [[package]]
 name = "rs-matter-im-core"
 version = "0.4.1"
-source = "git+https://github.com/project-chip/rs-matter?branch=main#c86233d310902503995738b3137884a3a7dc1764"
 dependencies = [
  "defmt",
  "log",
@@ -4101,7 +4155,6 @@ dependencies = [
 [[package]]
 name = "rs-matter-macros"
 version = "0.4.1"
-source = "git+https://github.com/project-chip/rs-matter?branch=main#c86233d310902503995738b3137884a3a7dc1764"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -4112,7 +4165,6 @@ dependencies = [
 [[package]]
 name = "rs-matter-node"
 version = "0.4.1"
-source = "git+https://github.com/project-chip/rs-matter?branch=main#c86233d310902503995738b3137884a3a7dc1764"
 dependencies = [
  "defmt",
  "log",
@@ -4132,7 +4184,6 @@ dependencies = [
 [[package]]
 name = "rs-matter-node-core"
 version = "0.4.1"
-source = "git+https://github.com/project-chip/rs-matter?branch=main#c86233d310902503995738b3137884a3a7dc1764"
 dependencies = [
  "bitflags 2.13.2",
  "cfg-if",
@@ -4153,7 +4204,6 @@ dependencies = [
 [[package]]
 name = "rs-matter-onboard"
 version = "0.4.1"
-source = "git+https://github.com/project-chip/rs-matter?branch=main#c86233d310902503995738b3137884a3a7dc1764"
 dependencies = [
  "defmt",
  "log",
@@ -4171,7 +4221,6 @@ dependencies = [
 [[package]]
 name = "rs-matter-pairing"
 version = "0.4.1"
-source = "git+https://github.com/project-chip/rs-matter?branch=main#c86233d310902503995738b3137884a3a7dc1764"
 dependencies = [
  "defmt",
  "log",
@@ -4185,7 +4234,6 @@ dependencies = [
 [[package]]
 name = "rs-matter-respond"
 version = "0.4.1"
-source = "git+https://github.com/project-chip/rs-matter?branch=main#c86233d310902503995738b3137884a3a7dc1764"
 dependencies = [
  "defmt",
  "log",
@@ -4201,7 +4249,6 @@ dependencies = [
 [[package]]
 name = "rs-matter-sc"
 version = "0.4.1"
-source = "git+https://github.com/project-chip/rs-matter?branch=main#c86233d310902503995738b3137884a3a7dc1764"
 dependencies = [
  "defmt",
  "log",
@@ -4221,7 +4268,6 @@ dependencies = [
 [[package]]
 name = "rs-matter-stack"
 version = "0.4.1"
-source = "git+https://github.com/project-chip/rs-matter?branch=main#c86233d310902503995738b3137884a3a7dc1764"
 dependencies = [
  "cfg-if",
  "defmt",
@@ -4243,7 +4289,6 @@ dependencies = [
 [[package]]
 name = "rs-matter-tlv"
 version = "0.4.1"
-source = "git+https://github.com/project-chip/rs-matter?branch=main#c86233d310902503995738b3137884a3a7dc1764"
 dependencies = [
  "defmt",
  "log",
@@ -4258,7 +4303,6 @@ dependencies = [
 [[package]]
 name = "rs-matter-transport"
 version = "0.4.1"
-source = "git+https://github.com/project-chip/rs-matter?branch=main#c86233d310902503995738b3137884a3a7dc1764"
 dependencies = [
  "async-channel",
  "bitflags 2.13.2",
@@ -4283,7 +4327,6 @@ dependencies = [
 [[package]]
 name = "rs-matter-utils"
 version = "0.4.1"
-source = "git+https://github.com/project-chip/rs-matter?branch=main#c86233d310902503995738b3137884a3a7dc1764"
 dependencies = [
  "bitflags 2.13.2",
  "critical-section",
@@ -4366,6 +4409,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
+name = "sdio"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "02f8dcf75e0f6aeeda4819e3adea9a2c0705c2f109970abcc07edcfef372b68a"
+dependencies = [
+ "aligned",
+ "block-device-driver",
+ "embedded-hal 1.0.0",
+ "embedded-hal-async",
+]
+
+[[package]]
 name = "sec1"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4378,6 +4433,12 @@ dependencies = [
  "subtle",
  "zeroize",
 ]
+
+[[package]]
+name = "semihosting"
+version = "0.1.25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f8e4abf97879f4e80db69a9fba7bd64998e9bdad25f58ef045a778e191172fd4"
 
 [[package]]
 name = "semver"

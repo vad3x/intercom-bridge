@@ -4,6 +4,7 @@ extern crate alloc;
 extern crate std;
 pub mod dtls;
 pub mod ice;
+pub mod jitter_buffer;
 pub mod mux;
 pub mod opus;
 pub mod sdp;

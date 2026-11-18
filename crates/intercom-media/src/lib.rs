@@ -8,12 +8,23 @@ use embassy_sync::channel::{Channel, Receiver, Sender};
 
 pub const AUDIO_SAMPLE_RATE_HZ: u32 = 16_000;
 pub const AUDIO_FRAME_SAMPLES: usize = 320;
+pub const AUDIO_RAMP_SAMPLES: usize = 160;
 pub const RX_AUDIO_QUEUE_CAP: usize = 4;
 pub const TX_AUDIO_QUEUE_CAP: usize = 3;
 pub const AUDIO_FRAME_DROP_WINDOW_FRAMES: u8 = 50;
 pub const AUDIO_CAPTURE_INTERVAL_MS: u64 = 20;
 pub const AUDIO_DMA_BUFFER_FRAMES: u8 = 4;
 pub const SILENCE_DBFS: i8 = -96;
+pub const MAX_OPUS_PACKET_BYTES: usize = 256;
+pub const OPUS_CHANNEL_CAPACITY: usize = 4;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OpusPacket {
+    pub len: u16,
+    pub payload: [u8; MAX_OPUS_PACKET_BYTES],
+}
+
+pub type OpusChannel = Channel<CriticalSectionRawMutex, OpusPacket, OPUS_CHANNEL_CAPACITY>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AudioCaptureBatch {
@@ -46,9 +57,9 @@ impl AudioCaptureSchedule {
 
         let elapsed_intervals =
             now_ms.saturating_sub(self.next_frame_ms) / AUDIO_CAPTURE_INTERVAL_MS + 1;
-        self.next_frame_ms = self.next_frame_ms.saturating_add(
-            elapsed_intervals.saturating_mul(AUDIO_CAPTURE_INTERVAL_MS),
-        );
+        self.next_frame_ms = self
+            .next_frame_ms
+            .saturating_add(elapsed_intervals.saturating_mul(AUDIO_CAPTURE_INTERVAL_MS));
         let capacity = u64::from(AUDIO_DMA_BUFFER_FRAMES);
         AudioCaptureBatch {
             frames: elapsed_intervals.min(capacity) as u8,
@@ -89,6 +100,21 @@ pub type RxAudioReceiver<'a> = Receiver<'a, CriticalSectionRawMutex, PcmFrame, R
 pub type TxAudioChannel = Channel<CriticalSectionRawMutex, PcmFrame, TX_AUDIO_QUEUE_CAP>;
 pub type TxAudioSender<'a> = Sender<'a, CriticalSectionRawMutex, PcmFrame, TX_AUDIO_QUEUE_CAP>;
 pub type TxAudioReceiver<'a> = Receiver<'a, CriticalSectionRawMutex, PcmFrame, TX_AUDIO_QUEUE_CAP>;
+
+/// Apply a 10 ms linear fade-in to the first 160 samples of a 16 kHz buffer.
+pub fn apply_ramp_in(samples: &mut [i16]) {
+    for (index, sample) in samples.iter_mut().take(AUDIO_RAMP_SAMPLES).enumerate() {
+        *sample = (i32::from(*sample) * index as i32 / AUDIO_RAMP_SAMPLES as i32) as i16;
+    }
+}
+
+/// Apply a 10 ms linear fade-out to the first 160 samples of a 16 kHz buffer.
+pub fn apply_ramp_out(samples: &mut [i16]) {
+    for (index, sample) in samples.iter_mut().take(AUDIO_RAMP_SAMPLES).enumerate() {
+        let multiplier = AUDIO_RAMP_SAMPLES - index;
+        *sample = (i32::from(*sample) * multiplier as i32 / AUDIO_RAMP_SAMPLES as i32) as i16;
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct AudioFrameDropWindow {
@@ -397,10 +423,10 @@ mod tests {
     #[test]
     fn bench_tone_generator_emits_exact_16_sample_1khz_sine_at_minus_3_dbfs_peak() {
         // Arrange
-        let mut gen = BenchToneGenerator::new();
+        let mut generator = BenchToneGenerator::new();
         // Act
-        let frame = gen.next_frame();
-        let next_frame = gen.next_frame();
+        let frame = generator.next_frame();
+        let next_frame = generator.next_frame();
         let levels = compute_frame_levels_dbfs(&frame);
         // Assert
         assert_eq!(
@@ -524,10 +550,28 @@ mod tests {
         let late = schedule.take_due_frames(50);
 
         // Assert
-        assert_eq!(early, AudioCaptureBatch { frames: 0, overruns: 0 });
+        assert_eq!(
+            early,
+            AudioCaptureBatch {
+                frames: 0,
+                overruns: 0
+            }
+        );
         assert_eq!(schedule.delay_until_next_ms(50), 10);
-        assert_eq!(first, AudioCaptureBatch { frames: 1, overruns: 0 });
-        assert_eq!(late, AudioCaptureBatch { frames: 1, overruns: 0 });
+        assert_eq!(
+            first,
+            AudioCaptureBatch {
+                frames: 1,
+                overruns: 0
+            }
+        );
+        assert_eq!(
+            late,
+            AudioCaptureBatch {
+                frames: 1,
+                overruns: 0
+            }
+        );
     }
 
     #[test]
@@ -547,5 +591,63 @@ mod tests {
             }
         );
         assert_eq!(schedule.delay_until_next_ms(100), 20);
+    }
+
+    #[test]
+    fn opus_channel_holds_four_packets_and_preserves_payloads() {
+        let channel = OpusChannel::new();
+        let sender = channel.sender();
+        let receiver = channel.receiver();
+
+        for sequence in 0..4u8 {
+            let mut payload = [0; MAX_OPUS_PACKET_BYTES];
+            payload[0] = sequence;
+            payload[1] = sequence.wrapping_add(1);
+            sender
+                .try_send(OpusPacket { len: 2, payload })
+                .expect("first four packets fit");
+        }
+
+        let mut fifth_payload = [0; MAX_OPUS_PACKET_BYTES];
+        fifth_payload[0] = 4;
+        let fifth = OpusPacket {
+            len: 1,
+            payload: fifth_payload,
+        };
+        assert!(
+            sender.try_send(fifth).is_err(),
+            "the fifth packet must be full"
+        );
+
+        for sequence in 0..4u8 {
+            let packet = receiver.try_receive().expect("queued packet is available");
+            assert_eq!(packet.len, 2);
+            assert_eq!(packet.payload[..2], [sequence, sequence.wrapping_add(1)]);
+        }
+    }
+
+    #[test]
+    fn ramp_in_applies_exact_linear_multipliers_over_160_samples() {
+        let mut samples = [16_000; AUDIO_RAMP_SAMPLES];
+
+        apply_ramp_in(&mut samples);
+
+        for (index, sample) in samples.iter().enumerate() {
+            let expected = (16_000i32 * index as i32 / AUDIO_RAMP_SAMPLES as i32) as i16;
+            assert_eq!(*sample, expected, "fade-in sample {index}");
+        }
+    }
+
+    #[test]
+    fn ramp_out_applies_exact_linear_multipliers_over_160_samples() {
+        let mut samples = [16_000; AUDIO_RAMP_SAMPLES];
+
+        apply_ramp_out(&mut samples);
+
+        for (index, sample) in samples.iter().enumerate() {
+            let multiplier = AUDIO_RAMP_SAMPLES - index;
+            let expected = (16_000i32 * multiplier as i32 / AUDIO_RAMP_SAMPLES as i32) as i16;
+            assert_eq!(*sample, expected, "fade-out sample {index}");
+        }
     }
 }

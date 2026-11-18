@@ -3,6 +3,7 @@
 //! Provides static route parsing and diagnostic telemetry formatting
 //! directly into pre-allocated byte slices without heap allocation.
 
+use core::fmt::Write as _;
 use edf_http_diagnostics::{parse_diagnostic_route, DiagnosticPayload, DiagnosticRoute};
 use intercom_core::domain::diagnostics::{IntercomState, SystemDiagnostics};
 use intercom_core::domain::ecosystem::EcosystemType;
@@ -119,8 +120,97 @@ pub fn format_status_json<T: EcosystemType>(
     diag: &SystemDiagnostics<IntercomState, T>,
     out: &mut [u8],
 ) -> Result<usize, ()> {
+    format_status_json_with_memory(
+        diag,
+        MemorySnapshot {
+            internal: MemoryRegion {
+                free_bytes: diag.free_heap_bytes,
+                total_bytes: diag.total_heap_bytes,
+            },
+            psram: None,
+        },
+        out,
+    )
+}
+
+/// Memory statistics for one allocator region.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MemoryRegion {
+    pub free_bytes: usize,
+    pub total_bytes: usize,
+}
+
+/// Internal RAM and optional external PSRAM allocator statistics.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MemorySnapshot {
+    pub internal: MemoryRegion,
+    pub psram: Option<MemoryRegion>,
+}
+
+/// Formats status JSON with allocator-specific memory region statistics.
+pub fn format_status_json_with_memory<T: EcosystemType>(
+    diag: &SystemDiagnostics<IntercomState, T>,
+    memory: MemorySnapshot,
+    out: &mut [u8],
+) -> Result<usize, ()> {
     let shared = shared_snapshot(diag);
-    edf_http_diagnostics::format_status_json(&shared, out).map_err(|_| ())
+    let base_len = edf_http_diagnostics::format_status_json(&shared, out).map_err(|_| ())?;
+    if base_len == 0 || out[base_len - 1] != b'}' {
+        return Err(());
+    }
+
+    let mut suffix = [0u8; 192];
+    let mut writer = ByteWriter::new(&mut suffix);
+    core::write!(
+        writer,
+        ",\"memory\":{{\"internal\":{{\"free_bytes\":{},\"total_bytes\":{}}},\"psram\":",
+        memory.internal.free_bytes,
+        memory.internal.total_bytes
+    )
+    .map_err(|_| ())?;
+    match memory.psram {
+        Some(psram) => core::write!(
+            writer,
+            "{{\"free_bytes\":{},\"total_bytes\":{}}}}}}}",
+            psram.free_bytes,
+            psram.total_bytes
+        ),
+        None => core::write!(writer, "null}}}}"),
+    }
+    .map_err(|_| ())?;
+
+    let suffix_len = writer.len();
+    let final_len = base_len - 1 + suffix_len;
+    if final_len > out.len() {
+        return Err(());
+    }
+    out[base_len - 1..final_len].copy_from_slice(&suffix[..suffix_len]);
+    Ok(final_len)
+}
+
+struct ByteWriter<'a> {
+    out: &'a mut [u8],
+    len: usize,
+}
+
+impl<'a> ByteWriter<'a> {
+    fn new(out: &'a mut [u8]) -> Self {
+        Self { out, len: 0 }
+    }
+
+    fn len(&self) -> usize {
+        self.len
+    }
+}
+
+impl core::fmt::Write for ByteWriter<'_> {
+    fn write_str(&mut self, value: &str) -> core::fmt::Result {
+        let end = self.len.checked_add(value.len()).ok_or(core::fmt::Error)?;
+        let target = self.out.get_mut(self.len..end).ok_or(core::fmt::Error)?;
+        target.copy_from_slice(value.as_bytes());
+        self.len = end;
+        Ok(())
+    }
 }
 
 pub(crate) fn shared_snapshot<'a, T: EcosystemType>(
