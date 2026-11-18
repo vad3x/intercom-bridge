@@ -375,7 +375,7 @@ async fn main(spawner: Spawner) {
     #[cfg(feature = "esp32s3")]
     let opus_channel = None;
     #[cfg(any(feature = "esp32s31", feature = "esp32s3"))]
-    let (mut webrtc_engine, webrtc_session_handle) =
+    let (webrtc_engine, webrtc_session_handle) =
         WebRtcMediaEngine::new_with_opus_channel_and_jitter_buffer(
             &WEBRTC_REQUESTS,
             &WEBRTC_STATE,
@@ -388,7 +388,7 @@ async fn main(spawner: Spawner) {
             dtls_resource_cell,
         );
     #[cfg(not(any(feature = "esp32s31", feature = "esp32s3")))]
-    let (mut webrtc_engine, webrtc_session_handle) = WebRtcMediaEngine::new(
+    let (webrtc_engine, webrtc_session_handle) = WebRtcMediaEngine::new(
         &WEBRTC_REQUESTS,
         &WEBRTC_STATE,
         access_handle,
@@ -397,6 +397,7 @@ async fn main(spawner: Spawner) {
         webrtc_resources,
         dtls_resource_cell,
     );
+    let mut webrtc_engine = webrtc_engine.with_opus_encoder_config(config::OPUS_ENCODER_CONFIG);
     let webrtc_session_handle = WEBRTC_HANDLE.init(webrtc_session_handle);
     static SECURE_RANDOM: HardwareSecureRandom = HardwareSecureRandom;
     let webrtc_signaling = WebRtcSignalingFacade::new_with_resources(

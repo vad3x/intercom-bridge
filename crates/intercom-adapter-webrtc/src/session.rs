@@ -15,6 +15,7 @@ use crate::dtls::{DtlsError, DtlsRole, DtlsSrtpEngine, DtlsSrtpResourceCell};
 use crate::ice::IceLiteAgent;
 use crate::jitter_buffer::JitterBuffer;
 use crate::mux::{classify_rfc7983_packet, DemuxedPacket};
+pub use crate::opus::OpusEncoderConfig;
 use crate::opus::{HalfDuplexOpusCodec, MAX_OPUS_PACKET_BYTES};
 use crate::srtp::SrtpSession;
 
@@ -594,6 +595,11 @@ impl<'a> WebRtcMediaEngine<'a> {
                 state,
             },
         )
+    }
+
+    pub fn with_opus_encoder_config(self, config: OpusEncoderConfig) -> Self {
+        self.resources.codec.set_encoder_config(config);
+        self
     }
 
     pub const fn benchmark_stats(&self) -> MediaBenchmarkStats {

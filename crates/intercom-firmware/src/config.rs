@@ -30,6 +30,14 @@ pub const DEVICE_NAME: &str = "Smart Intercom";
 /// Canonical device type identifier used for telemetry and OTA target validation.
 pub const DEVICE_TYPE: &str = "intercom_bridge";
 
+/// Target-specific Opus encoder profile for outbound WebRTC Listen audio.
+#[cfg(feature = "esp32c6")]
+pub const OPUS_ENCODER_CONFIG: intercom_adapter_webrtc::opus::OpusEncoderConfig =
+    intercom_adapter_webrtc::opus::OpusEncoderConfig::C6_DEFAULT;
+#[cfg(any(feature = "esp32s3", feature = "esp32s31"))]
+pub const OPUS_ENCODER_CONFIG: intercom_adapter_webrtc::opus::OpusEncoderConfig =
+    intercom_adapter_webrtc::opus::OpusEncoderConfig::WIDEBAND_16KHZ;
+
 // ============================================================================
 // Flash persistence & Partition Layout (from partitions.csv)
 // ============================================================================
