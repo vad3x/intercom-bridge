@@ -21,9 +21,9 @@ use {
         MatterAccessControlDriver, MatterController, MatterControllerConfig,
     },
     intercom_adapter_webrtc::{
-        dtls::DtlsSrtpResourceCell,
+        dtls::{DtlsIdentity, DtlsSrtpResourceCell},
         session::{WebRtcSessionConfig, WebRtcSessionHandle},
-        signaling::WebRtcSignalingFacade,
+        signaling::{SecureRandom as _, WebRtcSignalingFacade},
     },
     intercom_core::{
         app::App,
@@ -113,7 +113,16 @@ async fn main(spawner: Spawner) {
     static READINESS: StaticCell<ClusterReadinessBarrier> = StaticCell::new();
     let readiness = READINESS.init(ClusterReadinessBarrier::new(state_sender));
 
+    static SECURE_RANDOM: HardwareSecureRandom = HardwareSecureRandom;
+    static WEBRTC_DTLS_IDENTITY: StaticCell<DtlsIdentity> = StaticCell::new();
+    let mut dtls_seed = [0u8; 32];
+    SECURE_RANDOM
+        .fill(&mut dtls_seed)
+        .expect("WebRTC DTLS seed RNG");
     let dtls_resources = platform::allocate_dtls_srtp_resources();
+    let dtls_identity = WEBRTC_DTLS_IDENTITY.init(
+        DtlsIdentity::generate(dtls_seed, dtls_resources).expect("WebRTC DTLS identity"),
+    );
     let dtls_resource_cell =
         WEBRTC_DTLS_RESOURCE_CELL.init(DtlsSrtpResourceCell::new(dtls_resources));
     let webrtc_resources = platform::allocate_webrtc_media_resources();
@@ -128,11 +137,10 @@ async fn main(spawner: Spawner) {
     );
     let mut webrtc_engine = webrtc_engine.with_opus_encoder_config(config::OPUS_ENCODER_CONFIG);
     let webrtc_session_handle = WEBRTC_HANDLE.init(webrtc_session_handle);
-    static SECURE_RANDOM: HardwareSecureRandom = HardwareSecureRandom;
-    let webrtc_signaling = WebRtcSignalingFacade::new_with_resources(
+    let webrtc_signaling = WebRtcSignalingFacade::new_with_identity(
         *webrtc_session_handle,
         &SECURE_RANDOM,
-        dtls_resource_cell,
+        dtls_identity,
     );
 
     // ========================================================================

@@ -11,7 +11,7 @@ use intercom_media::{
     MAX_OPUS_PACKET_BYTES as MEDIA_MAX_OPUS_PACKET_BYTES,
 };
 
-use crate::dtls::{DtlsError, DtlsRole, DtlsSrtpEngine, DtlsSrtpResourceCell};
+use crate::dtls::{DtlsError, DtlsIdentity, DtlsRole, DtlsSrtpEngine, DtlsSrtpResourceCell};
 use crate::ice::IceLiteAgent;
 use crate::jitter_buffer::JitterBuffer;
 use crate::mux::{classify_rfc7983_packet, DemuxedPacket};
@@ -182,6 +182,7 @@ pub struct WebRtcSessionConfig {
     pub payload_type: u8,
     pub local_port: u16,
     pub owner: SessionOwner,
+    pub dtls_identity: Option<DtlsIdentity>,
 }
 
 impl WebRtcSessionConfig {
@@ -249,7 +250,13 @@ impl WebRtcSessionConfig {
             payload_type,
             local_port: MEDIA_UDP_PORT,
             owner,
+            dtls_identity: None,
         })
+    }
+
+    pub fn with_dtls_identity(mut self, identity: DtlsIdentity) -> Self {
+        self.dtls_identity = Some(identity);
+        self
     }
 }
 
@@ -364,6 +371,9 @@ pub struct MediaBenchmarkStats {
     pub max_encode_us: u32,
     pub max_decode_us: u32,
     pub min_free_heap_bytes: u32,
+    pub dtls_init_us: u32,
+    pub dtls_handshake_ms: u32,
+    pub first_srtp_packet_ms: u32,
     free_heap_sampled: bool,
 }
 
@@ -383,6 +393,34 @@ impl MediaBenchmarkStats {
             self.min_free_heap_bytes.min(free_heap_bytes)
         };
         self.free_heap_sampled = true;
+    }
+
+    pub fn observe_dtls_init(&mut self, elapsed_us: u32) {
+        self.dtls_init_us = elapsed_us;
+    }
+
+    pub fn observe_dtls_handshake(&mut self, elapsed_ms: u32) {
+        self.dtls_handshake_ms = elapsed_ms;
+    }
+
+    pub fn observe_first_srtp_packet(&mut self, elapsed_ms: u32) {
+        self.first_srtp_packet_ms = elapsed_ms;
+    }
+
+    pub fn format_summary(&self) -> heapless::String<192> {
+        use core::fmt::Write as _;
+        let mut out = heapless::String::new();
+        let _ = write!(
+            out,
+            "encode_max_us={} decode_max_us={} min_free_heap_bytes={} dtls_init_us={} dtls_handshake_ms={} first_srtp_packet_ms={}",
+            self.max_encode_us,
+            self.max_decode_us,
+            self.min_free_heap_bytes,
+            self.dtls_init_us,
+            self.dtls_handshake_ms,
+            self.first_srtp_packet_ms,
+        );
+        out
     }
 }
 
@@ -634,10 +672,8 @@ impl<'a> WebRtcMediaEngine<'a> {
             self.intercom.end_session_wait(owner).await;
             self.benchmark_stats.observe_free_heap(free_heap_bytes());
             log::info!(
-                "WebRTC media benchmark encode_max_us={} decode_max_us={} min_free_heap_bytes={}",
-                self.benchmark_stats.max_encode_us,
-                self.benchmark_stats.max_decode_us,
-                self.benchmark_stats.min_free_heap_bytes,
+                "WebRTC media benchmark {}",
+                self.benchmark_stats.format_summary(),
             );
             if let Err(error) = result {
                 log::warn!("WebRTC session ended: {:?}", error);
@@ -651,6 +687,7 @@ impl<'a> WebRtcMediaEngine<'a> {
         config: WebRtcSessionConfig,
         free_heap_bytes: fn() -> u32,
     ) -> Result<(), WebRtcMediaError> {
+        let session_start = Instant::now();
         let mut dtls_resources = self.dtls_resources.borrow_mut().await;
         let external_jitter_buffer = self.external_jitter_buffer.as_deref_mut();
         let WebRtcMediaResources {
@@ -681,15 +718,30 @@ impl<'a> WebRtcMediaEngine<'a> {
             })
             .map_err(|_| WebRtcMediaError::UdpBind)?;
 
-        let mut dtls = DtlsSrtpEngine::new(
-            config.local_dtls_role,
-            config.dtls_seed,
-            &mut dtls_resources,
-        )
+        let dtls_init_start = Instant::now();
+        let mut dtls = match config.dtls_identity.as_ref() {
+            Some(identity) => DtlsSrtpEngine::new_with_identity(
+                config.local_dtls_role,
+                config.dtls_seed,
+                identity,
+                &mut dtls_resources,
+            ),
+            None => DtlsSrtpEngine::new(
+                config.local_dtls_role,
+                config.dtls_seed,
+                &mut dtls_resources,
+            ),
+        }
         .map_err(|error| {
             log::warn!("WebRTC DTLS initialization failed: {:?}", error);
             WebRtcMediaError::Dtls
         })?;
+        self.benchmark_stats.observe_dtls_init(
+            dtls_init_start
+                .elapsed()
+                .as_micros()
+                .min(u64::from(u32::MAX)) as u32,
+        );
         let mut ice = IceLiteAgent::new(
             &config.local_ufrag,
             &config.remote_ufrag,
@@ -733,36 +785,28 @@ impl<'a> WebRtcMediaEngine<'a> {
                 now_ms,
             );
             if ice.verified_peer_addr().is_some() && srtp.is_none() {
-                let dtls_output =
-                    step_dtls_and_pop(&mut dtls, now_ms, &mut outbound[..]).map_err(|error| {
-                        let (export_called, export_type, export_prf, export_error) =
-                            dtls.export_diagnostic();
-                        let (debug_level, debug_line, debug_message, debug_length) =
-                            dtls.debug_diagnostic();
-                        let debug_message = core::str::from_utf8(
-                            &debug_message[..debug_length.min(debug_message.len())],
-                        )
-                        .unwrap_or("<invalid UTF-8>");
-                        log::warn!(
-                            "WebRTC DTLS handshake step failed: {:?}; key_export called={} type={} prf={} error={}; mbedtls level={} line={} message={}",
-                            error,
-                            export_called,
-                            export_type,
-                            export_prf,
-                            export_error,
-                            debug_level,
-                            debug_line,
-                            debug_message,
-                        );
-                        WebRtcMediaError::Dtls
-                    })?;
-                if let Some(out_length) = dtls_output {
-                    if let Some(peer) = ice.verified_peer_addr() {
-                        socket
-                            .send_to(&outbound[..out_length], peer)
-                            .await
-                            .map_err(|_| WebRtcMediaError::UdpSend)?;
+                let mut done = match dtls.step(now_ms) {
+                    Ok(done) => done,
+                    Err(error) => return Err(log_dtls_failure(&dtls, error)),
+                };
+                loop {
+                    let mut sent_any = false;
+                    while let Some(out_length) = dtls.pop_outbound_datagram(&mut outbound[..]) {
+                        sent_any = true;
+                        if let Some(peer) = ice.verified_peer_addr() {
+                            socket
+                                .send_to(&outbound[..out_length], peer)
+                                .await
+                                .map_err(|_| WebRtcMediaError::UdpSend)?;
+                        }
                     }
+                    if !sent_any || done {
+                        break;
+                    }
+                    done = match dtls.step(now_ms) {
+                        Ok(done) => done,
+                        Err(error) => return Err(log_dtls_failure(&dtls, error)),
+                    };
                 }
                 if dtls.peer_cert_sha256() == Some(config.remote_fingerprint_sha256) {
                     let keys = dtls.exported_srtp_keys().ok_or_else(|| {
@@ -770,6 +814,12 @@ impl<'a> WebRtcMediaEngine<'a> {
                         WebRtcMediaError::Dtls
                     })?;
                     srtp = Some(SrtpSession::from_dtls_keys(keys, config.local_dtls_role));
+                    self.benchmark_stats.observe_dtls_handshake(
+                        session_start
+                            .elapsed()
+                            .as_millis()
+                            .min(u64::from(u32::MAX)) as u32,
+                    );
                     log::info!("WebRTC: DTLS fingerprint verified; SRTP ready");
                 } else if dtls.peer_cert_sha256().is_some() {
                     return Err(WebRtcMediaError::FingerprintMismatch);
@@ -965,6 +1015,12 @@ impl<'a> WebRtcMediaEngine<'a> {
                         max_audio_send_us = max_audio_send_us
                             .max(send_start.elapsed().as_micros().min(u64::from(u32::MAX)) as u32);
                         if !first_audio_packet_logged {
+                            self.benchmark_stats.observe_first_srtp_packet(
+                                session_start
+                                    .elapsed()
+                                    .as_millis()
+                                    .min(u64::from(u32::MAX)) as u32,
+                            );
                             log::info!(
                                 "WebRTC: first outbound SRTP audio packet sent ({} bytes)",
                                 protected_length
@@ -1093,6 +1149,26 @@ fn accept_srtcp_receiver_report(
     true
 }
 
+fn log_dtls_failure(dtls: &DtlsSrtpEngine<'_>, error: DtlsError) -> WebRtcMediaError {
+    let (export_called, export_type, export_prf, export_error) = dtls.export_diagnostic();
+    let (debug_level, debug_line, debug_message, debug_length) = dtls.debug_diagnostic();
+    let debug_message = core::str::from_utf8(&debug_message[..debug_length.min(debug_message.len())])
+        .unwrap_or("<invalid UTF-8>");
+    log::warn!(
+        "WebRTC DTLS handshake step failed: {:?}; key_export called={} type={} prf={} error={}; mbedtls level={} line={} message={}",
+        error,
+        export_called,
+        export_type,
+        export_prf,
+        export_error,
+        debug_level,
+        debug_line,
+        debug_message,
+    );
+    WebRtcMediaError::Dtls
+}
+
+#[cfg(test)]
 fn step_dtls_and_pop(
     dtls: &mut DtlsSrtpEngine,
     now_ms: u64,
@@ -1100,6 +1176,31 @@ fn step_dtls_and_pop(
 ) -> Result<Option<usize>, crate::dtls::DtlsError> {
     dtls.step(now_ms)?;
     Ok(dtls.pop_outbound_datagram(output))
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+fn drain_dtls_outbound<E>(
+    dtls: &mut DtlsSrtpEngine,
+    now_ms: u64,
+    outbound: &mut [u8],
+    mut send: impl FnMut(&[u8]) -> Result<(), E>,
+) -> Result<bool, E>
+where
+    E: From<crate::dtls::DtlsError>,
+{
+    let mut done = dtls.step(now_ms)?;
+    loop {
+        let mut sent_any = false;
+        while let Some(out_length) = dtls.pop_outbound_datagram(outbound) {
+            sent_any = true;
+            send(&outbound[..out_length])?;
+        }
+        if !sent_any || done {
+            break;
+        }
+        done = dtls.step(now_ms)?;
+    }
+    Ok(done)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1768,6 +1869,9 @@ mod tests {
                 max_encode_us: 7_500,
                 max_decode_us: 4_200,
                 min_free_heap_bytes: 31_000,
+                dtls_init_us: 0,
+                dtls_handshake_ms: 0,
+                first_srtp_packet_ms: 0,
                 free_heap_sampled: true,
             }
         );
@@ -1830,5 +1934,81 @@ mod tests {
         assert_eq!(core::ptr::from_mut(resources), destination);
         assert!(resources.rx_buffer.iter().all(|&byte| byte == 0));
         assert_eq!(resources.pending_dtls.count, 0);
+    }
+
+    #[test]
+    fn session_config_accepts_cached_dtls_identity() {
+        let _guard = crate::dtls::DTLS_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut resources = crate::dtls::DtlsSrtpResources::new();
+        let identity =
+            crate::dtls::DtlsIdentity::generate([0x51; 32], &mut resources).expect("identity");
+        let config = WebRtcSessionConfig::new(
+            "localufrag",
+            "remoteufrag",
+            "localpassword_at_least_22_chars",
+            [0x11; 32],
+            DtlsRole::Server,
+            [0x22; 32],
+            0x1234_5678,
+            111,
+        )
+        .expect("config")
+        .with_dtls_identity(identity.clone());
+        assert_eq!(config.dtls_identity.as_ref(), Some(&identity));
+    }
+
+    #[test]
+    fn multi_datagram_drain_dtls_outbound_flushes_all_queued_datagrams_in_one_step() {
+        let _guard = crate::dtls::DTLS_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut server_resources = crate::dtls::DtlsSrtpResources::new();
+        let mut client_resources = crate::dtls::DtlsSrtpResources::new();
+        let mut server =
+            crate::dtls::DtlsSrtpEngine::new(DtlsRole::Server, [0x42; 32], &mut server_resources)
+                .expect("server init");
+        let mut client =
+            crate::dtls::DtlsSrtpEngine::new(DtlsRole::Client, [0x99; 32], &mut client_resources)
+                .expect("client init");
+        server
+            .set_peer_transport_id(b"verified-ice-peer")
+            .expect("server peer id");
+
+        let mut wire = [0u8; 1500];
+        client.step(0).expect("client step 0");
+        let len = client.pop_outbound_datagram(&mut wire).expect("ch1");
+        server.push_inbound_datagram(&wire[..len]).expect("srv ch1");
+        server.step(0).expect("srv hvr");
+        let len = server.pop_outbound_datagram(&mut wire).expect("hvr");
+        client.push_inbound_datagram(&wire[..len]).expect("cli hvr");
+        server.set_mtu(300);
+        client.step(1).expect("client step 1");
+        let len = client.pop_outbound_datagram(&mut wire).expect("ch2");
+        server.push_inbound_datagram(&wire[..len]).expect("srv ch2");
+
+        let mut sent = alloc::vec::Vec::new();
+        super::drain_dtls_outbound::<crate::dtls::DtlsError>(&mut server, 1, &mut wire, |datagram| {
+            sent.push(datagram.to_vec());
+            Ok(())
+        })
+        .expect("drain");
+        assert!(sent.len() >= 2, "expected >= 2 datagrams, got {}", sent.len());
+    }
+
+    #[test]
+    fn benchmark_stats_record_and_format_startup_latencies() {
+        let mut stats = MediaBenchmarkStats::default();
+        stats.observe_dtls_init(1_250);
+        stats.observe_dtls_handshake(42);
+        stats.observe_first_srtp_packet(55);
+        assert_eq!(stats.dtls_init_us, 1_250);
+        assert_eq!(stats.dtls_handshake_ms, 42);
+        assert_eq!(stats.first_srtp_packet_ms, 55);
+        let summary = stats.format_summary();
+        assert!(summary.contains("dtls_init_us=1250"));
+        assert!(summary.contains("dtls_handshake_ms=42"));
+        assert!(summary.contains("first_srtp_packet_ms=55"));
     }
 }

@@ -11,7 +11,9 @@ use heapless::String;
 use intercom_core::domain::intercom::SessionOwner;
 use portable_atomic::AtomicU32;
 
-use crate::dtls::{DtlsRole, DtlsSrtpEngine, DtlsSrtpResourceCell, DtlsSrtpResources};
+use crate::dtls::{
+    DtlsIdentity, DtlsRole, DtlsSrtpEngine, DtlsSrtpResourceCell, DtlsSrtpResources,
+};
 use crate::sdp::{
     parse_sdp_offer, write_sdp_answer, write_sdp_offer, DtlsSetupRole, LocalSdpParams, SdpError,
     SdpMediaDirection, LOCAL_OFFER_MID, LOCAL_OFFER_OPUS_PAYLOAD_TYPE,
@@ -57,6 +59,7 @@ pub struct WebRtcSignalingFacade<'a, R: SecureRandom> {
     handle: WebRtcSessionHandle<'a>,
     random: &'a R,
     dtls_resources: Option<&'a DtlsSrtpResourceCell<'a>>,
+    dtls_identity: Option<&'a DtlsIdentity>,
     local_ipv4: AtomicU32,
     pending: Mutex<CriticalSectionRawMutex, RefCell<Option<PendingOffer>>>,
 }
@@ -67,6 +70,7 @@ impl<'a, R: SecureRandom> WebRtcSignalingFacade<'a, R> {
             handle,
             random,
             dtls_resources: None,
+            dtls_identity: None,
             local_ipv4: AtomicU32::new(0),
             pending: Mutex::new(RefCell::new(None)),
         }
@@ -82,6 +86,23 @@ impl<'a, R: SecureRandom> WebRtcSignalingFacade<'a, R> {
             handle,
             random,
             dtls_resources: Some(dtls_resources),
+            dtls_identity: None,
+            local_ipv4: AtomicU32::new(0),
+            pending: Mutex::new(RefCell::new(None)),
+        }
+    }
+
+    /// Construct signaling using a pre-generated cached DTLS identity.
+    pub const fn new_with_identity(
+        handle: WebRtcSessionHandle<'a>,
+        random: &'a R,
+        dtls_identity: &'a DtlsIdentity,
+    ) -> Self {
+        Self {
+            handle,
+            random,
+            dtls_resources: None,
+            dtls_identity: Some(dtls_identity),
             local_ipv4: AtomicU32::new(0),
             pending: Mutex::new(RefCell::new(None)),
         }
@@ -131,7 +152,10 @@ impl<'a, R: SecureRandom> WebRtcSignalingFacade<'a, R> {
         seed: [u8; 32],
         role: DtlsRole,
     ) -> Result<[u8; 32], SignalingError> {
-        // The media engine uses the same seed to recreate this certificate when it starts.
+        if let Some(identity) = self.dtls_identity {
+            return Ok(identity.fingerprint_sha256());
+        }
+        // Fallback when no cached identity was provisioned: generate from seed.
         let fingerprint = if let Some(resources) = self.dtls_resources {
             let mut resources = resources.try_borrow_mut().ok_or(SignalingError::Busy)?;
             let identity = DtlsSrtpEngine::new(role, seed, &mut resources)
@@ -193,7 +217,7 @@ impl<'a, R: SecureRandom> WebRtcSignalingFacade<'a, R> {
         let fingerprint = self.local_fingerprint(material.dtls_seed, role)?;
         let params = Self::local_params(ipv4, &material, fingerprint);
         let len = write_sdp_answer(&remote, &params, answer_out).map_err(map_sdp_error)?;
-        let config = WebRtcSessionConfig::new_for_owner(
+        let mut config = WebRtcSessionConfig::new_for_owner(
             &material.local_ufrag,
             remote.ice_ufrag,
             &material.local_password,
@@ -205,6 +229,9 @@ impl<'a, R: SecureRandom> WebRtcSignalingFacade<'a, R> {
             owner,
         )
         .map_err(|_| SignalingError::InvalidSdp)?;
+        if let Some(identity) = self.dtls_identity {
+            config = config.with_dtls_identity(identity.clone());
+        }
         self.handle.start(config).map_err(map_request_error)?;
         Ok(len)
     }
@@ -246,7 +273,7 @@ impl<'a, R: SecureRandom> WebRtcSignalingFacade<'a, R> {
         self.pending.lock(|pending| {
             let pending = pending.borrow();
             let local = pending.as_ref().ok_or(SignalingError::InvalidInState)?;
-            let config = WebRtcSessionConfig::new_for_owner(
+            let mut config = WebRtcSessionConfig::new_for_owner(
                 &local.local_ufrag,
                 remote.ice_ufrag,
                 &local.local_password,
@@ -258,6 +285,9 @@ impl<'a, R: SecureRandom> WebRtcSignalingFacade<'a, R> {
                 local.owner,
             )
             .map_err(|_| SignalingError::InvalidSdp)?;
+            if let Some(identity) = self.dtls_identity {
+                config = config.with_dtls_identity(identity.clone());
+            }
             self.handle.start(config).map_err(map_request_error)
         })?;
         self.pending.lock(|pending| *pending.borrow_mut() = None);
@@ -839,5 +869,58 @@ a=ssrc:3210117597 msid:- 621af9a1-27a2-4ec8-9433-d9f87063ac7f\r\n";
         assert!(!observation.queued_after_rejection);
         assert_eq!(observation.retry, Ok(()));
         assert!(observation.queued_after_retry);
+    }
+
+    #[test]
+    fn cached_identity_offer_returns_precomputed_fingerprint_without_borrowing_dtls_resources() {
+        let _guard = crate::dtls::DTLS_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let commands = CommandChannel::new();
+        let requests = Channel::<CriticalSectionRawMutex, WebRtcSessionConfig, 1>::new();
+        let state = AtomicU8::new(0);
+        let rx = RxAudioChannel::new();
+        let tx = TxAudioChannel::new();
+        let mut dtls_storage = DtlsSrtpResources::new();
+        let identity = crate::dtls::DtlsIdentity::generate([0x33; 32], &mut dtls_storage)
+            .expect("generate cached identity");
+        let mut resources = crate::session::WebRtcMediaResources::new();
+        let dtls_resources = crate::dtls::DtlsSrtpResourceCell::new(&mut dtls_storage);
+        // Hold the DTLS resource lock to prove ProvideOffer never touches it.
+        let _held_lock = dtls_resources
+            .try_borrow_mut()
+            .expect("lock dtls resources");
+
+        let (_engine, handle) = WebRtcMediaEngine::new(
+            &requests,
+            &state,
+            AccessControllerHandle::new(commands.sender()),
+            rx.receiver(),
+            tx.sender(),
+            &mut resources,
+            &dtls_resources,
+        );
+        let random = SecureRandomMock(Cell::new(0));
+        let facade = WebRtcSignalingFacade::new_with_identity(handle, &random, &identity);
+        facade.set_local_ipv4([192, 168, 1, 50]);
+
+        let mut answer = [0u8; 2048];
+        let len = facade
+            .accept_offer(CONTROLLER_OFFER, &mut answer)
+            .expect("accept offer with cached identity");
+        let answer_str = core::str::from_utf8(&answer[..len]).expect("utf8 sdp");
+
+        use core::fmt::Write as _;
+        let mut expected_hex = heapless::String::<96>::new();
+        for (idx, byte) in identity.fingerprint_sha256().iter().enumerate() {
+            if idx > 0 {
+                let _ = expected_hex.push(':');
+            }
+            let _ = write!(expected_hex, "{byte:02X}");
+        }
+        assert!(answer_str.contains(expected_hex.as_str()));
+
+        let config = requests.receiver().try_receive().expect("queued session");
+        assert_eq!(config.dtls_identity.as_ref(), Some(&identity));
     }
 }

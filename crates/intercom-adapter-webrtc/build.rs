@@ -55,7 +55,7 @@ fn main() {
         .include(mbedtls_dir.join("library"))
         .include(&csrc_dir)
         .define("MBEDTLS_CONFIG_FILE", "\"mbedtls_intercom_config.h\"")
-        .flag_if_supported("-Os")
+        .flag_if_supported("-O2")
         .flag_if_supported("-Wno-unused-parameter");
 
     mbed.file(csrc_dir.join("dtls_intercom.c"));

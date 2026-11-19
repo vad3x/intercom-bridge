@@ -269,7 +269,7 @@ mod target {
         {
             let mut speech = intercom_media::Pcm16LeLoopingSource::new(
                 include_bytes!("../../assets/devkit_test_speech_short.pcm"),
-                intercom_media::AUDIO_SAMPLE_RATE_HZ as usize,
+                0,
             )
             .expect("embedded DevKit speech sample must contain complete PCM samples");
             let mut schedule =
@@ -281,7 +281,7 @@ mod target {
                 levels.rms_dbfs,
                 levels.peak_dbfs,
             );
-            log::info!("Test audio input: embedded 16 kHz mono speech sample, 1 s repeat pause");
+            log::info!("Test audio input: embedded 16 kHz mono speech sample, continuous loop");
             loop {
                 let now_ms = embassy_time::Instant::now().as_millis();
                 embassy_time::Timer::after_millis(schedule.delay_until_next_ms(now_ms)).await;

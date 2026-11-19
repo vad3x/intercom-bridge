@@ -650,4 +650,18 @@ mod tests {
             assert_eq!(*sample, expected, "fade-out sample {index}");
         }
     }
+
+    #[test]
+    fn looping_source_with_zero_repeat_silence_emits_audio_immediately_without_gap() {
+        let mut pcm = [0u8; AUDIO_FRAME_SAMPLES * 2];
+        for (i, chunk) in pcm.chunks_exact_mut(2).enumerate() {
+            chunk.copy_from_slice(&((i as i16) + 100).to_le_bytes());
+        }
+        let mut source = Pcm16LeLoopingSource::new(&pcm, 0).expect("valid looping source");
+        let first = source.next_frame();
+        let second = source.next_frame();
+        assert_ne!(first.samples[0], 0);
+        assert_eq!(first.samples[0], 100);
+        assert_eq!(second.samples[0], 100);
+    }
 }
