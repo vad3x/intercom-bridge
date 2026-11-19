@@ -1,6 +1,8 @@
 //! Intercom composition for the shared uptime logger.
 
-use edf_logger::{UptimeLogger, DEFAULT_SUPPRESSED_DEBUG_EXACT, DEFAULT_SUPPRESSED_DEBUG_PREFIXES};
+use edf_logger::{
+    LogTimestamp, UptimeLogger, DEFAULT_SUPPRESSED_DEBUG_EXACT, DEFAULT_SUPPRESSED_DEBUG_PREFIXES,
+};
 
 static LOGGER: UptimeLogger<{ crate::config::LOG_BUFFER_CAPACITY }> = UptimeLogger::new(
     uptime_millis,
@@ -19,14 +21,16 @@ pub fn get_buffered_logs(buf: &mut [u8]) -> usize {
     LOGGER.get_buffered_logs(buf)
 }
 
-fn uptime_millis() -> u64 {
+fn uptime_millis() -> LogTimestamp {
     #[cfg(target_arch = "riscv32")]
     {
-        embassy_time::Instant::now().as_millis()
+        LogTimestamp::Uptime {
+            ms: embassy_time::Instant::now().as_millis(),
+        }
     }
     #[cfg(not(target_arch = "riscv32"))]
     {
-        0
+        LogTimestamp::Uptime { ms: 0 }
     }
 }
 

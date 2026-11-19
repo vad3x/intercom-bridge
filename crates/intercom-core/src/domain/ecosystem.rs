@@ -3,8 +3,9 @@
 //! Protocol-agnostic value objects and status representations for smart home ecosystems.
 
 pub use edf_core::domain::ecosystem::{
-    EcosystemId, EcosystemStatus, EcosystemType, EcosystemValue, EndpointInfo, FabricInfo,
-    FabricLabel, MAX_ECOSYSTEM_ENDPOINTS, MAX_ECOSYSTEM_FABRICS, MAX_ECOSYSTEM_PROPERTIES,
+    ClusterInfo, EcosystemId, EcosystemStatus, EcosystemType, EcosystemValue, EndpointInfo,
+    FabricInfo, FabricLabel, MAX_ECOSYSTEM_ENDPOINTS, MAX_ECOSYSTEM_FABRICS,
+    MAX_ECOSYSTEM_PROPERTIES,
 };
 
 #[cfg(test)]

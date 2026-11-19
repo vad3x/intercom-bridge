@@ -102,18 +102,18 @@ impl ClusterReadinessBarrier {
 impl EcosystemInfoDriver for ClusterReadinessBarrier {
     fn status(&self) -> Option<EcosystemStatus> {
         let mut status = EcosystemStatus::new(MATTER_ECOSYSTEM, self.is_paired())
-            .with_endpoint(EndpointInfo {
-                id: DOOR_LOCK_ENDPOINT_ID,
-                name: "Door Lock",
-                cluster: "DoorLock",
-                ready: self.is_door_lock_ready(),
-            })
-            .with_endpoint(EndpointInfo {
-                id: OCCUPANCY_SENSOR_ENDPOINT_ID,
-                name: "Chime / Ring",
-                cluster: "OccupancySensing",
-                ready: self.is_ring_ready(),
-            })
+            .with_endpoint(
+                EndpointInfo::new(DOOR_LOCK_ENDPOINT_ID, "Door Lock", 0x000A).with_cluster(
+                    intercom_core::domain::ecosystem::ClusterInfo::new(0x0101, "DoorLock"),
+                ),
+            )
+            .with_endpoint(
+                EndpointInfo::new(OCCUPANCY_SENSOR_ENDPOINT_ID, "Chime / Ring", 0x0107)
+                    .with_cluster(intercom_core::domain::ecosystem::ClusterInfo::new(
+                        0x0406,
+                        "OccupancySensing",
+                    )),
+            )
             .with_property(
                 "door_lock_subscribed",
                 EcosystemValue::Bool(self.is_door_lock_ready()),
@@ -136,13 +136,13 @@ impl EcosystemInfoDriver for ClusterReadinessBarrier {
             let matter = unsafe { &*matter_ptr };
             matter.with_state(|state| {
                 for fab in state.fabrics.iter() {
-                    status = status.with_fabric(FabricInfo {
-                        fab_idx: fab.fab_idx().get(),
-                        vendor_id: fab.vendor_id(),
-                        fabric_id: fab.fabric_id(),
-                        node_id: fab.node_id(),
-                        label: FabricLabel::from_str(fab.label()),
-                    });
+                    status = status.with_fabric(FabricInfo::new(
+                        fab.fab_idx().get(),
+                        fab.vendor_id(),
+                        fab.fabric_id(),
+                        fab.node_id(),
+                        FabricLabel::from_str(fab.label()),
+                    ));
                 }
             });
         }

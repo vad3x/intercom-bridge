@@ -213,18 +213,20 @@ fn test_format_status_json_success() {
         "ring_sensor_endpoint",
         intercom_core::domain::EcosystemValue::Int(2),
     )
-    .with_endpoint(intercom_core::domain::EndpointInfo {
-        id: 1,
-        name: "Door Lock",
-        cluster: "DoorLock",
-        ready: true,
-    })
-    .with_endpoint(intercom_core::domain::EndpointInfo {
-        id: 2,
-        name: "Chime / Ring",
-        cluster: "OccupancySensing",
-        ready: false,
-    });
+    .with_endpoint(
+        intercom_core::domain::EndpointInfo::new(1, "Door Lock", 0x000A)
+            .with_cluster(intercom_core::domain::ecosystem::ClusterInfo::new(
+                0x0101,
+                "DoorLock",
+            )),
+    )
+    .with_endpoint(
+        intercom_core::domain::EndpointInfo::new(2, "Chime / Ring", 0x0107)
+            .with_cluster(intercom_core::domain::ecosystem::ClusterInfo::new(
+                0x0406,
+                "OccupancySensing",
+            )),
+    );
     let diag = SystemDiagnostics::<IntercomState, intercom_core::domain::EcosystemId> {
         device_type: "intercom_bridge",
         state: SystemState::Operational,
@@ -279,8 +281,8 @@ fn test_format_status_json_success() {
     assert_eq!(
         val["active_ecosystem"]["endpoints"],
         serde_json::json!([
-            {"id": 1, "name": "Door Lock", "cluster": "DoorLock", "ready": true},
-            {"id": 2, "name": "Chime / Ring", "cluster": "OccupancySensing", "ready": false}
+            {"id": 1, "name": "Door Lock", "device_type": "0x000A", "clusters": [{"id": "0x0101", "name": "DoorLock"}]},
+            {"id": 2, "name": "Chime / Ring", "device_type": "0x0107", "clusters": [{"id": "0x0406", "name": "OccupancySensing"}]}
         ])
     );
     assert_eq!(val["version"], "0.1.0");
@@ -297,20 +299,20 @@ fn test_format_status_json_with_multiple_fabrics() {
         true,
     )
     .with_property("door_lock_subscribed", intercom_core::domain::EcosystemValue::Bool(true))
-    .with_fabric(intercom_core::domain::FabricInfo {
-        fab_idx: 1,
-        vendor_id: 4996,
-        fabric_id: 0x1B8246E1309A4D12,
-        node_id: 0x0000000000000002,
-        label: intercom_core::domain::FabricLabel::from_str("Living Room HomePod"),
-    })
-    .with_fabric(intercom_core::domain::FabricInfo {
-        fab_idx: 2,
-        vendor_id: 4877,
-        fabric_id: 0x4F92A0019C21EE08,
-        node_id: 0x0000000000000005,
-        label: intercom_core::domain::FabricLabel::from_str("Home Assistant Core"),
-    });
+    .with_fabric(intercom_core::domain::FabricInfo::new(
+        1,
+        4996,
+        0x1B8246E1309A4D12,
+        0x0000000000000002,
+        intercom_core::domain::FabricLabel::from_str("Living Room HomePod"),
+    ))
+    .with_fabric(intercom_core::domain::FabricInfo::new(
+        2,
+        4877,
+        0x4F92A0019C21EE08,
+        0x0000000000000005,
+        intercom_core::domain::FabricLabel::from_str("Home Assistant Core"),
+    ));
 
     let diag = SystemDiagnostics::<IntercomState, intercom_core::domain::EcosystemId> {
         device_type: "intercom_bridge",

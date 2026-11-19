@@ -38,10 +38,9 @@ use rs_matter::BasicCommData;
 use rs_matter_embassy::matter::crypto::{default_crypto, Crypto};
 use rs_matter_embassy::matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT};
 use rs_matter_embassy::matter::utils::init::InitMaybeUninit;
-use rs_matter_embassy::stack::rand::reseeding_csprng;
-use rs_matter_embassy::stack::UserTask;
-use rs_matter_embassy::wireless::esp::EspWifiDriver;
-use rs_matter_embassy::wireless::{EmbassyWifi, EmbassyWifiMatterStack};
+use rs_matter_embassy::stack::{MatterStack, UserTask};
+use rs_matter_embassy::wireless::esp::EspWifiRadio;
+use rs_matter_embassy::wireless::{EmbassyWifi, EmbassyWifiNetwork};
 
 use intercom_core::events::SystemStateSender;
 use intercom_core::ports::{ResetScope, SystemResetDriver};
@@ -238,8 +237,9 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
             .map(|meta| [meta.device_type])
             .collect();
 
+        const ROOT_ENDPOINT: Endpoint<'static> = rs_matter::root_endpoint!(wifi);
         let mut endpoints: Vec<Endpoint> = Vec::with_capacity(1 + self.endpoint_metas.len());
-        endpoints.push(EmbassyWifiMatterStack::<0, ()>::root_endpoint());
+        endpoints.push(ROOT_ENDPOINT);
         for (i, meta) in self.endpoint_metas.iter().enumerate() {
             endpoints.push(Endpoint::new(meta.id, &dtype_arrays[i], &cluster_arrays[i]));
         }
@@ -296,19 +296,19 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
             static_cell::StaticCell::new();
         let dev_det = DEV_DET_CELL.init(dev_det(&config.device_info, serial_no));
 
-        static STACK_CELL: static_cell::StaticCell<EmbassyWifiMatterStack<BUMP_SIZE, ()>> =
+        static STACK_CELL: static_cell::StaticCell<MatterStack<'static, BUMP_SIZE, EmbassyWifiNetwork>> =
             static_cell::StaticCell::new();
-        let stack = STACK_CELL.uninit().init_with(EmbassyWifiMatterStack::init(
+        let stack = STACK_CELL.uninit().init_with(MatterStack::init(
             dev_det,
-            comm_data,
+            rs_matter::DevCommData::Passcode(comm_data),
             &TEST_DEV_ATT,
         ));
 
-        // Crypto: TRNG → reseeding CSPRNG → DAC signing key
+        // Crypto: TRNG → RngAdaptor → DAC signing key
         let _trng_source =
             esp_hal::rng::TrngSource::new(config.peripherals.rng, config.peripherals.adc1);
         let crypto = default_crypto(
-            reseeding_csprng(esp_hal::rng::Trng::try_new().unwrap(), 1000).unwrap(),
+            rs_matter_embassy::rand::RngAdaptor::new(esp_hal::rng::Trng::try_new().unwrap()),
             DAC_PRIVKEY,
         );
         let weak_rand = crypto.weak_rand().unwrap();
@@ -316,7 +316,8 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
         // Chain root endpoint (Endpoint 0) system clusters (Descriptor, Basic Info, Admin Comm, NOC, ACL, etc.)
         let handler = ChainedHandler::new_with_matcher(
             |e, _| e == rs_matter::dm::endpoints::ROOT_ENDPOINT_ID,
-            Async(EmbassyWifiMatterStack::<0, ()>::root_handler(
+            Async(MatterStack::<0, EmbassyWifiNetwork>::root_handler(
+                stack.matter(),
                 &(),
                 crypto.weak_rand().unwrap(),
             )),
@@ -366,9 +367,9 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
             matter: stack.matter(),
         };
         stack
-            .run_coex(
+            .run_wifi(
                 EmbassyWifi::new(
-                    EspWifiDriver::new(config.peripherals.wifi, config.peripherals.bt),
+                    EspWifiRadio::new(config.peripherals.wifi, config.peripherals.bt),
                     weak_rand,
                     true,
                     stack,
@@ -406,7 +407,7 @@ struct ConnectionMonitor<'a, R: SystemResetDriver> {
 impl<R: SystemResetDriver> UserTask for ConnectionMonitor<'_, R> {
     async fn run<S, N>(&mut self, _net_stack: S, netif: N) -> Result<(), rs_matter::error::Error>
     where
-        S: rs_matter_embassy::stack::nal::NetStack,
+        S: rs_matter_embassy::stack::net::NetStack,
         N: rs_matter::dm::clusters::gen_diag::NetifDiag + rs_matter::dm::networks::NetChangeNotif,
     {
         let fabric_policy = FabricPolicy::default();
@@ -472,7 +473,7 @@ fn dev_det(info: &DeviceInfo, serial_no: &'static str) -> BasicInfoConfig<'stati
         vendor_name: info.vendor_name,
         product_name: info.product_name,
         device_name: info.device_name,
-        max_subscription_max_interval_secs: Some(crate::config::MAX_SUBSCRIPTION_INTERVAL_SECS),
+        max_subscription_max_interval_secs: crate::config::MAX_SUBSCRIPTION_INTERVAL_SECS,
         ..BasicInfoConfig::new()
     }
 }
