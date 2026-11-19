@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+staged_rs="$(git diff --cached --name-only --diff-filter=ACM -- '*.rs' || true)"
+if [[ -n "$staged_rs" ]]; then
+  echo "[pre-commit] Checking Rust formatting on staged files..."
+  echo "$staged_rs" | xargs mise exec -- rustfmt --edition 2021 --check
+
+  echo "[pre-commit] Running cargo clippy (host crates)..."
+  mise exec -- cargo clippy --no-deps \
+    -p intercom-core \
+    -p intercom-adapter-http \
+    -p intercom-pairing-tool \
+    --target x86_64-apple-darwin
+fi
+
+staged_fe="$(git diff --cached --name-only --diff-filter=ACM -- 'crates/intercom-adapter-http/frontend/*' || true)"
+if [[ -n "$staged_fe" ]]; then
+  echo "[pre-commit] Running frontend typecheck and lint..."
+  mise exec -- cargo fe-check
+fi
