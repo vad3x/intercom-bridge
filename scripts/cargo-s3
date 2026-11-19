@@ -113,7 +113,7 @@ case "$cmd" in
             echo "Error: S3 ELF not found at $elf. Run 'cargo build-s3' first." >&2
             exit 1
         fi
-        exec espflash flash --chip esp32s3 --partition-table "$REPO_ROOT/partitions.csv" --monitor "$@" "$elf"
+        exec espflash flash --chip esp32s3 --baud "${INTERCOM_S3_BAUD:-921600}" --partition-table "$REPO_ROOT/partitions.csv" --monitor "$@" "$elf"
         ;;
     shell)
         exec docker run --rm -it \

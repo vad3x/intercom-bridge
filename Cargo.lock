@@ -1215,7 +1215,9 @@ dependencies = [
  "ed25519-dalek",
  "edf-core",
  "embassy-time",
+ "esp-alloc",
  "esp-hal",
+ "esp-storage",
  "log",
 ]
 

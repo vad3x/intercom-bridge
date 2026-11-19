@@ -454,7 +454,7 @@ def push_ota_to_device(
     header: bytes,
     binary_path: Path,
     binary_len: int,
-    http_timeout: float = 60.0,
+    http_timeout: float = 120.0,
 ) -> bool:
     """Stream signed firmware to target device over HTTP POST."""
     total_size = len(header) + binary_len
@@ -653,8 +653,8 @@ def main() -> None:
     parser.add_argument(
         "--http-timeout",
         type=float,
-        default=60.0,
-        help="HTTP upload timeout in seconds (default: 60.0)",
+        default=120.0,
+        help="HTTP upload timeout in seconds (default: 120.0)",
     )
     parser.add_argument("--chip", default="esp32c6", choices=("esp32c6", "esp32s3"), help="Image target chip (default: esp32c6)")
     parser.add_argument("--flash-size", default="8mb", help="Target flash size (default: 8mb)")

@@ -104,6 +104,9 @@ pub const DEFAULT_PERSISTENT_START_READ_TIMEOUT: Duration = Duration::from_secs(
 /// Default maximum total duration allowed for an HTTP request lifecycle.
 pub const DEFAULT_READ_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
+/// Default maximum total duration allowed for streaming an OTA image body (~3.4 MB).
+pub const DEFAULT_OTA_READ_TIMEOUT: Duration = Duration::from_secs(360);
+
 /// Default timeout for writing an HTTP response.
 pub const DEFAULT_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -120,7 +123,13 @@ pub const DEFAULT_ACCEPT_RETRY_DELAY: Duration = Duration::from_millis(100);
 // Static Buffer Sizes (Zero-Allocation Architecture)
 // ============================================================================
 
+/// Per-worker TCP receive window (4 KiB on targets with PSRAM/extra SRAM, 1 KiB otherwise);
+/// audio frames and OTA chunks are streamed.
+#[cfg(feature = "large-ota-buffers")]
+pub const TCP_RX_BUFFER_SIZE: usize = 4096;
+
 /// Per-worker TCP receive window (1 KiB); audio frames and OTA chunks are streamed.
+#[cfg(not(feature = "large-ota-buffers"))]
 pub const TCP_RX_BUFFER_SIZE: usize = 1024;
 
 /// Per-worker TCP transmit window (512 B), enough for a complete audio frame.

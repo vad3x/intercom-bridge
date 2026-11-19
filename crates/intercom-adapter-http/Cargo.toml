@@ -3,6 +3,9 @@ name = "intercom-adapter-http"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+large-ota-buffers = []
+
 [dependencies]
 edf-core = { workspace = true }
 edf-http-diagnostics = { workspace = true }

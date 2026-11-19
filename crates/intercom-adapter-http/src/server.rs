@@ -954,7 +954,7 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, T: Ec
             .body_connection
             .body()
             .reader()
-            .with_different_timeout(state.read_request_timeout);
+            .with_different_timeout(crate::config::DEFAULT_OTA_READ_TIMEOUT);
         let mut stream = EmbeddedIoReader(reader);
         let flash_res = state
             .ota_driver

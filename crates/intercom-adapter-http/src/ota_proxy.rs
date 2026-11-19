@@ -7,6 +7,10 @@ use embassy_sync::{blocking_mutex::raw::NoopRawMutex, channel::Channel, signal::
 
 // A single queued chunk provides backpressure without duplicating the driver's
 // 4 KiB sector writer and 2 KiB input buffer in both HTTP connection futures.
+#[cfg(feature = "large-ota-buffers")]
+const CHUNK_SIZE: usize = 2048;
+
+#[cfg(not(feature = "large-ota-buffers"))]
 const CHUNK_SIZE: usize = 256;
 
 struct Start {

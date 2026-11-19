@@ -97,8 +97,10 @@ mod target {
     #[cfg(feature = "led-smartled")]
     pub type ActiveIndicator = crate::devkit_led::DevKitLedDriver;
 
-    #[cfg(not(feature = "ota-disabled"))]
+    #[cfg(all(not(feature = "ota-disabled"), not(feature = "esp32s3")))]
     pub type ActiveOtaDriver = edf_ota::FlashOtaDriver;
+    #[cfg(all(not(feature = "ota-disabled"), feature = "esp32s3"))]
+    pub type ActiveOtaDriver = edf_ota::PsramOtaDriver;
     #[cfg(feature = "ota-disabled")]
     pub type ActiveOtaDriver = crate::disabled_ota::DisabledOtaDriver;
 
@@ -128,6 +130,7 @@ mod target {
     pub const ENABLE_SYNTHETIC_AUDIO_STREAM: bool =
         cfg!(any(feature = "devkit", feature = "esp32s3"));
 
+    #[cfg(not(feature = "esp32s3"))]
     pub fn create_default_ota_driver() -> ActiveOtaDriver {
         #[cfg(not(feature = "ota-disabled"))]
         {
@@ -143,7 +146,7 @@ mod target {
     pub fn create_s3_ota_driver() -> ActiveOtaDriver {
         #[cfg(not(feature = "ota-disabled"))]
         {
-            edf_ota::FlashOtaDriver::new_with_profile(
+            edf_ota::PsramOtaDriver::new(
                 crate::config::OTA_PUBLIC_KEY,
                 edf_ota::OtaImageProfile {
                     chip_id: edf_ota::ESP32_S3_CHIP_ID,

@@ -141,10 +141,54 @@ pub async fn wire_board(
     rx_audio: &'static intercom_media::RxAudioChannel,
     tx_audio: &'static intercom_media::TxAudioChannel,
     _call_state: &'static CallStateWatch,
-    _system_state: &'static SystemStateWatch,
+    system_state: &'static SystemStateWatch,
     initial_rx_gain: RxPgaGain,
     initial_tx_gain: TxDacGain,
 ) -> BoardHardware {
+    static OTA_CORE1_HOLD: core::sync::atomic::AtomicBool =
+        core::sync::atomic::AtomicBool::new(false);
+
+    #[esp_hal::ram]
+    fn park_core1_in_iram() {
+        esp_hal::xtensa_lx::interrupt::free(|| {
+            edf_ota::set_coop_other_core_parked(true);
+            while OTA_CORE1_HOLD.load(core::sync::atomic::Ordering::Acquire) {
+                core::hint::spin_loop();
+            }
+            edf_ota::set_coop_other_core_parked(false);
+        });
+    }
+
+    #[embassy_executor::task]
+    async fn s3_ota_park_coordinator(system_state: &'static SystemStateWatch) {
+        let mut rx = system_state
+            .receiver()
+            .expect("S3 OTA coordinator receiver");
+        loop {
+            let state = rx.changed().await;
+            OTA_CORE1_HOLD.store(
+                matches!(state, intercom_core::events::SystemState::Updating),
+                core::sync::atomic::Ordering::Release,
+            );
+        }
+    }
+
+    #[embassy_executor::task]
+    async fn s3_ota_park_worker(system_state: &'static SystemStateWatch) {
+        let mut rx = system_state.receiver().expect("S3 OTA worker receiver");
+        loop {
+            let state = rx.changed().await;
+            if matches!(state, intercom_core::events::SystemState::Updating) {
+                OTA_CORE1_HOLD.store(true, core::sync::atomic::Ordering::Release);
+                park_core1_in_iram();
+            }
+        }
+    }
+
+    spawner.spawn(
+        s3_ota_park_coordinator(system_state).expect("Failed to spawn S3 OTA park coordinator"),
+    );
+
     let ring = GpioRingDriver::new(GpioRingConfig::new(peripherals.GPIO4));
     static BUS: StaticCell<BusSafetyInterlock<GpioBusDriver>> = StaticCell::new();
     let bus = &*BUS.init(BusSafetyInterlock::new(GpioBusDriver::new(
@@ -176,6 +220,9 @@ pub async fn wire_board(
                     intercom_adapter_audio::I2sCaptureSource::EmbeddedTestSample,
                 )
                 .expect("Failed to create S3 I2S audio worker task"),
+            );
+            audio_spawner.spawn(
+                s3_ota_park_worker(system_state).expect("Failed to spawn S3 OTA park worker"),
             );
             I2S_PIPELINE_READY.signal(());
         });
