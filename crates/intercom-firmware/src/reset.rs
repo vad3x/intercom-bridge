@@ -168,20 +168,20 @@ impl IntercomReporter for FirmwarePersistenceReporter {
     }
 }
 
-pub use crate::platform::force_bus_relays_low;
+use crate::platform::{ActivePlatform, PlatformDriver};
 
 /// Outbound reset driver implementing persistent credential erasure and hardware reboot.
 pub struct FirmwareResetDriver;
 
 impl SystemResetDriver for FirmwareResetDriver {
     fn erase_credentials(&self, scope: ResetScope) {
-        force_bus_relays_low();
+        ActivePlatform::force_bus_relays_low();
         kv_backend::erase_scope(scope);
     }
 
     fn reboot(&self) -> ! {
-        force_bus_relays_low();
-        crate::platform::software_reset();
+        ActivePlatform::force_bus_relays_low();
+        ActivePlatform::software_reset();
     }
 }
 

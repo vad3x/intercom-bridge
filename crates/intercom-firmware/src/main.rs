@@ -58,8 +58,8 @@ esp_bootloader_esp_idf::esp_app_desc!(
 /// Triggers a software reset so the device recovers automatically.
 #[unsafe(no_mangle)]
 pub fn custom_halt() -> ! {
-    platform::force_bus_relays_low();
-    platform::software_reset();
+    ActivePlatform::force_bus_relays_low();
+    ActivePlatform::software_reset();
 }
 
 #[esp_rtos::main]
@@ -69,8 +69,6 @@ async fn main(spawner: Spawner) {
         custom_halt();
     }
 
-    platform::force_bus_relays_low();
-
     info!(
         "Smart Intercom v{} (build: {}, date: {}, rev: {})",
         version::SW_VER_STR,
@@ -78,8 +76,6 @@ async fn main(spawner: Spawner) {
         version::BUILD_DATE,
         version::SW_VER
     );
-
-    platform::init_heap();
 
     let (mut platform, platform_drivers) = ActivePlatform::init();
     let peripherals = platform_drivers.peripherals;

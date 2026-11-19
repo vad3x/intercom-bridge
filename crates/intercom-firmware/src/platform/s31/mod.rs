@@ -76,6 +76,8 @@ mod target_init {
 
             let timg0 = esp_hal::timer::timg::TimerGroup::new(peripherals.TIMG0);
             esp_rtos::start(timg0.timer0, peripherals.FROM_CPU_INTR0);
+            Self::force_bus_relays_low();
+            super::board::init_heap();
 
             let cpu_control = peripherals.CPU_CTRL;
             let core1_interrupt = peripherals.FROM_CPU_INTR1;
@@ -113,6 +115,14 @@ mod target_init {
                 },
                 drivers,
             )
+        }
+
+        fn force_bus_relays_low() {
+            super::board::force_bus_relays_low();
+        }
+
+        fn software_reset() -> ! {
+            esp_hal::system::software_reset();
         }
 
         fn spawn_audio_worker(

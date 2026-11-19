@@ -63,19 +63,15 @@ pub trait PlatformDriver: Sized {
 
     fn init() -> (Self, Self::Drivers);
 
+    fn force_bus_relays_low();
+
+    fn software_reset() -> !;
+
     fn spawn_audio_worker(
         &mut self,
         spawner: embassy_executor::Spawner,
         worker: impl FnOnce(embassy_executor::Spawner) + Send + 'static,
     );
-}
-
-#[cfg(not(target_os = "none"))]
-pub fn force_bus_relays_low() {}
-
-#[cfg(not(target_os = "none"))]
-pub fn software_reset() -> ! {
-    panic!("Host reboot requested")
 }
 
 #[cfg(target_os = "none")]
@@ -89,13 +85,9 @@ mod target {
 
     pub use active_board::{
         allocate_dtls_srtp_resources, allocate_matter_stack_storage,
-        allocate_webrtc_media_resources, create_webrtc_engine, force_bus_relays_low, init_heap,
-        log_pre_matter_heap, wire_board, BoardAudioCtrl, BoardWireless,
+        allocate_webrtc_media_resources, create_webrtc_engine, log_pre_matter_heap, wire_board,
+        BoardAudioCtrl, BoardWireless,
     };
-
-    pub fn software_reset() -> ! {
-        esp_hal::system::software_reset();
-    }
 
     #[cfg(not(feature = "led-smartled"))]
     pub type ActiveIndicator = intercom_adapter_gpio::led::GpioLedDriver;
@@ -216,7 +208,7 @@ mod target {
             .await
         {
             log::warn!("I2S DMA stream failed: {:?}", error);
-            software_reset();
+            <super::ActivePlatform as super::PlatformDriver>::software_reset();
         }
     }
 

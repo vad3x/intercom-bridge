@@ -12,6 +12,12 @@ impl PlatformDriver for MockPlatform {
         (Self, PlatformDrivers { peripherals: () })
     }
 
+    fn force_bus_relays_low() {}
+
+    fn software_reset() -> ! {
+        panic!("Host reboot requested")
+    }
+
     fn spawn_audio_worker(
         &mut self,
         spawner: embassy_executor::Spawner,

@@ -135,7 +135,7 @@ async fn s31_synthetic_audio_worker(
                 Ok(frame) => frame,
                 Err(error) => {
                     warn!("S31 synthetic Opus pipeline failed: {:?}", error);
-                    platform::software_reset();
+                    super::S31Platform::software_reset();
                 }
             };
             let levels = intercom_media::compute_frame_levels_dbfs(&source);
