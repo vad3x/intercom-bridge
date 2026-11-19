@@ -119,6 +119,62 @@ pub fn persist_door_duration(duration_sec: u32) {
     }
 }
 
+/// Save a failure diagnostic summary into `store` under `LAST_FAILURE_KEY` (truncated to 512 bytes).
+pub fn save_last_failure_into<S: KvBlobStore>(store: &mut S, summary: &str) -> Result<(), ()> {
+    let mut scratch = [0u8; 1024];
+    let bytes = summary.as_bytes();
+    let max_len = bytes.len().min(512);
+    let mut end = max_len;
+    while end > 0 && !summary.is_char_boundary(end) {
+        end -= 1;
+    }
+    store
+        .store(crate::config::LAST_FAILURE_KEY, &bytes[..end], &mut scratch)
+        .map_err(|_| ())
+}
+
+/// Load the last recorded failure diagnostic summary from `store`.
+pub fn load_last_failure_from<'a, S: KvBlobStore>(
+    store: &mut S,
+    out: &'a mut [u8],
+) -> Option<&'a str> {
+    match store.load(crate::config::LAST_FAILURE_KEY, out) {
+        Ok(Some(slice)) => core::str::from_utf8(slice).ok(),
+        _ => None,
+    }
+}
+
+/// Persist a failure diagnostic summary to `system_kvs` flash (survives power loss).
+pub fn persist_last_failure(summary: &str) {
+    #[cfg(target_arch = "riscv32")]
+    #[cfg(not(feature = "dummy-persist"))]
+    {
+        let system_flash = EspFlash::new(crate::config::SYSTEM_KVS_RANGE);
+        let mut store = SeqMapKvBlobStore::new(system_flash, crate::config::SYSTEM_KVS_RANGE);
+        let _ = save_last_failure_into(&mut store, summary);
+    }
+    #[cfg(any(not(target_arch = "riscv32"), feature = "dummy-persist"))]
+    {
+        let _ = summary;
+    }
+}
+
+/// Read the last recorded failure diagnostic summary from `system_kvs` flash.
+pub fn read_persisted_last_failure(out: &mut [u8]) -> Option<&str> {
+    #[cfg(target_arch = "riscv32")]
+    #[cfg(not(feature = "dummy-persist"))]
+    {
+        let system_flash = EspFlash::new(crate::config::SYSTEM_KVS_RANGE);
+        let mut store = SeqMapKvBlobStore::new(system_flash, crate::config::SYSTEM_KVS_RANGE);
+        load_last_failure_from(&mut store, out)
+    }
+    #[cfg(any(not(target_arch = "riscv32"), feature = "dummy-persist"))]
+    {
+        let _ = out;
+        None
+    }
+}
+
 /// Outbound reporter that synchronizes runtime lock and duration state with telemetry
 /// and persists duration changes into system flash.
 pub struct FirmwarePersistenceReporter;

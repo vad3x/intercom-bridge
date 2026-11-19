@@ -19,6 +19,8 @@ extern crate alloc;
 #[cfg(target_arch = "riscv32")]
 mod config;
 #[cfg(target_arch = "riscv32")]
+mod diag;
+#[cfg(target_arch = "riscv32")]
 mod hardware_info;
 #[cfg(target_arch = "riscv32")]
 mod reset;
@@ -114,7 +116,7 @@ esp_bootloader_esp_idf::esp_app_desc!(
 #[cfg(target_arch = "riscv32")]
 #[unsafe(no_mangle)]
 pub fn custom_halt() -> ! {
-    esp_hal::system::software_reset();
+    diag::persist_panic_and_reset();
 }
 
 // ============================================================================
@@ -147,6 +149,7 @@ async fn main(_spawner: Spawner) {
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_rtos::start(timg0.timer0, peripherals.FROM_CPU_INTR0);
 
+    let has_last_failure = diag::record_boot_diagnostics();
     info!("Hardware initialized");
 
     // ========================================================================
@@ -307,8 +310,17 @@ async fn main(_spawner: Spawner) {
         http_server.run().await;
     };
 
+    let diag_future = diag::run_diag_monitor(timg0.wdt, has_last_failure);
+
     info!("Matter Controller Running");
 
-    // All run forever; join4 waits for all
-    embassy_futures::join::join4(app_future, matter_future, led_future, http_future).await;
+    // All run forever; join5 waits for all
+    embassy_futures::join::join5(
+        app_future,
+        matter_future,
+        led_future,
+        http_future,
+        diag_future,
+    )
+    .await;
 }

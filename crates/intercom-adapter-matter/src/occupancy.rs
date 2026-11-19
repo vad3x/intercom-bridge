@@ -105,7 +105,7 @@ impl MatterCluster for IntercomOccupancy {
 
 impl AsyncHandler for IntercomOccupancy {
     async fn read(&self, ctx: impl ReadContext, reply: impl ReadReply) -> Result<(), Error> {
-        self.config.readiness.mark_ring_ready();
+        self.config.readiness.mark_ring_ready(ctx.attr().fab_idx);
 
         if let Some(writer) = reply.with_dataver(self.dataver.get())? {
             if ctx.attr().is_system() {

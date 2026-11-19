@@ -77,6 +77,9 @@ pub const MATTER_KVS_RANGE: Range<u32> = MATTER_KVS_OFFSET..MATTER_KVS_OFFSET + 
 /// Persistent KV storage key for door unlock duration in seconds (stored in `system_kvs`).
 pub const DOOR_DURATION_KEY: u16 = 0x1001;
 
+/// Persistent KV storage key for the last recorded failure diagnostic summary (`system_kvs`).
+pub const LAST_FAILURE_KEY: u16 = 0x1002;
+
 /// Default door unlock duration in seconds.
 #[allow(dead_code)]
 pub const DEFAULT_DOOR_DURATION_SEC: u32 = intercom_core::config::DEFAULT_DOOR_UNLOCK_DURATION_SEC;

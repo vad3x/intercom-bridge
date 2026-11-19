@@ -4,13 +4,14 @@
 //! `EcosystemInfoDriver` to report Matter pairing and cluster subscription status.
 
 use core::sync::atomic::{AtomicBool, Ordering};
+use intercom_core::domain::ecosystem::FabricSubscription;
 use intercom_core::domain::{
     EcosystemStatus, EcosystemValue, EndpointInfo, FabricInfo, FabricLabel,
 };
 use intercom_core::events::SystemStateSender;
 use intercom_core::ports::ecosystem::EcosystemInfoDriver;
 use log::info;
-use portable_atomic::AtomicPtr;
+use portable_atomic::{AtomicPtr, AtomicU32};
 
 use crate::config::{DOOR_LOCK_ENDPOINT_ID, MATTER_ECOSYSTEM, OCCUPANCY_SENSOR_ENDPOINT_ID};
 
@@ -23,6 +24,8 @@ pub struct ClusterReadinessBarrier {
     inner: edf_matter::readiness::ClusterReadinessBarrier<'static>,
     door_lock_ready: AtomicBool,
     ring_ready: AtomicBool,
+    door_lock_fabrics: AtomicU32,
+    ring_fabrics: AtomicU32,
     matter: AtomicPtr<rs_matter::Matter<'static>>,
 }
 
@@ -36,6 +39,8 @@ impl ClusterReadinessBarrier {
             ),
             door_lock_ready: AtomicBool::new(false),
             ring_ready: AtomicBool::new(false),
+            door_lock_fabrics: AtomicU32::new(0),
+            ring_fabrics: AtomicU32::new(0),
             matter: AtomicPtr::new(core::ptr::null_mut()),
         }
     }
@@ -56,8 +61,12 @@ impl ClusterReadinessBarrier {
         self.inner.is_paired()
     }
 
-    /// Mark the DoorLock cluster as subscription-primed.
-    pub fn mark_door_lock_ready(&self) {
+    /// Mark the DoorLock cluster as subscription-primed, associating a fabric index.
+    pub fn mark_door_lock_ready(&self, fab_idx: u8) {
+        if (1..=32).contains(&fab_idx) {
+            self.door_lock_fabrics
+                .fetch_or(1 << (fab_idx - 1), Ordering::Release);
+        }
         let was_ready = self.is_ready();
         self.door_lock_ready.store(true, Ordering::Release);
         self.inner.mark_ready(DOOR_LOCK_READY_BIT);
@@ -66,8 +75,12 @@ impl ClusterReadinessBarrier {
         }
     }
 
-    /// Mark the Occupancy/Ring cluster as subscription-primed.
-    pub fn mark_ring_ready(&self) {
+    /// Mark the Occupancy/Ring cluster as subscription-primed, associating a fabric index.
+    pub fn mark_ring_ready(&self, fab_idx: u8) {
+        if (1..=32).contains(&fab_idx) {
+            self.ring_fabrics
+                .fetch_or(1 << (fab_idx - 1), Ordering::Release);
+        }
         let was_ready = self.is_ready();
         self.ring_ready.store(true, Ordering::Release);
         self.inner.mark_ready(RING_READY_BIT);
@@ -90,6 +103,8 @@ impl ClusterReadinessBarrier {
     pub fn reset(&self) {
         self.door_lock_ready.store(false, Ordering::Release);
         self.ring_ready.store(false, Ordering::Release);
+        self.door_lock_fabrics.store(0, Ordering::Release);
+        self.ring_fabrics.store(0, Ordering::Release);
         self.inner.reset();
     }
 
@@ -134,15 +149,36 @@ impl EcosystemInfoDriver for ClusterReadinessBarrier {
         let matter_ptr = self.matter.load(Ordering::Acquire);
         if !matter_ptr.is_null() {
             let matter = unsafe { &*matter_ptr };
+            let door_mask = self.door_lock_fabrics.load(Ordering::Acquire);
+            let ring_mask = self.ring_fabrics.load(Ordering::Acquire);
             matter.with_state(|state| {
                 for fab in state.fabrics.iter() {
-                    status = status.with_fabric(FabricInfo::new(
-                        fab.fab_idx().get(),
+                    let fab_idx = fab.fab_idx().get();
+                    let bit = if (1..=32).contains(&fab_idx) {
+                        1 << (fab_idx - 1)
+                    } else {
+                        0
+                    };
+                    let mut fabric_info = FabricInfo::new(
+                        fab_idx,
                         fab.vendor_id(),
                         fab.fabric_id(),
                         fab.node_id(),
                         FabricLabel::from_str(fab.label()),
-                    ));
+                    );
+                    if (door_mask & bit) != 0 {
+                        fabric_info = fabric_info.with_subscription(FabricSubscription::new(
+                            DOOR_LOCK_ENDPOINT_ID,
+                            0x0101,
+                        ));
+                    }
+                    if (ring_mask & bit) != 0 {
+                        fabric_info = fabric_info.with_subscription(FabricSubscription::new(
+                            OCCUPANCY_SENSOR_ENDPOINT_ID,
+                            0x0406,
+                        ));
+                    }
+                    status = status.with_fabric(fabric_info);
                 }
             });
         }
