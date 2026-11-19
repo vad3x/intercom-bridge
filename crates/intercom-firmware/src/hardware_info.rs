@@ -166,7 +166,14 @@ mod target_impl {
     }
 
     pub fn free_heap_bytes() -> usize {
-        esp_alloc::HEAP.free()
+        // Report internal-RAM free bytes so `free_heap_bytes` matches `total_heap_bytes`
+        // (`config::HEAP_SIZE`) on targets with external PSRAM like ESP32-S3.
+        let internal = memory_info().internal;
+        if internal.total_bytes > 0 {
+            internal.free_bytes
+        } else {
+            esp_alloc::HEAP.free()
+        }
     }
 
     pub fn ip_address() -> Option<[u8; 4]> {
