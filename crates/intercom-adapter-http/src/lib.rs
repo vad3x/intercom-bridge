@@ -21,8 +21,8 @@ pub use ws_audio::HttpAudioMedia;
 
 pub use config::HttpServerConfig;
 pub use router::{
-    format_status_json, format_status_json_with_memory, parse_route, MemoryRegion, MemorySnapshot,
-    Route,
+    format_status_json, format_status_json_with_memory, format_status_json_with_telemetry,
+    parse_route, CpuCoreLoad, CpuSnapshot, MemoryRegion, MemorySnapshot, Route,
 };
 pub use server::HttpServer;
 

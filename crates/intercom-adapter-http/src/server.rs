@@ -61,6 +61,7 @@ pub(crate) struct AppState<
     pub(crate) bus_safety: &'a dyn BusSafetyDriver,
     pub(crate) diagnostics: &'a DiagnosticsService<'a, H, E, T>,
     pub(crate) memory_info: Option<fn() -> MemorySnapshot>,
+    pub(crate) cpu_info: Option<fn() -> crate::CpuSnapshot>,
     pub(crate) ota_busy: Option<&'a core::cell::Cell<bool>>,
     pub(crate) ota_driver: &'a core::cell::RefCell<&'a mut O>,
     pub(crate) state_sender: Option<SystemStateSender<'a>>,
@@ -119,6 +120,7 @@ pub struct HttpServer<
     webrtc_session: Option<&'a WebRtcSessionHandle<'a>>,
     debug_webrtc_signaling: Option<&'a dyn DebugWebRtcSignaling>,
     memory_info: Option<fn() -> MemorySnapshot>,
+    cpu_info: Option<fn() -> crate::CpuSnapshot>,
 }
 
 impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, T: EcosystemType>
@@ -146,6 +148,7 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, T: Ec
             webrtc_session: None,
             debug_webrtc_signaling: None,
             memory_info: None,
+            cpu_info: None,
             log_provider,
             config,
         }
@@ -185,6 +188,7 @@ impl<
             webrtc_session: None,
             debug_webrtc_signaling: None,
             memory_info: None,
+            cpu_info: None,
             log_provider,
             config,
         }
@@ -199,6 +203,12 @@ impl<
     /// Attach a provider for internal RAM and external PSRAM allocator statistics.
     pub fn with_memory_info_provider(mut self, provider: fn() -> MemorySnapshot) -> Self {
         self.memory_info = Some(provider);
+        self
+    }
+
+    /// Attach a provider for per-core CPU load telemetry.
+    pub fn with_cpu_info_provider(mut self, provider: fn() -> crate::CpuSnapshot) -> Self {
+        self.cpu_info = Some(provider);
         self
     }
 
@@ -231,6 +241,7 @@ impl<
             webrtc_session: self.webrtc_session,
             debug_webrtc_signaling: self.debug_webrtc_signaling,
             memory_info: self.memory_info,
+            cpu_info: self.cpu_info,
             log_provider: self.log_provider,
             config: self.config,
         }
@@ -268,6 +279,7 @@ impl<
             webrtc_session: self.webrtc_session,
             debug_webrtc_signaling: self.debug_webrtc_signaling,
             memory_info: self.memory_info,
+            cpu_info: self.cpu_info,
             tarpit_delay: self.config.tarpit_delay,
             read_request_timeout: self.config.read_request_timeout,
             had_error: &had_error,
@@ -317,6 +329,7 @@ impl<
         let webrtc_session = self.webrtc_session;
         let debug_webrtc_signaling = self.debug_webrtc_signaling;
         let memory_info = self.memory_info;
+        let cpu_info = self.cpu_info;
         let log_provider = self.log_provider;
         let proxy = crate::ota_proxy::OtaProxy::new();
         let picoserve_config = picoserve::Config::new(picoserve::Timeouts {
@@ -349,6 +362,7 @@ impl<
                     webrtc_session,
                     debug_webrtc_signaling,
                     memory_info,
+                    cpu_info,
                     tarpit_delay: config.tarpit_delay,
                     read_request_timeout: config.read_request_timeout,
                     had_error: &had_error,
@@ -440,9 +454,11 @@ fn build_router<
                             psram: None,
                         },
                     );
-                    let json_str = match crate::router::format_status_json_with_memory(
+                    let cpu = state.cpu_info.map(|provider| provider());
+                    let json_str = match crate::router::format_status_json_with_telemetry(
                         &diag,
                         memory,
+                        cpu,
                         &mut json_buf,
                     ) {
                         Ok(len) => alloc::string::String::from(

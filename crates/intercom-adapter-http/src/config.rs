@@ -129,8 +129,8 @@ pub const TCP_TX_BUFFER_SIZE: usize = 512;
 /// Per-worker request-header buffer (1 KiB); request bodies are streamed.
 pub const HTTP_BUFFER_SIZE: usize = 1024;
 
-/// Size of the stack buffer used for JSON telemetry serialization (1.5 KiB).
-pub const JSON_BUFFER_SIZE: usize = 1536;
+/// Size of the stack buffer used for JSON telemetry serialization (2.5 KiB).
+pub const JSON_BUFFER_SIZE: usize = 2560;
 
 /// Size of the temporary buffer used to fetch system logs (4 KiB).
 pub const LOG_BUFFER_SIZE: usize = 4096;

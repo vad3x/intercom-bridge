@@ -230,8 +230,18 @@ mod target {
         S: rs_matter::persist::KvBlobStore,
         M: rs_matter_embassy::stack::UserTask,
     {
+        let radio = rs_matter_embassy::wireless::esp::EspWifiRadio::new(wifi, bt);
+        #[cfg(feature = "esp32c6")]
+        let radio = radio.with_protocols(
+            rs_matter_embassy::wireless::esp::Protocols::default().with_2_4(
+                rs_matter_embassy::wireless::esp::Protocol::B
+                    | rs_matter_embassy::wireless::esp::Protocol::G
+                    | rs_matter_embassy::wireless::esp::Protocol::N
+                    | rs_matter_embassy::wireless::esp::Protocol::AX,
+            ),
+        );
         let wifi = rs_matter_embassy::wireless::EmbassyWifi::new(
-            rs_matter_embassy::wireless::esp::EspWifiRadio::new(wifi, bt),
+            radio,
             weak_rand,
             true,
             stack,

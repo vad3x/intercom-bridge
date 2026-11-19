@@ -27,23 +27,23 @@ The dashboard Diagnostics tab SHALL render one labeled memory usage bar for each
 - **THEN** the Diagnostics tab SHALL render without error and omit memory bars
 
 ### Requirement: Per-Core CPU Load Telemetry Reporting
-The `/api/status` endpoint SHALL include a `cpu` object with a `cores` array of `{ id, load_pct }` entries representing each active CPU core's recent utilization percentage (`0` to `100`).
+The `/api/status` endpoint SHALL include a `cpu` object keyed by core identifier (such as `core_0`, `core_1`), where each non-null core entry provides `load_pct` (`0` to `100`).
 
 #### Scenario: Single-core target
 - **WHEN** a client requests `GET /api/status` from a single-core target such as ESP32-C6
-- **THEN** `status.cpu.cores` SHALL contain one entry for core `0` with `load_pct` clamped between `0` and `100`
+- **THEN** `status.cpu` SHALL contain `core_0` with `load_pct` clamped between `0` and `100`
 
 #### Scenario: Dual-core target
 - **WHEN** a client requests `GET /api/status` from a dual-core target such as ESP32-S3 or ESP32-S31
-- **THEN** `status.cpu.cores` SHALL contain two entries (`id: 0` and `id: 1`) with independent `load_pct` values
+- **THEN** `status.cpu` SHALL contain `core_0` and `core_1` with independent `load_pct` values
 
 ### Requirement: Dynamic CPU Core Load Visualization
-The dashboard Diagnostics tab SHALL render one labeled CPU load bar per entry in `status.cpu.cores` when `status.cpu` is present, and SHALL omit the CPU load section when `status.cpu` is absent.
+The dashboard Diagnostics tab SHALL render one labeled CPU load bar per non-null entry in `status.cpu` when `status.cpu` is present, and SHALL omit the CPU load section when `status.cpu` is absent.
 
 #### Scenario: CPU core load present
-- **WHEN** `status.cpu.cores` contains one or more core entries
-- **THEN** the Diagnostics tab SHALL display each core's identifier (e.g., `Core 0`, `Core 1`) and a percentage progress bar reflecting `load_pct`
+- **WHEN** `status.cpu` contains one or more non-null core entries
+- **THEN** the Diagnostics tab SHALL display each core's label (e.g., `CPU Core 0`, `CPU Core 1`) and a percentage progress bar reflecting `load_pct`
 
 #### Scenario: CPU core load absent
-- **WHEN** `status.cpu` is undefined or `cores` is empty
+- **WHEN** `status.cpu` is undefined or has no non-null entries
 - **THEN** the Diagnostics tab SHALL render without error and omit CPU core bars

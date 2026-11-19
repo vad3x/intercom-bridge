@@ -20,7 +20,7 @@
 ## Decisions
 
 1. **Generic `memory` pool rendering in `dashboard-core` (breaking schema update):**
-   - Replace `free_heap_bytes` and `total_heap_bytes` on `SystemDiagnosticsBase` in `dashboard-core/src/types.ts` with `memory?: Record<string, MemoryPoolStats | null>` and `cpu?: { cores: CpuCoreLoad[] }`.
+   - Replace `free_heap_bytes` and `total_heap_bytes` on `SystemDiagnosticsBase` in `dashboard-core/src/types.ts` with `memory?: Record<string, MemoryPoolStats | null>` and `cpu?: Record<string, CpuCoreStats | null>`.
    - In `DiagnosticsTab.tsx`, iterate over `Object.entries(status.memory ?? {})` for non-null pools, mapping known keys (`internal` -> `Internal RAM`, `psram` -> `PSRAM`) and title-casing unknown keys.
    - *Alternative considered:* Hardcoding `internal` and `psram` slots in `intercom-matter`'s `App.tsx`, or keeping `free_heap_bytes`/`total_heap_bytes` as a fallback. Rejected because `DiagnosticsTab` is shared across EDF devices and removing the legacy fields keeps the schema clean and smaller on the wire.
 

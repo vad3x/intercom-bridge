@@ -245,7 +245,7 @@ fn test_format_status_json_success() {
         git_commit: "a3f89b",
         build_date: "2026-10-15",
     };
-    let mut buf = [0u8; 1024];
+    let mut buf = [0u8; intercom_adapter_http::config::JSON_BUFFER_SIZE];
 
     // Act
     let written = format_status_json(&diag, &mut buf).expect("serialization should succeed");
@@ -369,7 +369,7 @@ fn test_format_status_json_with_multiple_fabrics() {
         git_commit: "abcdef",
         build_date: "2026-10-17",
     };
-    let mut buf = [0u8; 1024];
+    let mut buf = [0u8; intercom_adapter_http::config::JSON_BUFFER_SIZE];
 
     // Act
     let written = format_status_json(&diag, &mut buf).expect("serialization should succeed");
@@ -427,7 +427,7 @@ fn test_format_status_json_with_none_options() {
         git_commit: "deadbeef",
         build_date: "2026-10-16",
     };
-    let mut buf = [0u8; 1024];
+    let mut buf = [0u8; intercom_adapter_http::config::JSON_BUFFER_SIZE];
 
     // Act
     let written = format_status_json(&diag, &mut buf).expect("serialization should succeed");
@@ -586,4 +586,69 @@ fn status_reports_live_audio_levels_and_calibration() {
     assert_eq!(json["rx_gain_half_db"], 95);
     assert_eq!(json["tx_gain_half_db"], -127);
     assert_eq!(json["tone_active"], true);
+}
+
+#[test]
+fn status_json_includes_memory_and_cpu_telemetry() {
+    use intercom_adapter_http::{
+        config::JSON_BUFFER_SIZE, format_status_json_with_telemetry, CpuCoreLoad, CpuSnapshot,
+        MemoryRegion, MemorySnapshot,
+    };
+
+    let diag = test_diagnostics();
+    let mut out = [0u8; JSON_BUFFER_SIZE];
+
+    // 1. Single-core without PSRAM
+    let len = format_status_json_with_telemetry(
+        &diag,
+        MemorySnapshot {
+            internal: MemoryRegion {
+                free_bytes: 54160,
+                total_bytes: 122880,
+            },
+            psram: None,
+        },
+        Some(CpuSnapshot::from_cores(&[CpuCoreLoad {
+            id: 0,
+            load_pct: 37,
+        }])),
+        &mut out,
+    )
+    .expect("single-core telemetry fits JSON_BUFFER_SIZE");
+    let json: Value = serde_json::from_slice(&out[..len]).unwrap();
+    assert_eq!(json["memory"]["internal"]["free_bytes"], 54160);
+    assert_eq!(json["memory"]["internal"]["total_bytes"], 122880);
+    assert!(json["memory"]["psram"].is_null());
+    assert_eq!(json["cpu"], serde_json::json!({ "core_0": { "load_pct": 37 } }));
+
+    // 2. Dual-core with PSRAM
+    let len = format_status_json_with_telemetry(
+        &diag,
+        MemorySnapshot {
+            internal: MemoryRegion {
+                free_bytes: 54160,
+                total_bytes: 122880,
+            },
+            psram: Some(MemoryRegion {
+                free_bytes: 8197040,
+                total_bytes: 8388608,
+            }),
+        },
+        Some(CpuSnapshot::from_cores(&[
+            CpuCoreLoad { id: 0, load_pct: 24 },
+            CpuCoreLoad { id: 1, load_pct: 61 },
+        ])),
+        &mut out,
+    )
+    .expect("dual-core PSRAM telemetry fits JSON_BUFFER_SIZE");
+    let json: Value = serde_json::from_slice(&out[..len]).unwrap();
+    assert_eq!(json["memory"]["psram"]["free_bytes"], 8197040);
+    assert_eq!(json["memory"]["psram"]["total_bytes"], 8388608);
+    assert_eq!(
+        json["cpu"],
+        serde_json::json!({
+            "core_0": { "load_pct": 24 },
+            "core_1": { "load_pct": 61 }
+        })
+    );
 }

@@ -32,7 +32,7 @@ use {
         service::DiagnosticsService,
     },
     intercom_firmware::{
-        config,
+        config, cpu_load,
         hardware_info::FirmwareHardwareInfo,
         platform::{self, ActivePlatform, HardwareSecureRandom, PlatformDriver},
         reset::{self, FirmwarePersistenceReporter, FirmwareResetDriver},
@@ -152,6 +152,10 @@ async fn main(spawner: Spawner) {
     // ========================================================================
     // Wire board hardware + audio pipeline
     // ========================================================================
+
+    spawner.spawn(
+        cpu_load::sample_core_load(0).expect("Failed to create Core 0 CPU load sampler"),
+    );
 
     let mut hw = platform::wire_board(
         &mut platform,
@@ -296,6 +300,7 @@ async fn main(spawner: Spawner) {
             http_config,
         )
         .with_memory_info_provider(FirmwareHardwareInfo::memory_info)
+        .with_cpu_info_provider(cpu_load::cpu_info)
         .with_audio_media(HttpAudioMedia {
             rx_audio: &RX_AUDIO_CHANNEL,
             tx_audio: &TX_AUDIO_CHANNEL,

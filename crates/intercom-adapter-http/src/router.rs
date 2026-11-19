@@ -147,10 +147,60 @@ pub struct MemorySnapshot {
     pub psram: Option<MemoryRegion>,
 }
 
+/// Maximum number of CPU cores reported in a `CpuSnapshot`.
+pub const MAX_CPU_CORES: usize = 4;
+
+/// Utilization telemetry for a single CPU core.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct CpuCoreLoad {
+    pub id: u8,
+    pub load_pct: u8,
+}
+
+/// Fixed-capacity snapshot of per-core CPU load percentages.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CpuSnapshot {
+    core_count: u8,
+    cores: [CpuCoreLoad; MAX_CPU_CORES],
+}
+
+impl CpuSnapshot {
+    /// Construct a `CpuSnapshot` from up to `MAX_CPU_CORES` core readings.
+    pub fn from_cores(cores: &[CpuCoreLoad]) -> Self {
+        let mut buf = [CpuCoreLoad::default(); MAX_CPU_CORES];
+        let count = cores.len().min(MAX_CPU_CORES);
+        for (idx, core) in cores.iter().take(count).enumerate() {
+            buf[idx] = CpuCoreLoad {
+                id: core.id,
+                load_pct: core.load_pct.min(100),
+            };
+        }
+        Self {
+            core_count: count as u8,
+            cores: buf,
+        }
+    }
+
+    /// Return the active core load entries.
+    pub fn cores(&self) -> &[CpuCoreLoad] {
+        &self.cores[..usize::from(self.core_count)]
+    }
+}
+
 /// Formats status JSON with allocator-specific memory region statistics.
 pub fn format_status_json_with_memory<T: EcosystemType>(
     diag: &SystemDiagnostics<IntercomState, T>,
     memory: MemorySnapshot,
+    out: &mut [u8],
+) -> Result<usize, ()> {
+    format_status_json_with_telemetry(diag, memory, None, out)
+}
+
+/// Formats status JSON with allocator-specific memory region and optional CPU core telemetry.
+pub fn format_status_json_with_telemetry<T: EcosystemType>(
+    diag: &SystemDiagnostics<IntercomState, T>,
+    memory: MemorySnapshot,
+    cpu: Option<CpuSnapshot>,
     out: &mut [u8],
 ) -> Result<usize, ()> {
     let shared = shared_snapshot(diag);
@@ -159,7 +209,7 @@ pub fn format_status_json_with_memory<T: EcosystemType>(
         return Err(());
     }
 
-    let mut suffix = [0u8; 192];
+    let mut suffix = [0u8; 256];
     let mut writer = ByteWriter::new(&mut suffix);
     core::write!(
         writer,
@@ -171,13 +221,35 @@ pub fn format_status_json_with_memory<T: EcosystemType>(
     match memory.psram {
         Some(psram) => core::write!(
             writer,
-            "{{\"free_bytes\":{},\"total_bytes\":{}}}}}}}",
+            "{{\"free_bytes\":{},\"total_bytes\":{}}}}}",
             psram.free_bytes,
             psram.total_bytes
         ),
-        None => core::write!(writer, "null}}}}"),
+        None => core::write!(writer, "null}}"),
     }
     .map_err(|_| ())?;
+
+    if let Some(cpu) = cpu {
+        let cores = cpu.cores();
+        if !cores.is_empty() {
+            core::write!(writer, ",\"cpu\":{{").map_err(|_| ())?;
+            for (idx, core) in cores.iter().enumerate() {
+                if idx != 0 {
+                    core::write!(writer, ",").map_err(|_| ())?;
+                }
+                core::write!(
+                    writer,
+                    "\"core_{}\":{{\"load_pct\":{}}}",
+                    core.id,
+                    core.load_pct.min(100)
+                )
+                .map_err(|_| ())?;
+            }
+            core::write!(writer, "}}").map_err(|_| ())?;
+        }
+    }
+
+    core::write!(writer, "}}").map_err(|_| ())?;
 
     let suffix_len = writer.len();
     let final_len = base_len - 1 + suffix_len;

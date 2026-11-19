@@ -7,8 +7,8 @@ Multi-target ESP32 deployments (single-core ESP32-C6 without PSRAM vs. dual-core
 ## What Changes
 
 - **BREAKING:** Replace `free_heap_bytes`/`total_heap_bytes` in the diagnostics schema and `@embedded-device-foundation/dashboard-core` (`DiagnosticsTab` and `SystemDiagnosticsBase`) with a structured `memory` map of named pools (e.g., `internal` and optional `psram`), rendering one bar per non-null pool without legacy fallback.
-- Add per-core CPU load reporting (`cpu: { cores: [{ id, load_pct }, ...] }`) to `/api/status` in `intercom-adapter-http`, backed by lightweight Embassy per-core idle/busy window instrumentation in `intercom-firmware` (1 core on ESP32-C6, 2 cores on ESP32-S3/S31).
-- Render dynamic per-core CPU load bars in `DiagnosticsTab` when `status.cpu?.cores` is present.
+- Add per-core CPU load reporting (`cpu: { core_0: { load_pct }, ... }`) to `/api/status` in `intercom-adapter-http`, backed by lightweight Embassy per-core idle/busy window instrumentation in `intercom-firmware` (1 core on ESP32-C6, 2 cores on ESP32-S3/S31).
+- Render dynamic per-core CPU load bars in `DiagnosticsTab` when `status.cpu` is present.
 
 ## Capabilities
 

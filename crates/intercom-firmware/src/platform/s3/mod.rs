@@ -265,6 +265,10 @@ mod target_init {
                         sample_audio_stack_watermark()
                             .expect("Failed to create stack sampler"),
                     );
+                    core1_spawner.spawn(
+                        crate::cpu_load::sample_core_load(1)
+                            .expect("Failed to create Core 1 CPU load sampler"),
+                    );
                     worker(core1_spawner);
                 });
             });

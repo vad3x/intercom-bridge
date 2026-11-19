@@ -8,6 +8,7 @@
 extern crate std;
 
 pub mod config;
+pub mod cpu_load;
 pub mod devkit_led;
 pub mod disabled_ota;
 pub mod hardware_info;
