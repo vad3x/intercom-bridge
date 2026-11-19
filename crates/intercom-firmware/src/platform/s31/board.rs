@@ -12,9 +12,7 @@ use intercom_adapter_gpio::{
 use intercom_adapter_matter::MatterStackStorage;
 use intercom_adapter_webrtc::{
     dtls::{DtlsSrtpResourceCell, DtlsSrtpResources},
-    session::{
-        WebRtcMediaEngine, WebRtcMediaResources, WebRtcSessionConfig, WebRtcSessionHandle,
-    },
+    session::{WebRtcMediaEngine, WebRtcMediaResources, WebRtcSessionConfig, WebRtcSessionHandle},
     signaling::SignalingError,
 };
 use intercom_core::{
@@ -198,14 +196,13 @@ pub async fn wire_board(
 
     static INDICATOR: StaticCell<ActiveIndicator> = StaticCell::new();
     #[cfg(not(feature = "led-smartled"))]
-    let indicator: &'static ActiveIndicator =
-        &*INDICATOR.init(intercom_adapter_gpio::led::GpioLedDriver::new(peripherals.GPIO19));
+    let indicator: &'static ActiveIndicator = &*INDICATOR.init(
+        intercom_adapter_gpio::led::GpioLedDriver::new(peripherals.GPIO19),
+    );
     #[cfg(feature = "led-smartled")]
-    let indicator: &'static ActiveIndicator =
-        &*INDICATOR.init(crate::devkit_led::DevKitLedDriver::new(
-            peripherals.RMT,
-            peripherals.GPIO8,
-        ));
+    let indicator: &'static ActiveIndicator = &*INDICATOR.init(
+        crate::devkit_led::DevKitLedDriver::new(peripherals.RMT, peripherals.GPIO8),
+    );
 
     #[cfg(not(feature = "led-smartled"))]
     let boot_button = GpioBootButtonDriver::new(

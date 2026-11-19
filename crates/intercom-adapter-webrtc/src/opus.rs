@@ -476,7 +476,12 @@ mod tests {
 
         let mut encoded = [0u8; MAX_OPUS_PACKET_BYTES];
         let len = codec
-            .encode_listen_frame(&PcmFrame { samples: [400; 320] }, &mut encoded)
+            .encode_listen_frame(
+                &PcmFrame {
+                    samples: [400; 320],
+                },
+                &mut encoded,
+            )
             .expect("encode 16 kHz frame");
         assert!(len > 0);
     }

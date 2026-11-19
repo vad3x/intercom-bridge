@@ -17,8 +17,8 @@ mod backend {
     use esp_hal::time::Rate;
     use esp_hal_smartled::{buffer_size, color_order, RmtSmartLeds, WS2812B_TIMING};
     use log::info;
-    pub use smart_leds::RGB8;
     use smart_leds::SmartLedsWrite;
+    pub use smart_leds::RGB8;
 
     pub struct LedSink(
         RefCell<

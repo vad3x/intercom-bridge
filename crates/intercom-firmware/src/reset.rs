@@ -186,12 +186,7 @@ impl SystemResetDriver for FirmwareResetDriver {
 }
 
 /// Initialize persistence and load initial door duration and audio gains.
-pub fn init_persistence() -> (
-    impl KvBlobStore,
-    u32,
-    RxPgaGain,
-    TxDacGain,
-) {
+pub fn init_persistence() -> (impl KvBlobStore, u32, RxPgaGain, TxDacGain) {
     kv_backend::init_persistence()
 }
 

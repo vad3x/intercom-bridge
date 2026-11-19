@@ -815,10 +815,7 @@ impl<'a> WebRtcMediaEngine<'a> {
                     })?;
                     srtp = Some(SrtpSession::from_dtls_keys(keys, config.local_dtls_role));
                     self.benchmark_stats.observe_dtls_handshake(
-                        session_start
-                            .elapsed()
-                            .as_millis()
-                            .min(u64::from(u32::MAX)) as u32,
+                        session_start.elapsed().as_millis().min(u64::from(u32::MAX)) as u32,
                     );
                     log::info!("WebRTC: DTLS fingerprint verified; SRTP ready");
                 } else if dtls.peer_cert_sha256().is_some() {
@@ -1016,10 +1013,7 @@ impl<'a> WebRtcMediaEngine<'a> {
                             .max(send_start.elapsed().as_micros().min(u64::from(u32::MAX)) as u32);
                         if !first_audio_packet_logged {
                             self.benchmark_stats.observe_first_srtp_packet(
-                                session_start
-                                    .elapsed()
-                                    .as_millis()
-                                    .min(u64::from(u32::MAX)) as u32,
+                                session_start.elapsed().as_millis().min(u64::from(u32::MAX)) as u32,
                             );
                             log::info!(
                                 "WebRTC: first outbound SRTP audio packet sent ({} bytes)",
@@ -1152,8 +1146,9 @@ fn accept_srtcp_receiver_report(
 fn log_dtls_failure(dtls: &DtlsSrtpEngine<'_>, error: DtlsError) -> WebRtcMediaError {
     let (export_called, export_type, export_prf, export_error) = dtls.export_diagnostic();
     let (debug_level, debug_line, debug_message, debug_length) = dtls.debug_diagnostic();
-    let debug_message = core::str::from_utf8(&debug_message[..debug_length.min(debug_message.len())])
-        .unwrap_or("<invalid UTF-8>");
+    let debug_message =
+        core::str::from_utf8(&debug_message[..debug_length.min(debug_message.len())])
+            .unwrap_or("<invalid UTF-8>");
     log::warn!(
         "WebRTC DTLS handshake step failed: {:?}; key_export called={} type={} prf={} error={}; mbedtls level={} line={} message={}",
         error,
@@ -1983,12 +1978,21 @@ mod tests {
         server.push_inbound_datagram(&wire[..len]).expect("srv ch1");
 
         let mut sent = alloc::vec::Vec::new();
-        super::drain_dtls_outbound::<crate::dtls::DtlsError>(&mut server, 0, &mut wire, |datagram| {
-            sent.push(datagram.to_vec());
-            Ok(())
-        })
+        super::drain_dtls_outbound::<crate::dtls::DtlsError>(
+            &mut server,
+            0,
+            &mut wire,
+            |datagram| {
+                sent.push(datagram.to_vec());
+                Ok(())
+            },
+        )
         .expect("drain");
-        assert!(sent.len() >= 2, "expected >= 2 datagrams, got {}", sent.len());
+        assert!(
+            sent.len() >= 2,
+            "expected >= 2 datagrams, got {}",
+            sent.len()
+        );
     }
 
     #[test]

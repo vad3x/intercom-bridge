@@ -723,20 +723,28 @@ mod tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut gen_resources = DtlsSrtpResources::new();
-        let identity =
-            super::DtlsIdentity::generate([0x42; 32], &mut gen_resources).expect("generate identity");
+        let identity = super::DtlsIdentity::generate([0x42; 32], &mut gen_resources)
+            .expect("generate identity");
         assert!(!identity.cert_der().is_empty());
         assert!(!identity.key_der().is_empty());
         assert_ne!(identity.fingerprint_sha256(), [0u8; 32]);
 
         let mut server_resources = DtlsSrtpResources::new();
         let mut client_resources = DtlsSrtpResources::new();
-        let mut server =
-            DtlsSrtpEngine::new_with_identity(DtlsRole::Server, [0x42; 32], &identity, &mut server_resources)
-                .expect("server init with identity");
-        let mut client =
-            DtlsSrtpEngine::new_with_identity(DtlsRole::Client, [0x99; 32], &identity, &mut client_resources)
-                .expect("client init with identity");
+        let mut server = DtlsSrtpEngine::new_with_identity(
+            DtlsRole::Server,
+            [0x42; 32],
+            &identity,
+            &mut server_resources,
+        )
+        .expect("server init with identity");
+        let mut client = DtlsSrtpEngine::new_with_identity(
+            DtlsRole::Client,
+            [0x99; 32],
+            &identity,
+            &mut client_resources,
+        )
+        .expect("client init with identity");
         assert_eq!(server.local_cert_sha256(), identity.fingerprint_sha256());
         assert_eq!(client.local_cert_sha256(), identity.fingerprint_sha256());
 
