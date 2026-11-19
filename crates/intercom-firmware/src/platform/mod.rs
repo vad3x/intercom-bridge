@@ -78,7 +78,10 @@ pub trait PlatformDriver: Sized {
 mod target {
     #[cfg(all(feature = "esp32c6", not(feature = "esp32s31")))]
     pub use super::c6::board as active_board;
-    #[cfg(all(feature = "esp32s3", not(any(feature = "esp32c6", feature = "esp32s31"))))]
+    #[cfg(all(
+        feature = "esp32s3",
+        not(any(feature = "esp32c6", feature = "esp32s31"))
+    ))]
     pub use super::s3::board as active_board;
     #[cfg(all(feature = "esp32s31", not(feature = "esp32c6")))]
     pub use super::s31::board as active_board;
@@ -173,7 +176,9 @@ mod target {
         }
         #[cfg(feature = "ota-disabled")]
         {
-            log::info!("OTA rollback watchdog check skipped (OTA updates disabled on this profile)");
+            log::info!(
+                "OTA rollback watchdog check skipped (OTA updates disabled on this profile)"
+            );
         }
     }
 
@@ -240,13 +245,8 @@ mod target {
                     | rs_matter_embassy::wireless::esp::Protocol::AX,
             ),
         );
-        let wifi = rs_matter_embassy::wireless::EmbassyWifi::new(
-            radio,
-            weak_rand,
-            true,
-            stack,
-        )
-        .with_hostname(hostname);
+        let wifi = rs_matter_embassy::wireless::EmbassyWifi::new(radio, weak_rand, true, stack)
+            .with_hostname(hostname);
 
         match intercom_adapter_matter::commissioning::select_wireless_boot_mode(is_commissioned) {
             intercom_adapter_matter::commissioning::WirelessBootMode::OperationalWifiOnly => {
@@ -295,7 +295,8 @@ mod target {
                     if let Some(queue_drops) = drop_window.record(queue_dropped) {
                         log::debug!(
                             "Test audio frames=50 simulated_overruns={} queue_drops={}",
-                            simulated_dma_overruns, queue_drops,
+                            simulated_dma_overruns,
+                            queue_drops,
                         );
                         simulated_dma_overruns = 0;
                     }

@@ -116,9 +116,8 @@ async fn main(spawner: Spawner) {
         .fill(&mut dtls_seed)
         .expect("WebRTC DTLS seed RNG");
     let dtls_resources = platform::allocate_dtls_srtp_resources();
-    let dtls_identity = WEBRTC_DTLS_IDENTITY.init(
-        DtlsIdentity::generate(dtls_seed, dtls_resources).expect("WebRTC DTLS identity"),
-    );
+    let dtls_identity = WEBRTC_DTLS_IDENTITY
+        .init(DtlsIdentity::generate(dtls_seed, dtls_resources).expect("WebRTC DTLS identity"));
     let dtls_resource_cell =
         WEBRTC_DTLS_RESOURCE_CELL.init(DtlsSrtpResourceCell::new(dtls_resources));
     let webrtc_resources = platform::allocate_webrtc_media_resources();
@@ -143,8 +142,7 @@ async fn main(spawner: Spawner) {
     // Persistence & initial configuration
     // ========================================================================
 
-    let (store, initial_duration_sec, initial_rx_gain, initial_tx_gain) =
-        reset::init_persistence();
+    let (store, initial_duration_sec, initial_rx_gain, initial_tx_gain) = reset::init_persistence();
     intercom_core::domain::diagnostics::update_audio_gains(initial_rx_gain, initial_tx_gain);
     info!("Loaded door unlock duration: {}s", initial_duration_sec);
     intercom_core::domain::diagnostics::update_door_unlock_duration(initial_duration_sec);
@@ -153,9 +151,7 @@ async fn main(spawner: Spawner) {
     // Wire board hardware + audio pipeline
     // ========================================================================
 
-    spawner.spawn(
-        cpu_load::sample_core_load(0).expect("Failed to create Core 0 CPU load sampler"),
-    );
+    spawner.spawn(cpu_load::sample_core_load(0).expect("Failed to create Core 0 CPU load sampler"));
 
     let mut hw = platform::wire_board(
         &mut platform,

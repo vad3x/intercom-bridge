@@ -137,6 +137,12 @@ mod tests {
         set_core_load_pct(0, 42);
         let snap = cpu_info();
         assert_eq!(snap.cores().len(), active_core_count());
-        assert_eq!(snap.cores()[0], CpuCoreLoad { id: 0, load_pct: 42 });
+        assert_eq!(
+            snap.cores()[0],
+            CpuCoreLoad {
+                id: 0,
+                load_pct: 42
+            }
+        );
     }
 }

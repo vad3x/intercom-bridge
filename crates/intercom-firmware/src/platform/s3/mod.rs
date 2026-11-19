@@ -262,8 +262,7 @@ mod target_init {
                 let executor = CORE1_EXECUTOR.init(esp_rtos::embassy::Executor::new());
                 executor.run(|core1_spawner| {
                     core1_spawner.spawn(
-                        sample_audio_stack_watermark()
-                            .expect("Failed to create stack sampler"),
+                        sample_audio_stack_watermark().expect("Failed to create stack sampler"),
                     );
                     core1_spawner.spawn(
                         crate::cpu_load::sample_core_load(1)

@@ -619,7 +619,10 @@ fn status_json_includes_memory_and_cpu_telemetry() {
     assert_eq!(json["memory"]["internal"]["free_bytes"], 54160);
     assert_eq!(json["memory"]["internal"]["total_bytes"], 122880);
     assert!(json["memory"]["psram"].is_null());
-    assert_eq!(json["cpu"], serde_json::json!({ "core_0": { "load_pct": 37 } }));
+    assert_eq!(
+        json["cpu"],
+        serde_json::json!({ "core_0": { "load_pct": 37 } })
+    );
 
     // 2. Dual-core with PSRAM
     let len = format_status_json_with_telemetry(
@@ -635,8 +638,14 @@ fn status_json_includes_memory_and_cpu_telemetry() {
             }),
         },
         Some(CpuSnapshot::from_cores(&[
-            CpuCoreLoad { id: 0, load_pct: 24 },
-            CpuCoreLoad { id: 1, load_pct: 61 },
+            CpuCoreLoad {
+                id: 0,
+                load_pct: 24,
+            },
+            CpuCoreLoad {
+                id: 1,
+                load_pct: 61,
+            },
         ])),
         &mut out,
     )
