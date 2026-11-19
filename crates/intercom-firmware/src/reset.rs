@@ -7,17 +7,8 @@ use intercom_core::domain::policy::{RxPgaGain, TxDacGain};
 
 use intercom_core::ports::{IntercomReporter, LockState, ResetScope, SystemResetDriver};
 use log::info;
-#[cfg(target_os = "none")]
-use log::warn;
 use rs_matter::error::Error;
 use rs_matter::persist::{KvBlobStore, NETWORKS_KEY};
-
-#[cfg(target_os = "none")]
-#[cfg(not(feature = "dummy-persist"))]
-use intercom_adapter_gpio::flash::EspFlash;
-#[cfg(target_os = "none")]
-#[cfg(not(feature = "dummy-persist"))]
-use rs_matter_embassy::persist::SeqMapKvBlobStore;
 
 /// Partitioned KV blob store routing system settings (Wi-Fi networks, door duration, audio gains)
 /// to `system_store` and all Matter fabrics/credentials to `matter_store`.
@@ -102,29 +93,7 @@ pub fn save_audio_gains<S: KvBlobStore>(
 
 /// Persist gain changes to system flash (simulated for host and dummy persistence).
 pub fn persist_audio_gains(rx: RxPgaGain, tx: TxDacGain) {
-    #[cfg(target_os = "none")]
-    #[cfg(not(feature = "dummy-persist"))]
-    {
-        let system_flash = EspFlash::new(crate::config::SYSTEM_KVS_RANGE);
-        let mut store = SeqMapKvBlobStore::new(system_flash, crate::config::SYSTEM_KVS_RANGE);
-        if save_audio_gains(&mut store, rx, tx).is_err() {
-            warn!("Failed to persist audio gains to system_kvs");
-        } else {
-            info!(
-                "Persisted audio gains to system_kvs: rx_half_db={}, tx_half_db={}",
-                rx.half_db(),
-                tx.half_db()
-            );
-        }
-    }
-    #[cfg(any(not(target_os = "none"), feature = "dummy-persist"))]
-    {
-        info!(
-            "Persisted audio gains (simulated): rx_half_db={}, tx_half_db={}",
-            rx.half_db(),
-            tx.half_db()
-        );
-    }
+    kv_backend::persist_audio_gains(rx, tx);
 }
 
 /// Load the configured door unlock duration in seconds from the persistent KV store.
@@ -160,21 +129,7 @@ pub fn save_door_duration<S: KvBlobStore>(store: &mut S, duration_sec: u32) -> R
 
 /// Persist door duration to the `system_kvs` partition in flash.
 pub fn persist_door_duration(duration_sec: u32) {
-    #[cfg(target_os = "none")]
-    #[cfg(not(feature = "dummy-persist"))]
-    {
-        let system_flash = EspFlash::new(crate::config::SYSTEM_KVS_RANGE);
-        let mut store = SeqMapKvBlobStore::new(system_flash, crate::config::SYSTEM_KVS_RANGE);
-        if let Err(_) = save_door_duration(&mut store, duration_sec) {
-            warn!("Failed to persist door duration to system_kvs");
-        } else {
-            info!("Persisted door duration to system_kvs: {}s", duration_sec);
-        }
-    }
-    #[cfg(any(not(target_os = "none"), feature = "dummy-persist"))]
-    {
-        info!("Persisted door duration (simulated): {}s", duration_sec);
-    }
+    kv_backend::persist_door_duration(duration_sec);
 }
 
 /// Outbound reporter that synchronizes runtime lock and duration state with telemetry
@@ -213,48 +168,7 @@ impl IntercomReporter for FirmwarePersistenceReporter {
     }
 }
 
-/// Immediately clear every relay output for the selected chip's board profile.
-///
-/// Keep this independent of HAL ownership so it remains available during panic
-/// and reset handling. `target_os = "none"` excludes the MMIO accesses from host
-/// tests; the chip feature selects the matching GPIO register block and pins.
-#[inline(always)]
-pub fn force_bus_relays_low() {
-    #[cfg(all(target_os = "none", feature = "esp32c6"))]
-    // SAFETY: ESP32-C6 GPIO.out_w1tc is the aligned write-one-to-clear register
-    // at this address. The mask matches the C6 PCB's relay output pins.
-    unsafe {
-        const GPIO_OUT_W1TC_REG: *mut u32 = 0x6009_100C as *mut u32;
-        const BUS_RELAYS_GPIO_MASK: u32 = (1 << 7) | (1 << 10) | (1 << 18);
-        core::ptr::write_volatile(GPIO_OUT_W1TC_REG, BUS_RELAYS_GPIO_MASK);
-    }
-
-    #[cfg(all(target_os = "none", feature = "esp32s31"))]
-    // SAFETY: ESP32-S31 GPIO.out_w1tc is the aligned write-one-to-clear register
-    // at this address. The mask matches the S31 board profile's relay pins.
-    unsafe {
-        const GPIO_OUT_W1TC_REG: *mut u32 = 0x2058_300C as *mut u32;
-        const BUS_RELAYS_GPIO_MASK: u32 = (1 << 7) | (1 << 10) | (1 << 18);
-        core::ptr::write_volatile(GPIO_OUT_W1TC_REG, BUS_RELAYS_GPIO_MASK);
-    }
-
-    #[cfg(all(target_os = "none", feature = "esp32s3"))]
-    // SAFETY: ESP32-S3 GPIO0-31 and GPIO32-53 clear registers are aligned,
-    // write-one-to-clear MMIO registers at these addresses. The masks derive
-    // from the role-based S3 relay pins and only clear those outputs.
-    unsafe {
-        let board = crate::platform::s3::BoardPins::SUPPORTED;
-        let masks = crate::platform::s3::GpioClearMasks::from(crate::platform::s3::RelayPins {
-            listen: board.bus_listen,
-            talk: board.bus_talk,
-            door: board.bus_door,
-        });
-        const GPIO_OUT_W1TC_REG: *mut u32 = 0x6000_400C as *mut u32;
-        const GPIO_OUT1_W1TC_REG: *mut u32 = 0x6000_4018 as *mut u32;
-        core::ptr::write_volatile(GPIO_OUT_W1TC_REG, masks.gpio_low);
-        core::ptr::write_volatile(GPIO_OUT1_W1TC_REG, masks.gpio_high);
-    }
-}
+pub use crate::platform::force_bus_relays_low;
 
 /// Outbound reset driver implementing persistent credential erasure and hardware reboot.
 pub struct FirmwareResetDriver;
@@ -262,77 +176,142 @@ pub struct FirmwareResetDriver;
 impl SystemResetDriver for FirmwareResetDriver {
     fn erase_credentials(&self, scope: ResetScope) {
         force_bus_relays_low();
-        #[cfg(target_os = "none")]
-        {
-            #[cfg(not(feature = "dummy-persist"))]
-            match scope {
-                ResetScope::Ecosystem => {
-                    erase_flash_range(
-                        &crate::config::MATTER_KVS_RANGE,
-                        "Matter KVS (ecosystem only)",
-                    );
-                }
-                ResetScope::Factory => {
-                    erase_flash_range(&crate::config::MATTER_KVS_RANGE, "Matter KVS");
-                    erase_flash_range(&crate::config::SYSTEM_KVS_RANGE, "System KVS");
-                }
-            }
-            #[cfg(feature = "dummy-persist")]
-            info!("Reset {:?} skipped (dummy-persist)", scope);
-        }
-        #[cfg(not(target_os = "none"))]
-        info!("Reset {:?} simulated on host", scope);
+        kv_backend::erase_scope(scope);
     }
 
     fn reboot(&self) -> ! {
         force_bus_relays_low();
-        #[cfg(target_os = "none")]
-        {
-            esp_hal::system::software_reset();
-        }
-        #[cfg(not(target_os = "none"))]
-        {
-            panic!("Host reboot requested");
-        }
+        crate::platform::software_reset();
     }
 }
 
-/// Create the partitioned persistence layer spanning Matter KVS and System KVS.
-#[cfg(target_os = "none")]
-#[cfg(not(feature = "dummy-persist"))]
-pub fn create_kv_blob_store(
-    matter_range: core::ops::Range<u32>,
-    system_range: core::ops::Range<u32>,
-) -> PartitionedKvBlobStore<SeqMapKvBlobStore<EspFlash>, SeqMapKvBlobStore<EspFlash>> {
-    let matter_flash = EspFlash::new(matter_range.clone());
-    let system_flash = EspFlash::new(system_range.clone());
-    PartitionedKvBlobStore::new(
-        SeqMapKvBlobStore::new(matter_flash, matter_range),
-        SeqMapKvBlobStore::new(system_flash, system_range),
-    )
+/// Initialize persistence and load initial door duration and audio gains.
+pub fn init_persistence() -> (
+    impl KvBlobStore,
+    u32,
+    RxPgaGain,
+    TxDacGain,
+) {
+    kv_backend::init_persistence()
 }
 
-/// Helper function to erase all 4 KiB sectors in a given flash range.
-#[cfg(target_os = "none")]
-#[cfg(not(feature = "dummy-persist"))]
-pub fn erase_flash_range(range: &core::ops::Range<u32>, label: &str) {
-    const SECTOR_SIZE: u32 = 4096;
+#[cfg(all(target_os = "none", not(feature = "dummy-persist")))]
+mod kv_backend {
+    use super::*;
+    use intercom_adapter_gpio::flash::EspFlash;
+    use log::warn;
+    use rs_matter_embassy::persist::SeqMapKvBlobStore;
 
-    info!(
-        "Erasing {}: 0x{:x}..0x{:x} ({} sectors)",
-        label,
-        range.start,
-        range.end,
-        (range.end - range.start) / SECTOR_SIZE
-    );
-
-    let mut flash = EspFlash::new(range.clone());
-    if let Err(err) = flash.erase_range_blocking() {
-        warn!("Flash erase for {} failed: {:?}", label, err);
-        return;
+    pub fn init_persistence() -> (
+        PartitionedKvBlobStore<SeqMapKvBlobStore<EspFlash>, SeqMapKvBlobStore<EspFlash>>,
+        u32,
+        RxPgaGain,
+        TxDacGain,
+    ) {
+        let matter_flash = EspFlash::new(crate::config::MATTER_KVS_RANGE.clone());
+        let system_flash = EspFlash::new(crate::config::SYSTEM_KVS_RANGE.clone());
+        let mut store = PartitionedKvBlobStore::new(
+            SeqMapKvBlobStore::new(matter_flash, crate::config::MATTER_KVS_RANGE),
+            SeqMapKvBlobStore::new(system_flash, crate::config::SYSTEM_KVS_RANGE),
+        );
+        let duration = load_door_duration(&mut store);
+        let (rx, tx) = load_audio_gains(&mut store);
+        (store, duration, rx, tx)
     }
 
-    info!("{} erased successfully", label);
+    pub fn persist_audio_gains(rx: RxPgaGain, tx: TxDacGain) {
+        let system_flash = EspFlash::new(crate::config::SYSTEM_KVS_RANGE);
+        let mut store = SeqMapKvBlobStore::new(system_flash, crate::config::SYSTEM_KVS_RANGE);
+        if save_audio_gains(&mut store, rx, tx).is_err() {
+            warn!("Failed to persist audio gains to system_kvs");
+        } else {
+            info!(
+                "Persisted audio gains to system_kvs: rx_half_db={}, tx_half_db={}",
+                rx.half_db(),
+                tx.half_db()
+            );
+        }
+    }
+
+    pub fn persist_door_duration(duration_sec: u32) {
+        let system_flash = EspFlash::new(crate::config::SYSTEM_KVS_RANGE);
+        let mut store = SeqMapKvBlobStore::new(system_flash, crate::config::SYSTEM_KVS_RANGE);
+        if save_door_duration(&mut store, duration_sec).is_err() {
+            warn!("Failed to persist door duration to system_kvs");
+        } else {
+            info!("Persisted door duration to system_kvs: {}s", duration_sec);
+        }
+    }
+
+    pub fn erase_scope(scope: ResetScope) {
+        match scope {
+            ResetScope::Ecosystem => {
+                erase_flash_range(
+                    &crate::config::MATTER_KVS_RANGE,
+                    "Matter KVS (ecosystem only)",
+                );
+            }
+            ResetScope::Factory => {
+                erase_flash_range(&crate::config::MATTER_KVS_RANGE, "Matter KVS");
+                erase_flash_range(&crate::config::SYSTEM_KVS_RANGE, "System KVS");
+            }
+        }
+    }
+
+    fn erase_flash_range(range: &core::ops::Range<u32>, label: &str) {
+        const SECTOR_SIZE: u32 = 4096;
+
+        info!(
+            "Erasing {}: 0x{:x}..0x{:x} ({} sectors)",
+            label,
+            range.start,
+            range.end,
+            (range.end - range.start) / SECTOR_SIZE
+        );
+
+        let mut flash = EspFlash::new(range.clone());
+        if let Err(err) = flash.erase_range_blocking() {
+            warn!("Flash erase for {} failed: {:?}", label, err);
+            return;
+        }
+
+        info!("{} erased successfully", label);
+    }
+}
+
+#[cfg(not(all(target_os = "none", not(feature = "dummy-persist"))))]
+mod kv_backend {
+    use super::*;
+
+    pub fn init_persistence() -> (
+        rs_matter::persist::DummyKvBlobStore,
+        u32,
+        RxPgaGain,
+        TxDacGain,
+    ) {
+        (
+            rs_matter::persist::DummyKvBlobStore,
+            intercom_core::config::DEFAULT_DOOR_UNLOCK_DURATION_SEC,
+            RxPgaGain::default(),
+            TxDacGain::default(),
+        )
+    }
+
+    pub fn persist_audio_gains(rx: RxPgaGain, tx: TxDacGain) {
+        info!(
+            "Persisted audio gains (simulated): rx_half_db={}, tx_half_db={}",
+            rx.half_db(),
+            tx.half_db()
+        );
+    }
+
+    pub fn persist_door_duration(duration_sec: u32) {
+        info!("Persisted door duration (simulated): {}s", duration_sec);
+    }
+
+    pub fn erase_scope(scope: ResetScope) {
+        info!("Reset {:?} simulated/skipped", scope);
+    }
 }
 
 fn is_system_key(key: u16) -> bool {

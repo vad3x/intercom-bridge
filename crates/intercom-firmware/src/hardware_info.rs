@@ -1,10 +1,8 @@
-//! Concrete hardware information provider for ESP32-C6.
+//! Concrete hardware information provider.
 //!
 //! Queries runtime heap, bootloader active/valid slot, efuse MAC, timers,
-//! and Wi-Fi RSSI via ESP-IDF / esp-radio runtime APIs.
+//! and Wi-Fi diagnostics via platform and ESP-IDF / esp-radio APIs.
 
-#[cfg(all(target_os = "none", feature = "esp32s3"))]
-use crate::platform::s3;
 use core::cell::RefCell;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::blocking_mutex::Mutex;
@@ -59,51 +57,13 @@ pub struct FirmwareHardwareInfo;
 impl FirmwareHardwareInfo {
     /// Return live allocator usage split by internal RAM and external PSRAM.
     pub fn memory_info() -> intercom_adapter_http::MemorySnapshot {
-        #[cfg(target_os = "none")]
-        {
-            let mut internal = intercom_adapter_http::MemoryRegion {
-                free_bytes: 0,
-                total_bytes: 0,
-            };
-            let mut psram = None;
-            for region in esp_alloc::HEAP.stats().region_stats.into_iter().flatten() {
-                let stats = intercom_adapter_http::MemoryRegion {
-                    free_bytes: region.free,
-                    total_bytes: region.size,
-                };
-                if region
-                    .capabilities
-                    .contains(esp_alloc::MemoryCapability::External)
-                {
-                    psram = Some(stats);
-                } else if region
-                    .capabilities
-                    .contains(esp_alloc::MemoryCapability::Internal)
-                {
-                    internal.free_bytes += stats.free_bytes;
-                    internal.total_bytes += stats.total_bytes;
-                }
-            }
-
-            intercom_adapter_http::MemorySnapshot { internal, psram }
-        }
-        #[cfg(not(target_os = "none"))]
-        intercom_adapter_http::MemorySnapshot {
-            internal: intercom_adapter_http::MemoryRegion {
-                free_bytes: 0,
-                total_bytes: 0,
-            },
-            psram: None,
-        }
+        target_impl::memory_info()
     }
 
-    /// Record one split-heap sample and the S3 Core 1 stack watermark.
+    /// Record one split-heap sample and the platform Core 1 stack watermark (0 on single-core).
     pub fn record_media_resource_sample() -> MediaResourceLowWater {
         let memory = Self::memory_info();
-        #[cfg(all(target_os = "none", feature = "esp32s3"))]
-        let audio_stack_free = s3::audio_stack_free_low_water_bytes();
-        #[cfg(not(all(target_os = "none", feature = "esp32s3")))]
-        let audio_stack_free = 0;
+        let audio_stack_free = crate::platform::audio_stack_free_low_water_bytes();
 
         MEDIA_RESOURCE_LOW_WATER.lock(|measurement| {
             let mut measurement = measurement.borrow_mut();
@@ -127,14 +87,7 @@ impl HardwareInfoDriver for FirmwareHardwareInfo {
     }
 
     fn free_heap_bytes(&self) -> usize {
-        #[cfg(target_os = "none")]
-        {
-            esp_alloc::HEAP.free()
-        }
-        #[cfg(not(target_os = "none"))]
-        {
-            0
-        }
+        target_impl::free_heap_bytes()
     }
 
     fn total_heap_bytes(&self) -> usize {
@@ -142,157 +95,27 @@ impl HardwareInfoDriver for FirmwareHardwareInfo {
     }
 
     fn wifi_ssid(&self) -> Option<WifiSsid> {
-        #[cfg(all(target_os = "none", feature = "esp32c6"))]
-        {
-            use esp_wifi_sys_esp32c6::include::{
-                esp_wifi_get_config, esp_wifi_sta_get_ap_info, wifi_ap_record_t, wifi_config_t,
-                wifi_interface_t_WIFI_IF_STA, ESP_OK,
-            };
-
-            // Query active AP record first
-            let mut record = core::mem::MaybeUninit::<wifi_ap_record_t>::uninit();
-            if unsafe { esp_wifi_sta_get_ap_info(record.as_mut_ptr()) } == ESP_OK as i32 {
-                let record = unsafe { record.assume_init() };
-                let len = record
-                    .ssid
-                    .iter()
-                    .position(|&b| b == 0)
-                    .unwrap_or(record.ssid.len());
-                if len > 0 {
-                    if let Some(ssid) = WifiSsid::from_bytes(&record.ssid[..len]) {
-                        return Some(ssid);
-                    }
-                }
-            }
-
-            // Fallback to configured station SSID
-            let mut cfg = core::mem::MaybeUninit::<wifi_config_t>::uninit();
-            if unsafe { esp_wifi_get_config(wifi_interface_t_WIFI_IF_STA, cfg.as_mut_ptr()) }
-                == ESP_OK as i32
-            {
-                let cfg = unsafe { cfg.assume_init() };
-                let ssid_bytes = unsafe { cfg.sta.ssid };
-                let len = ssid_bytes
-                    .iter()
-                    .position(|&b| b == 0)
-                    .unwrap_or(ssid_bytes.len());
-                if len > 0 {
-                    if let Some(ssid) = WifiSsid::from_bytes(&ssid_bytes[..len]) {
-                        return Some(ssid);
-                    }
-                }
-            }
-        }
-        #[cfg(all(target_os = "none", feature = "esp32s3"))]
-        {
-            use esp_wifi_sys_esp32s3::include::{
-                esp_wifi_get_config, esp_wifi_sta_get_ap_info, wifi_ap_record_t, wifi_config_t,
-                wifi_interface_t_WIFI_IF_STA, ESP_OK,
-            };
-
-            let mut record = core::mem::MaybeUninit::<wifi_ap_record_t>::uninit();
-            if unsafe { esp_wifi_sta_get_ap_info(record.as_mut_ptr()) } == ESP_OK as i32 {
-                let record = unsafe { record.assume_init() };
-                let len = record
-                    .ssid
-                    .iter()
-                    .position(|&byte| byte == 0)
-                    .unwrap_or(record.ssid.len());
-                if len > 0 {
-                    if let Some(ssid) = WifiSsid::from_bytes(&record.ssid[..len]) {
-                        return Some(ssid);
-                    }
-                }
-            }
-
-            let mut cfg = core::mem::MaybeUninit::<wifi_config_t>::uninit();
-            if unsafe { esp_wifi_get_config(wifi_interface_t_WIFI_IF_STA, cfg.as_mut_ptr()) }
-                == ESP_OK as i32
-            {
-                let cfg = unsafe { cfg.assume_init() };
-                let ssid_bytes = unsafe { cfg.sta.ssid };
-                let len = ssid_bytes
-                    .iter()
-                    .position(|&byte| byte == 0)
-                    .unwrap_or(ssid_bytes.len());
-                if len > 0 {
-                    if let Some(ssid) = WifiSsid::from_bytes(&ssid_bytes[..len]) {
-                        return Some(ssid);
-                    }
-                }
-            }
-        }
-        None
+        crate::platform::wifi_ssid()
     }
 
     fn wifi_rssi(&self) -> Option<i8> {
-        #[cfg(all(target_os = "none", feature = "esp32c6"))]
-        {
-            let mut rssi: i32 = 0;
-            if unsafe { esp_wifi_sta_get_rssi(&mut rssi) } == 0 {
-                return Some(rssi as i8);
-            }
-        }
-        #[cfg(all(target_os = "none", feature = "esp32s3"))]
-        {
-            let mut rssi: i32 = 0;
-            if unsafe { esp_wifi_sta_get_rssi_s3(&mut rssi) } == 0 {
-                return Some(rssi as i8);
-            }
-        }
-        None
+        crate::platform::wifi_rssi()
     }
 
     fn ip_address(&self) -> Option<[u8; 4]> {
-        #[cfg(target_os = "none")]
-        {
-            let stack = rs_matter_embassy::enet::global_stack()?;
-            let config = stack.config_v4()?;
-            Some(config.address.address().octets())
-        }
-        #[cfg(not(target_os = "none"))]
-        {
-            None
-        }
+        target_impl::ip_address()
     }
 
     fn mac_address(&self) -> [u8; 6] {
-        #[cfg(target_os = "none")]
-        {
-            let mac = esp_hal::efuse::base_mac_address();
-            mac.as_bytes().try_into().unwrap_or([0u8; 6])
-        }
-        #[cfg(not(target_os = "none"))]
-        {
-            [0u8; 6]
-        }
+        target_impl::mac_address()
     }
 
     fn active_slot(&self) -> &'static str {
-        #[cfg(target_os = "none")]
-        {
-            ensure_bootloader_cached();
-            match SLOT_CACHE.load(core::sync::atomic::Ordering::Relaxed) {
-                2 => "ota_1",
-                _ => "ota_0",
-            }
-        }
-        #[cfg(not(target_os = "none"))]
-        {
-            "ota_0"
-        }
+        target_impl::active_slot()
     }
 
     fn is_slot_valid(&self) -> bool {
-        #[cfg(target_os = "none")]
-        {
-            ensure_bootloader_cached();
-            VALID_CACHE.load(core::sync::atomic::Ordering::Relaxed) == 1
-        }
-        #[cfg(not(target_os = "none"))]
-        {
-            true
-        }
+        target_impl::is_slot_valid()
     }
 
     fn firmware_version(&self) -> &'static str {
@@ -309,45 +132,124 @@ impl HardwareInfoDriver for FirmwareHardwareInfo {
 }
 
 #[cfg(target_os = "none")]
-static SLOT_CACHE: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
-#[cfg(target_os = "none")]
-static VALID_CACHE: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+mod target_impl {
+    use core::sync::atomic::{AtomicU8, Ordering};
 
-#[cfg(target_os = "none")]
-fn ensure_bootloader_cached() {
-    if SLOT_CACHE.load(core::sync::atomic::Ordering::Relaxed) != 0 {
-        return;
-    }
-    match edf_ota::OtaBootloader::load() {
-        Ok(bl) => {
-            let slot_val = match bl.get_running_slot() {
-                edf_ota::Slot::Ota0 => 1,
-                edf_ota::Slot::Ota1 => 2,
+    static SLOT_CACHE: AtomicU8 = AtomicU8::new(0);
+    static VALID_CACHE: AtomicU8 = AtomicU8::new(0);
+
+    pub fn memory_info() -> intercom_adapter_http::MemorySnapshot {
+        let mut internal = intercom_adapter_http::MemoryRegion {
+            free_bytes: 0,
+            total_bytes: 0,
+        };
+        let mut psram = None;
+        for region in esp_alloc::HEAP.stats().region_stats.into_iter().flatten() {
+            let stats = intercom_adapter_http::MemoryRegion {
+                free_bytes: region.free,
+                total_bytes: region.size,
             };
-            SLOT_CACHE.store(slot_val, core::sync::atomic::Ordering::Relaxed);
-            let valid_val = if bl.get_active().state == edf_ota::OtaState::Valid {
-                1
-            } else {
-                2
-            };
-            VALID_CACHE.store(valid_val, core::sync::atomic::Ordering::Relaxed);
+            if region
+                .capabilities
+                .contains(esp_alloc::MemoryCapability::External)
+            {
+                psram = Some(stats);
+            } else if region
+                .capabilities
+                .contains(esp_alloc::MemoryCapability::Internal)
+            {
+                internal.free_bytes += stats.free_bytes;
+                internal.total_bytes += stats.total_bytes;
+            }
         }
-        Err(_) => {
-            SLOT_CACHE.store(1, core::sync::atomic::Ordering::Relaxed);
-            VALID_CACHE.store(1, core::sync::atomic::Ordering::Relaxed);
+        intercom_adapter_http::MemorySnapshot { internal, psram }
+    }
+
+    pub fn free_heap_bytes() -> usize {
+        esp_alloc::HEAP.free()
+    }
+
+    pub fn ip_address() -> Option<[u8; 4]> {
+        let stack = rs_matter_embassy::enet::global_stack()?;
+        let config = stack.config_v4()?;
+        Some(config.address.address().octets())
+    }
+
+    pub fn mac_address() -> [u8; 6] {
+        let mac = esp_hal::efuse::base_mac_address();
+        mac.as_bytes().try_into().unwrap_or([0u8; 6])
+    }
+
+    pub fn active_slot() -> &'static str {
+        ensure_bootloader_cached();
+        match SLOT_CACHE.load(Ordering::Relaxed) {
+            2 => "ota_1",
+            _ => "ota_0",
+        }
+    }
+
+    pub fn is_slot_valid() -> bool {
+        ensure_bootloader_cached();
+        VALID_CACHE.load(Ordering::Relaxed) == 1
+    }
+
+    fn ensure_bootloader_cached() {
+        if SLOT_CACHE.load(Ordering::Relaxed) != 0 {
+            return;
+        }
+        match edf_ota::OtaBootloader::load() {
+            Ok(bl) => {
+                let slot_val = match bl.get_running_slot() {
+                    edf_ota::Slot::Ota0 => 1,
+                    edf_ota::Slot::Ota1 => 2,
+                };
+                SLOT_CACHE.store(slot_val, Ordering::Relaxed);
+                let valid_val = if bl.get_active().state == edf_ota::OtaState::Valid {
+                    1
+                } else {
+                    2
+                };
+                VALID_CACHE.store(valid_val, Ordering::Relaxed);
+            }
+            Err(_) => {
+                SLOT_CACHE.store(1, Ordering::Relaxed);
+                VALID_CACHE.store(1, Ordering::Relaxed);
+            }
         }
     }
 }
 
-#[cfg(all(target_os = "none", feature = "esp32c6"))]
-extern "C" {
-    fn esp_wifi_sta_get_rssi(rssi: *mut i32) -> i32;
-}
+#[cfg(not(target_os = "none"))]
+mod target_impl {
+    pub fn memory_info() -> intercom_adapter_http::MemorySnapshot {
+        intercom_adapter_http::MemorySnapshot {
+            internal: intercom_adapter_http::MemoryRegion {
+                free_bytes: 0,
+                total_bytes: 0,
+            },
+            psram: None,
+        }
+    }
 
-#[cfg(all(target_os = "none", feature = "esp32s3"))]
-extern "C" {
-    #[link_name = "esp_wifi_sta_get_rssi"]
-    fn esp_wifi_sta_get_rssi_s3(rssi: *mut i32) -> i32;
+    pub fn free_heap_bytes() -> usize {
+        0
+    }
+
+    pub fn ip_address() -> Option<[u8; 4]> {
+        None
+    }
+
+    pub fn mac_address() -> [u8; 6] {
+        [0u8; 6]
+    }
+
+    pub fn active_slot() -> &'static str {
+        "ota_0"
+    }
+
+    pub fn is_slot_valid() -> bool {
+        true
+    }
 }
 
 /// Helper to update the active door unlock duration reflected in telemetry snapshots.

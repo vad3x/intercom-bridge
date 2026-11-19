@@ -38,11 +38,7 @@ use rs_matter_embassy::matter::crypto::{default_crypto, Crypto};
 use rs_matter_embassy::matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT};
 use rs_matter_embassy::matter::utils::init::InitMaybeUninit;
 use rs_matter_embassy::stack::{MatterStack, UserTask};
-#[cfg(any(feature = "esp32c6", feature = "esp32s3"))]
-use rs_matter_embassy::wireless::esp::EspWifiRadio;
-#[cfg(feature = "esp32s31")]
-use rs_matter_embassy::wireless::PreexistingWifiRadio;
-use rs_matter_embassy::wireless::{EmbassyWifi, EmbassyWifiNetwork};
+use rs_matter_embassy::wireless::EmbassyWifiNetwork;
 
 use intercom_core::events::SystemStateSender;
 use intercom_core::ports::{ClockSyncDriver, ResetScope, SystemResetDriver};
@@ -50,58 +46,31 @@ use intercom_core::ports::{ClockSyncDriver, ResetScope, SystemResetDriver};
 use super::audio_doorbell::{IntercomWebRtcHooks, IntercomWebRtcProvCluster, MediaSessionPort};
 use super::{commissioning, ClusterReadinessBarrier, MatterCluster, BUMP_SIZE};
 
-#[cfg(feature = "esp32s31")]
-#[derive(Clone, Copy)]
-struct S31RadioEntropyRng(esp_hal::rng::Rng);
+/// Hardware-agnostic wireless transport and entropy port for [`MatterController`].
+pub trait MatterWirelessDriver {
+    type Rng: rand_core::RngCore + rand_core::CryptoRng;
 
-#[cfg(feature = "esp32s31")]
-impl rand_core::RngCore for S31RadioEntropyRng {
-    fn next_u32(&mut self) -> u32 {
-        self.0.random()
-    }
+    /// Initialize hardware entropy (and any prerequisite radio state) before
+    /// Matter stack startup, returning the cryptographic RNG.
+    async fn init_entropy(&mut self) -> Self::Rng;
 
-    fn next_u64(&mut self) -> u64 {
-        let mut bytes = [0; 8];
-        self.0.read(&mut bytes);
-        u64::from_le_bytes(bytes)
-    }
-
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
-        self.0.read(dest);
-    }
+    /// Run the wireless Matter stack until completion.
+    async fn run_stack<'a, C, H, S, const KB: usize, M>(
+        self,
+        stack: &'a MatterStackStorage,
+        weak_rand: C::WeakRand<'a>,
+        hostname: &'a str,
+        is_commissioned: bool,
+        crypto: &'a C,
+        handler: (Node<'a>, H),
+        kv: rs_matter::dm::persist::SharedKvBlobStore<'a, S, KB>,
+        monitor: M,
+    ) where
+        C: rs_matter::crypto::Crypto,
+        H: AsyncHandler,
+        S: KvBlobStore,
+        M: rs_matter_embassy::stack::UserTask;
 }
-
-#[cfg(feature = "esp32s31")]
-impl rand_core::CryptoRng for S31RadioEntropyRng {}
-
-#[cfg(feature = "esp32s3")]
-#[derive(Clone, Copy)]
-struct S3EntropyRng(fn(&mut [u8]) -> bool);
-
-#[cfg(feature = "esp32s3")]
-impl rand_core::RngCore for S3EntropyRng {
-    fn next_u32(&mut self) -> u32 {
-        let mut bytes = [0; 4];
-        self.fill_bytes(&mut bytes);
-        u32::from_le_bytes(bytes)
-    }
-
-    fn next_u64(&mut self) -> u64 {
-        let mut bytes = [0; 8];
-        self.fill_bytes(&mut bytes);
-        u64::from_le_bytes(bytes)
-    }
-
-    fn fill_bytes(&mut self, destination: &mut [u8]) {
-        assert!(
-            (self.0)(destination),
-            "S3 secure entropy is not initialized"
-        );
-    }
-}
-
-#[cfg(feature = "esp32s3")]
-impl rand_core::CryptoRng for S3EntropyRng {}
 
 // ============================================================================
 // Device identity — replaces rs-matter TEST_DEV_* defaults
@@ -121,32 +90,15 @@ const PID: u16 = 0x8001;
 /// Generic over `S: KvBlobStore` — the persistence backend for Matter
 /// commissioning data. Typically `EmbassyKvBlobStore<EspFlash>` on real
 /// hardware, but can be swapped for testing or alternative flash drivers.
-pub struct MatterControllerConfig<S: KvBlobStore> {
-    /// Hardware peripherals for WiFi+BLE.
-    pub peripherals: MatterPeripherals,
+pub struct MatterControllerConfig<S: KvBlobStore, W: MatterWirelessDriver> {
+    /// Wireless transport and hardware entropy driver.
+    pub wireless: W,
     /// Device identity for the Basic Information cluster.
     pub device_info: DeviceInfo,
     /// KV blob store for Matter commissioning data persistence.
     pub store: S,
     /// Optional commissioning data override (if None, derived from hardware MAC).
     pub comm_data: Option<BasicCommData>,
-    /// S3 entropy provider seeded before radio initialization.
-    #[cfg(feature = "esp32s3")]
-    pub secure_random: fn(&mut [u8]) -> bool,
-    /// Enable RF-backed reseeding immediately before the wireless stack starts.
-    #[cfg(feature = "esp32s3")]
-    pub start_radio_entropy: fn() -> bool,
-}
-
-/// Hardware peripherals required by the WiFi+BLE Matter stack.
-pub struct MatterPeripherals {
-    pub wifi: esp_hal::peripherals::WIFI<'static>,
-    #[cfg(any(feature = "esp32c6", feature = "esp32s3"))]
-    pub bt: esp_hal::peripherals::BT<'static>,
-    #[cfg(not(feature = "esp32s3"))]
-    pub rng: esp_hal::peripherals::RNG<'static>,
-    #[cfg(not(feature = "esp32s3"))]
-    pub adc1: esp_hal::peripherals::ADC1<'static>,
 }
 
 /// Device identity exposed via the Matter Basic Information cluster and DHCPv4.
@@ -232,10 +184,15 @@ const ROOT_ENDPOINT: Endpoint<'static> = rs_matter::root_endpoint!(wifi, time_sy
 /// Opaque caller-owned storage for the Matter protocol stack.
 pub type MatterStackStorage = MatterStack<'static, BUMP_SIZE, EmbassyWifiNetwork>;
 
-pub struct MatterController<S: KvBlobStore, R: SystemResetDriver, H = EmptyHandler> {
+pub struct MatterController<
+    S: KvBlobStore,
+    R: SystemResetDriver,
+    W: MatterWirelessDriver,
+    H = EmptyHandler,
+> {
     handler: H,
     endpoint_metas: Vec<ClusterRegistrationMeta>,
-    config: MatterControllerConfig<S>,
+    config: MatterControllerConfig<S, W>,
     state_sender: SystemStateSender<'static>,
     readiness: &'static ClusterReadinessBarrier,
     reset: R,
@@ -243,7 +200,7 @@ pub struct MatterController<S: KvBlobStore, R: SystemResetDriver, H = EmptyHandl
     hostname: &'static str,
 }
 
-impl<S: KvBlobStore, R: SystemResetDriver> MatterController<S, R> {
+impl<S: KvBlobStore, R: SystemResetDriver, W: MatterWirelessDriver> MatterController<S, R, W> {
     /// Start building a new Matter WiFi node with an empty handler chain.
     ///
     /// Lifecycle state transitions are dispatched to `state_sender`.
@@ -251,7 +208,7 @@ impl<S: KvBlobStore, R: SystemResetDriver> MatterController<S, R> {
     // Keep constructor stack use separate from the Embassy root task for ELF auditing.
     #[inline(never)]
     pub fn new(
-        config: MatterControllerConfig<S>,
+        config: MatterControllerConfig<S, W>,
         state_sender: SystemStateSender<'static>,
         readiness: &'static ClusterReadinessBarrier,
         reset: R,
@@ -324,7 +281,9 @@ impl<S: KvBlobStore, R: SystemResetDriver> MatterController<S, R> {
     }
 }
 
-impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, R, H> {
+impl<S: KvBlobStore, R: SystemResetDriver, W: MatterWirelessDriver, H: AsyncHandler>
+    MatterController<S, R, W, H>
+{
     /// Construct the Endpoint 1 WebRTC Transport Provider cluster bound to this controller's `Matter` instance.
     pub fn webrtc_prov_cluster<'a, M: MediaSessionPort + 'static>(
         &self,
@@ -341,11 +300,12 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
     pub fn register<'b, C: MatterCluster>(
         mut self,
         cluster: &'b C,
-    ) -> MatterController<S, R, impl AsyncHandler + 'b>
+    ) -> MatterController<S, R, W, impl AsyncHandler + 'b>
     where
         H: 'b,
         S: 'b,
         R: 'b,
+        W: 'b,
     {
         let endpoint_id = C::ENDPOINT_ID;
         let is_first_on_endpoint = self.endpoint_metas.iter().all(|m| m.id != endpoint_id);
@@ -384,7 +344,7 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
             ),
         );
 
-        MatterController::<S, R, _> {
+        MatterController::<S, R, W, _> {
             handler: new_handler,
             endpoint_metas: self.endpoint_metas,
             config: self.config,
@@ -405,7 +365,7 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
     /// # Panics
     /// Panics if the Matter stack encounters a fatal error.
     pub async fn run<D: ClockSyncDriver + 'static>(self, clock_driver: &'static D) {
-        let config = self.config;
+        let mut config = self.config;
         // Build the Node descriptor from registered endpoints.
         let grouped = group_endpoint_clusters(&self.endpoint_metas);
         let mut endpoints: Vec<Endpoint> = Vec::with_capacity(1 + grouped.len());
@@ -426,51 +386,8 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
         let stack = self.stack;
         let hostname = self.hostname;
 
-        #[cfg(feature = "esp32s31")]
-        let wifi_controller = {
-            let mut controller = esp_radio::wifi::WifiController::new(
-                config.peripherals.wifi,
-                esp_radio::wifi::ControllerConfig::default(),
-            )
-            .expect("Failed to create S31 Wi-Fi controller");
-            controller
-                .set_power_saving(esp_radio::wifi::PowerSaveMode::None)
-                .expect("Failed to disable S31 Wi-Fi power saving");
-            controller
-                .set_max_tx_power(80)
-                .expect("Failed to set S31 Wi-Fi transmit power");
-            controller
-                .set_config(&esp_radio::wifi::Config::Station(
-                    esp_radio::wifi::sta::StationConfig::default(),
-                ))
-                .expect("Failed to start S31 Wi-Fi radio");
-            controller
-                .scan_async(&esp_radio::wifi::scan::ScanConfig::default())
-                .await
-                .expect("Failed to initialize S31 Wi-Fi RF entropy source");
-            controller
-        };
-
-        // C6 uses the HAL ADC-backed TRNG for crypto. S3 receives its seeded
-        // shared provider from firmware; S31 uses Wi-Fi-backed entropy.
-        #[cfg(feature = "esp32c6")]
-        let _trng_source =
-            esp_hal::rng::TrngSource::new(config.peripherals.rng, config.peripherals.adc1);
-        #[cfg(feature = "esp32c6")]
-        let crypto = default_crypto(
-            esp_hal::rng::Trng::try_new().expect("TrngSource initialized above"),
-            DAC_PRIVKEY,
-        );
-        #[cfg(feature = "esp32s31")]
-        let crypto = default_crypto(
-            rs_matter_embassy::rand::RngAdaptor::new(S31RadioEntropyRng(esp_hal::rng::Rng::new())),
-            DAC_PRIVKEY,
-        );
-        #[cfg(feature = "esp32s3")]
-        let crypto = default_crypto(
-            rs_matter_embassy::rand::RngAdaptor::new(S3EntropyRng(config.secure_random)),
-            DAC_PRIVKEY,
-        );
+        let rng = config.wireless.init_entropy().await;
+        let crypto = default_crypto(rs_matter_embassy::rand::RngAdaptor::new(rng), DAC_PRIVKEY);
         let weak_rand = crypto
             .weak_rand()
             .expect("crypto weak_rand must be available");
@@ -518,68 +435,19 @@ impl<S: KvBlobStore, R: SystemResetDriver, H: AsyncHandler> MatterController<S, 
             matter: stack.matter(),
             clock_driver,
         };
-        #[cfg(any(feature = "esp32c6", feature = "esp32s3"))]
-        {
-            let wifi = EmbassyWifi::new(
-                EspWifiRadio::new(config.peripherals.wifi, config.peripherals.bt),
-                weak_rand,
-                true,
+        config
+            .wireless
+            .run_stack(
                 stack,
-            )
-            .with_hostname(hostname);
-
-            #[cfg(feature = "esp32s3")]
-            assert!(
-                (config.start_radio_entropy)(),
-                "S3 entropy must be seeded before RF startup"
-            );
-
-            match commissioning::select_wireless_boot_mode(is_commissioned) {
-                commissioning::WirelessBootMode::OperationalWifiOnly => {
-                    info!("Commissioned fabric present -> starting Wi-Fi-only operational stack");
-                    NoInlineFuture(run_wifi_oper_task(
-                        stack,
-                        wifi,
-                        &crypto,
-                        (node, handler),
-                        kv,
-                        &mut monitor,
-                    ))
-                    .await;
-                }
-                commissioning::WirelessBootMode::BleWifiCoex => {
-                    info!("Uncommissioned -> starting concurrent BLE + Wi-Fi commissioning");
-                    NoInlineFuture(run_wifi_coex_task(
-                        stack,
-                        wifi,
-                        &crypto,
-                        (node, handler),
-                        kv,
-                        &mut monitor,
-                    ))
-                    .await;
-                }
-            }
-        }
-
-        #[cfg(feature = "esp32s31")]
-        {
-            let wifi = EmbassyWifi::new(
-                PreexistingWifiRadio::new(
-                    esp_radio::wifi::Interface::station(),
-                    rs_matter_embassy::wifi::esp::EspWifiController::new(wifi_controller),
-                    (),
-                ),
                 weak_rand,
-                false,
-                stack,
+                hostname,
+                is_commissioned,
+                &crypto,
+                (node, handler),
+                kv,
+                &mut monitor,
             )
-            .with_hostname(hostname);
-            info!("Starting Wi-Fi-only Matter commissioning and operational stack");
-            NoInlineFuture(stack.run_wifi_oper(wifi, &crypto, (node, handler), kv, &mut monitor))
-                .await
-                .expect("Matter operational Wi-Fi stack fatal error");
-        }
+            .await;
     }
 }
 
@@ -620,46 +488,6 @@ async fn startup_or_reset<C, H, S>(
             .unwrap();
         NoInlineFuture(stack.startup(crypto, kv)).await.unwrap();
     }
-}
-
-#[cfg(any(feature = "esp32c6", feature = "esp32s3"))]
-#[inline(never)]
-async fn run_wifi_oper_task<'a, C, H, S, const KB: usize, M>(
-    stack: &'a MatterStack<'a, BUMP_SIZE, EmbassyWifiNetwork>,
-    wifi: EmbassyWifi<'a, EspWifiRadio<'a>, C::WeakRand<'a>>,
-    crypto: &'a C,
-    handler: (Node<'a>, H),
-    kv: rs_matter::dm::persist::SharedKvBlobStore<'a, S, KB>,
-    monitor: M,
-) where
-    C: rs_matter::crypto::Crypto,
-    H: AsyncHandler,
-    S: KvBlobStore,
-    M: rs_matter_embassy::stack::UserTask,
-{
-    NoInlineFuture(stack.run_wifi_oper(wifi, crypto, handler, kv, monitor))
-        .await
-        .expect("Matter operational Wi-Fi stack fatal error");
-}
-
-#[cfg(any(feature = "esp32c6", feature = "esp32s3"))]
-#[inline(never)]
-async fn run_wifi_coex_task<'a, C, H, S, const KB: usize, M>(
-    stack: &'a MatterStack<'a, BUMP_SIZE, EmbassyWifiNetwork>,
-    wifi: EmbassyWifi<'a, EspWifiRadio<'a>, C::WeakRand<'a>>,
-    crypto: &'a C,
-    handler: (Node<'a>, H),
-    kv: rs_matter::dm::persist::SharedKvBlobStore<'a, S, KB>,
-    monitor: M,
-) where
-    C: rs_matter::crypto::Crypto,
-    H: AsyncHandler,
-    S: KvBlobStore,
-    M: rs_matter_embassy::stack::UserTask,
-{
-    NoInlineFuture(stack.run_wifi(wifi, crypto, handler, kv, monitor))
-        .await
-        .expect("Matter coex stack fatal error");
 }
 
 // ============================================================================

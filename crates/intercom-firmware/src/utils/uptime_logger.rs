@@ -99,14 +99,7 @@ pub fn get_buffered_logs(buf: &mut [u8]) -> usize {
 }
 
 fn uptime_millis() -> u64 {
-    #[cfg(target_os = "none")]
-    {
-        embassy_time::Instant::now().as_millis()
-    }
-    #[cfg(not(target_os = "none"))]
-    {
-        0
-    }
+    sink::uptime_millis()
 }
 
 fn log_timestamp() -> LogTimestamp {
@@ -132,24 +125,36 @@ pub fn is_clock_synchronized() -> bool {
 }
 
 fn write_uart_record(level: log::Level, record: core::fmt::Arguments<'_>) {
-    #[cfg(target_os = "none")]
-    {
-        let (color, reset) = uart_colors(level);
-        esp_println::println!("{color}{record}{reset}");
-    }
-    #[cfg(not(target_os = "none"))]
-    {
-        let _ = (level, record);
-    }
+    sink::write_uart_record(level, record);
 }
 
-#[cfg(any(target_os = "none", test))]
 fn uart_colors(level: log::Level) -> (&'static str, &'static str) {
     match level {
         log::Level::Error => ("\x1b[31m", "\x1b[0m"),
         log::Level::Warn => ("\x1b[33m", "\x1b[0m"),
         _ => ("", ""),
     }
+}
+
+#[cfg(target_os = "none")]
+mod sink {
+    pub fn uptime_millis() -> u64 {
+        embassy_time::Instant::now().as_millis()
+    }
+
+    pub fn write_uart_record(level: log::Level, record: core::fmt::Arguments<'_>) {
+        let (color, reset) = super::uart_colors(level);
+        esp_println::println!("{color}{record}{reset}");
+    }
+}
+
+#[cfg(not(target_os = "none"))]
+mod sink {
+    pub fn uptime_millis() -> u64 {
+        0
+    }
+
+    pub fn write_uart_record(_level: log::Level, _record: core::fmt::Arguments<'_>) {}
 }
 
 #[cfg(test)]

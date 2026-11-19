@@ -111,7 +111,7 @@ pub const HEAP_SIZE: usize = crate::platform::s3::INTERNAL_HEAP_BYTES;
 /// Peak heap usage with WebRTC DTLS+SRTP and Matter TCP is ~108 KiB.
 /// 120 KiB leaves ~12 KiB free heap margin while giving the main task stack ~48 KiB
 /// of headroom to safely run Opus Silk fixed-point pitch analysis.
-#[cfg(not(feature = "esp32s3"))]
+#[cfg(any(feature = "esp32c6", feature = "esp32s31"))]
 pub const HEAP_SIZE: usize = 120 * 1024;
 
 /// Diagnostic log history (2 KiB), leaving room for two HTTP sockets and audio.

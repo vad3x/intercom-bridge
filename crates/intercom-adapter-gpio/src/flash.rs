@@ -55,7 +55,7 @@ mod target_impl {
             // (and Core 1 auto-park on dual-core chips); instances cover disjoint
             // KVS ranges used sequentially on Core 0.
             let storage = FlashStorage::new(unsafe { esp_hal::peripherals::FLASH::steal() });
-            #[cfg(feature = "esp32s3")]
+            #[cfg(feature = "multicore-flash")]
             let storage = storage.multicore_auto_park();
             Self { range, storage }
         }

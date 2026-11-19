@@ -10,25 +10,82 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Timer};
 use intercom_core::ports::reporter::{IntercomReporter, LockState};
-#[allow(unused_imports)]
-use log::info;
+#[cfg(all(target_os = "none", feature = "led-smartled"))]
+mod backend {
+    use core::cell::RefCell;
+    use esp_hal::rmt::Rmt;
+    use esp_hal::time::Rate;
+    use esp_hal_smartled::{buffer_size, color_order, RmtSmartLeds, WS2812B_TIMING};
+    use log::info;
+    pub use smart_leds::RGB8;
+    use smart_leds::SmartLedsWrite;
 
-#[cfg(all(target_os = "none", feature = "led-smartled"))]
-use esp_hal::rmt::Rmt;
-#[cfg(all(target_os = "none", feature = "led-smartled"))]
-use esp_hal::time::Rate;
-#[cfg(all(target_os = "none", feature = "led-smartled"))]
-use esp_hal_smartled::{buffer_size, color_order, RmtSmartLeds, WS2812B_TIMING};
-#[cfg(all(target_os = "none", feature = "led-smartled"))]
-use smart_leds::{SmartLedsWrite, RGB8};
+    pub struct LedSink(
+        RefCell<
+            RmtSmartLeds<
+                'static,
+                { buffer_size::<RGB8>(1) },
+                esp_hal::Blocking,
+                RGB8,
+                color_order::Grb,
+            >,
+        >,
+    );
+
+    impl LedSink {
+        pub fn new(
+            rmt_periph: esp_hal::peripherals::RMT<'static>,
+            pin: impl esp_hal::gpio::interconnect::PeripheralOutput<'static>,
+        ) -> Self {
+            info!("DevKitLedDriver: initializing WS2812 RGB LED via RMT");
+            let rmt = Rmt::new(rmt_periph, Rate::from_mhz(80)).expect("RMT init failed");
+            let led = RmtSmartLeds::<{ buffer_size::<RGB8>(1) }, _, RGB8, color_order::Grb>::new(
+                WS2812B_TIMING,
+                rmt.channel0,
+                pin,
+                Rate::from_mhz(80),
+            )
+            .expect("RmtSmartLeds init failed");
+            Self(RefCell::new(led))
+        }
+
+        pub fn write(&self, color: RGB8) {
+            if let Ok(mut led) = self.0.try_borrow_mut() {
+                let _ = led.write([color]);
+            }
+        }
+    }
+}
 
 #[cfg(not(all(target_os = "none", feature = "led-smartled")))]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub struct RGB8 {
-    pub r: u8,
-    pub g: u8,
-    pub b: u8,
+mod backend {
+    use core::cell::RefCell;
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+    pub struct RGB8 {
+        pub r: u8,
+        pub g: u8,
+        pub b: u8,
+    }
+
+    pub struct LedSink(RefCell<RGB8>);
+
+    impl LedSink {
+        pub fn new_mock() -> Self {
+            Self(RefCell::new(RGB8::default()))
+        }
+
+        pub fn write(&self, color: RGB8) {
+            *self.0.borrow_mut() = color;
+        }
+
+        pub fn last_color(&self) -> RGB8 {
+            *self.0.borrow()
+        }
+    }
 }
+
+pub use backend::RGB8;
 
 pub const COLOR_OFF: RGB8 = RGB8 { r: 0, g: 0, b: 0 };
 pub const COLOR_BOOTING: RGB8 = RGB8 { r: 30, g: 15, b: 0 };
@@ -61,18 +118,7 @@ pub enum LedCommand {
 
 /// Addressable RGB LED driver for the C6 and S3 DevKit profiles.
 pub struct DevKitLedDriver {
-    #[cfg(all(target_os = "none", feature = "led-smartled"))]
-    led: RefCell<
-        RmtSmartLeds<
-            'static,
-            { buffer_size::<RGB8>(1) },
-            esp_hal::Blocking,
-            RGB8,
-            color_order::Grb,
-        >,
-    >,
-    #[cfg(not(all(target_os = "none", feature = "led-smartled")))]
-    last_color: RefCell<RGB8>,
+    sink: backend::LedSink,
     signal: Signal<CriticalSectionRawMutex, LedCommand>,
     current_state: RefCell<Option<SystemState>>,
 }
@@ -84,18 +130,8 @@ impl DevKitLedDriver {
         rmt_periph: esp_hal::peripherals::RMT<'static>,
         pin: impl esp_hal::gpio::interconnect::PeripheralOutput<'static>,
     ) -> Self {
-        info!("DevKitLedDriver: initializing WS2812 RGB LED via RMT");
-        let rmt = Rmt::new(rmt_periph, Rate::from_mhz(80)).expect("RMT init failed");
-        let led = RmtSmartLeds::<{ buffer_size::<RGB8>(1) }, _, RGB8, color_order::Grb>::new(
-            WS2812B_TIMING,
-            rmt.channel0,
-            pin,
-            Rate::from_mhz(80),
-        )
-        .expect("RmtSmartLeds init failed");
-
         let driver = Self {
-            led: RefCell::new(led),
+            sink: backend::LedSink::new(rmt_periph, pin),
             signal: Signal::new(),
             current_state: RefCell::new(None),
         };
@@ -107,28 +143,19 @@ impl DevKitLedDriver {
     #[cfg(not(all(target_os = "none", feature = "led-smartled")))]
     pub fn new() -> Self {
         Self {
-            last_color: RefCell::new(COLOR_OFF),
+            sink: backend::LedSink::new_mock(),
             signal: Signal::new(),
             current_state: RefCell::new(None),
         }
     }
 
     fn write_color(&self, color: RGB8) {
-        #[cfg(all(target_os = "none", feature = "led-smartled"))]
-        {
-            if let Ok(mut led) = self.led.try_borrow_mut() {
-                let _ = led.write([color]);
-            }
-        }
-        #[cfg(not(all(target_os = "none", feature = "led-smartled")))]
-        {
-            *self.last_color.borrow_mut() = color;
-        }
+        self.sink.write(color);
     }
 
     #[cfg(not(all(target_os = "none", feature = "led-smartled")))]
     pub fn last_color(&self) -> RGB8 {
-        *self.last_color.borrow()
+        self.sink.last_color()
     }
 
     /// Background async runner that observes lifecycle states and executes LED patterns.

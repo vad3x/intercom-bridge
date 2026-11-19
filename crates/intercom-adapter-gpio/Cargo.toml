@@ -7,9 +7,10 @@ description = "Hardware GPIO adapter for Intercom Bridge (IR204E & ESP32-C6)"
 
 [features]
 default = ["esp32c6"]
+multicore-flash = []
 esp32c6 = ["esp-hal/esp32c6", "edf-gpio/esp32c6", "esp-storage/esp32c6"]
 esp32s31 = ["esp-hal/esp32s31", "edf-gpio/esp32s31", "esp-storage/esp32s31"]
-esp32s3 = ["esp-hal/esp32s3", "edf-gpio/esp32s3", "esp-storage/esp32s3"]
+esp32s3 = ["esp-hal/esp32s3", "edf-gpio/esp32s3", "esp-storage/esp32s3", "multicore-flash"]
 
 [dependencies]
 intercom-core = { path = "../intercom-core" }
