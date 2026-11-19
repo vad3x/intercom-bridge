@@ -791,21 +791,13 @@ mod tests {
             .expect("server peer id");
 
         let mut wire = [0u8; 1500];
-        // 1. ClientHello (initial) -> Server HelloVerifyRequest
+        // ICE-verified server skips HelloVerifyRequest and emits multi-datagram flight on ch1.
+        server.set_mtu(300);
         client.step(0).expect("client step 0");
         let len = client.pop_outbound_datagram(&mut wire).expect("ch1");
         server.push_inbound_datagram(&wire[..len]).expect("srv ch1");
-        server.step(0).expect("srv hvr");
-        let len = server.pop_outbound_datagram(&mut wire).expect("hvr");
-        client.push_inbound_datagram(&wire[..len]).expect("cli hvr");
 
-        // 2. ClientHello (with cookie) -> Server multi-datagram flight at 300-byte MTU
-        server.set_mtu(300);
-        client.step(1).expect("client step 1");
-        let len = client.pop_outbound_datagram(&mut wire).expect("ch2");
-        server.push_inbound_datagram(&wire[..len]).expect("srv ch2");
-
-        server.step(1).expect("server flight step");
+        server.step(0).expect("server flight step");
         let mut popped = 0usize;
         while server.pop_outbound_datagram(&mut wire).is_some() {
             popped += 1;

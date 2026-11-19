@@ -1977,19 +1977,13 @@ mod tests {
             .expect("server peer id");
 
         let mut wire = [0u8; 1500];
+        server.set_mtu(300);
         client.step(0).expect("client step 0");
         let len = client.pop_outbound_datagram(&mut wire).expect("ch1");
         server.push_inbound_datagram(&wire[..len]).expect("srv ch1");
-        server.step(0).expect("srv hvr");
-        let len = server.pop_outbound_datagram(&mut wire).expect("hvr");
-        client.push_inbound_datagram(&wire[..len]).expect("cli hvr");
-        server.set_mtu(300);
-        client.step(1).expect("client step 1");
-        let len = client.pop_outbound_datagram(&mut wire).expect("ch2");
-        server.push_inbound_datagram(&wire[..len]).expect("srv ch2");
 
         let mut sent = alloc::vec::Vec::new();
-        super::drain_dtls_outbound::<crate::dtls::DtlsError>(&mut server, 1, &mut wire, |datagram| {
+        super::drain_dtls_outbound::<crate::dtls::DtlsError>(&mut server, 0, &mut wire, |datagram| {
             sent.push(datagram.to_vec());
             Ok(())
         })

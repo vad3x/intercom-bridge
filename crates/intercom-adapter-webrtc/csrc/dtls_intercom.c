@@ -695,6 +695,9 @@ int intercom_dtls_set_peer_transport_id(void *storage, const unsigned char *data
     }
     memcpy(state->peer_transport_id, data, length);
     state->peer_transport_id_length = length;
+    // Peer address is already authenticated by ICE-Lite STUN MESSAGE-INTEGRITY;
+    // skip the HelloVerifyRequest round-trip to cut DTLS startup latency.
+    mbedtls_ssl_conf_dtls_cookies(&state->config, NULL, NULL, NULL);
     return mbedtls_ssl_set_client_transport_id(&state->ssl, data, length);
 }
 

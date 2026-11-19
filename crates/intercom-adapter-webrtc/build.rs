@@ -50,13 +50,19 @@ fn main() {
     opus.compile("opus_fixed");
 
     // 2. Stripped bare-metal MbedTLS 3.6 LTS for DTLS 1.2 + RFC 5764 use_srtp
-    let mut mbed = cc::Build::new();
-    mbed.include(mbedtls_dir.join("include"))
-        .include(mbedtls_dir.join("library"))
-        .include(&csrc_dir)
-        .define("MBEDTLS_CONFIG_FILE", "\"mbedtls_intercom_config.h\"")
-        .flag_if_supported("-O2")
-        .flag_if_supported("-Wno-unused-parameter");
+    let new_mbed_build = |opt_flag: &str| {
+        let mut build = cc::Build::new();
+        build
+            .include(mbedtls_dir.join("include"))
+            .include(mbedtls_dir.join("library"))
+            .include(&csrc_dir)
+            .define("MBEDTLS_CONFIG_FILE", "\"mbedtls_intercom_config.h\"")
+            .flag_if_supported(opt_flag)
+            .flag_if_supported("-Wno-unused-parameter");
+        build
+    };
+    let mut mbed = new_mbed_build("-O2");
+    let mut mbed_ecc = new_mbed_build("-O3");
 
     mbed.file(csrc_dir.join("dtls_intercom.c"));
 
@@ -64,10 +70,28 @@ fn main() {
         let path = entry.unwrap().path();
         if path.extension().and_then(|e| e.to_str()) == Some("c") {
             let name = path.file_name().unwrap().to_str().unwrap();
-            if !name.starts_with("net_sockets") && !name.starts_with("timing") {
+            if name.starts_with("net_sockets") || name.starts_with("timing") {
+                continue;
+            }
+            if matches!(
+                name,
+                "bignum.c"
+                    | "bignum_core.c"
+                    | "bignum_mod.c"
+                    | "bignum_mod_raw.c"
+                    | "ecdh.c"
+                    | "ecdsa.c"
+                    | "ecp.c"
+                    | "ecp_curves.c"
+                    | "ecp_curves_new.c"
+                    | "psa_crypto_ecp.c"
+            ) {
+                mbed_ecc.file(path);
+            } else {
                 mbed.file(path);
             }
         }
     }
     mbed.compile("mbedtls_dtls_srtp");
+    mbed_ecc.compile("mbedtls_dtls_srtp_ecc");
 }
