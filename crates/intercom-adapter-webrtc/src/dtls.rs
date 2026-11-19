@@ -8,8 +8,10 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::mutex::{Mutex, MutexGuard};
 
 pub const DTLS_ARENA_BYTES: usize = 26 * 1024;
-const STATE_STORAGE_WORDS: usize = 768;
+const STATE_STORAGE_WORDS: usize = 1_920;
 const DATAGRAM_MAX_BYTES: usize = 1_500;
+const DTLS_CERT_DER_MAX: usize = 1_024;
+const DTLS_KEY_DER_MAX: usize = 256;
 const DTLS_ARENA_WORDS: usize = DTLS_ARENA_BYTES / core::mem::size_of::<u64>();
 const HEAP_INITIALIZING: u8 = 1;
 const HEAP_READY: u8 = 2;
@@ -104,6 +106,69 @@ impl DerefMut for DtlsSrtpResourceGuard<'_, '_> {
     }
 }
 
+/// Pre-generated ECDSA P-256 keypair, self-signed X.509 certificate DER, and SHA-256 fingerprint.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DtlsIdentity {
+    cert_der: [u8; DTLS_CERT_DER_MAX],
+    cert_der_len: usize,
+    key_der: [u8; DTLS_KEY_DER_MAX],
+    key_der_len: usize,
+    fingerprint_sha256: [u8; 32],
+}
+
+impl DtlsIdentity {
+    pub fn generate(
+        seed: [u8; 32],
+        #[cfg_attr(test, allow(unused_variables))] resources: &mut DtlsSrtpResources,
+    ) -> Result<Self, DtlsError> {
+        #[cfg(test)]
+        let (heap_ptr, heap_len) = heap_buffer();
+        #[cfg(not(test))]
+        let heap_ptr = resources.heap_arena.as_mut_ptr().cast::<u8>();
+        #[cfg(not(test))]
+        let heap_len = DTLS_ARENA_BYTES;
+
+        let owns_heap = initialize_mbedtls_heap(heap_ptr, heap_len)?;
+        let mut identity = Self {
+            cert_der: [0; DTLS_CERT_DER_MAX],
+            cert_der_len: 0,
+            key_der: [0; DTLS_KEY_DER_MAX],
+            key_der_len: 0,
+            fingerprint_sha256: [0; 32],
+        };
+        let result = unsafe {
+            intercom_dtls_generate_identity(
+                seed.as_ptr(),
+                identity.cert_der.as_mut_ptr(),
+                identity.cert_der.len(),
+                &mut identity.cert_der_len,
+                identity.key_der.as_mut_ptr(),
+                identity.key_der.len(),
+                &mut identity.key_der_len,
+                identity.fingerprint_sha256.as_mut_ptr(),
+            )
+        };
+        free_new_heap(owns_heap);
+        if result == 0 {
+            Ok(identity)
+        } else {
+            Err(DtlsError::InitFailed(result))
+        }
+    }
+
+    pub fn cert_der(&self) -> &[u8] {
+        &self.cert_der[..self.cert_der_len]
+    }
+
+    pub fn key_der(&self) -> &[u8] {
+        &self.key_der[..self.key_der_len]
+    }
+
+    pub const fn fingerprint_sha256(&self) -> [u8; 32] {
+        self.fingerprint_sha256
+    }
+}
+
 pub struct DtlsSrtpEngine<'a> {
     storage: &'a mut [u64; STATE_STORAGE_WORDS],
     heap_lease: bool,
@@ -115,6 +180,24 @@ impl<'a> DtlsSrtpEngine<'a> {
     pub fn new(
         role: DtlsRole,
         seed: [u8; 32],
+        resources: &'a mut DtlsSrtpResources,
+    ) -> Result<Self, DtlsError> {
+        Self::new_inner(role, seed, None, resources)
+    }
+
+    pub fn new_with_identity(
+        role: DtlsRole,
+        seed: [u8; 32],
+        identity: &DtlsIdentity,
+        resources: &'a mut DtlsSrtpResources,
+    ) -> Result<Self, DtlsError> {
+        Self::new_inner(role, seed, Some(identity), resources)
+    }
+
+    fn new_inner(
+        role: DtlsRole,
+        seed: [u8; 32],
+        identity: Option<&DtlsIdentity>,
         resources: &'a mut DtlsSrtpResources,
     ) -> Result<Self, DtlsError> {
         #[cfg(test)]
@@ -141,13 +224,28 @@ impl<'a> DtlsSrtpEngine<'a> {
             DtlsRole::Client => 0,
             DtlsRole::Server => 1,
         };
-        let result = unsafe {
-            intercom_dtls_init(
-                engine.storage.as_mut_ptr().cast::<c_void>(),
-                core::mem::size_of::<[u64; STATE_STORAGE_WORDS]>(),
-                role,
-                seed.as_ptr(),
-            )
+        let result = match identity {
+            Some(identity) => unsafe {
+                intercom_dtls_init_with_identity(
+                    engine.storage.as_mut_ptr().cast::<c_void>(),
+                    core::mem::size_of::<[u64; STATE_STORAGE_WORDS]>(),
+                    role,
+                    seed.as_ptr(),
+                    identity.cert_der().as_ptr(),
+                    identity.cert_der().len(),
+                    identity.key_der().as_ptr(),
+                    identity.key_der().len(),
+                    identity.fingerprint_sha256.as_ptr(),
+                )
+            },
+            None => unsafe {
+                intercom_dtls_init(
+                    engine.storage.as_mut_ptr().cast::<c_void>(),
+                    core::mem::size_of::<[u64; STATE_STORAGE_WORDS]>(),
+                    role,
+                    seed.as_ptr(),
+                )
+            },
         };
         if result != 0 {
             free_new_heap(owns_heap);
@@ -210,6 +308,11 @@ impl<'a> DtlsSrtpEngine<'a> {
         } else {
             Err(DtlsError::InputFailed(result))
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_mtu(&mut self, mtu: u16) {
+        unsafe { intercom_dtls_set_mtu(self.storage.as_mut_ptr().cast::<c_void>(), mtu) };
     }
 
     pub fn pop_outbound_datagram(&mut self, output: &mut [u8]) -> Option<usize> {
@@ -359,11 +462,32 @@ unsafe extern "C" {
     fn intercom_dtls_heap_init(buffer: *mut u8, length: usize) -> c_int;
     fn intercom_dtls_heap_free();
     fn intercom_dtls_state_size() -> usize;
+    fn intercom_dtls_generate_identity(
+        seed: *const u8,
+        cert_der_out: *mut u8,
+        cert_der_capacity: usize,
+        cert_der_len_out: *mut usize,
+        key_der_out: *mut u8,
+        key_der_capacity: usize,
+        key_der_len_out: *mut usize,
+        fingerprint_out: *mut u8,
+    ) -> c_int;
     fn intercom_dtls_init(
         storage: *mut c_void,
         storage_length: usize,
         role: c_int,
         seed: *const u8,
+    ) -> c_int;
+    fn intercom_dtls_init_with_identity(
+        storage: *mut c_void,
+        storage_length: usize,
+        role: c_int,
+        seed: *const u8,
+        cert_der: *const u8,
+        cert_der_len: usize,
+        key_der: *const u8,
+        key_der_len: usize,
+        fingerprint: *const u8,
     ) -> c_int;
     fn intercom_dtls_free(storage: *mut c_void);
     fn intercom_dtls_push_input(storage: *mut c_void, data: *const u8, length: usize) -> c_int;
@@ -372,6 +496,8 @@ unsafe extern "C" {
         data: *const u8,
         length: usize,
     ) -> c_int;
+    #[cfg(test)]
+    fn intercom_dtls_set_mtu(storage: *mut c_void, mtu: u16);
     fn intercom_dtls_step(storage: *mut c_void, now_ms: u64) -> c_int;
     fn intercom_dtls_pop_output(storage: *mut c_void, output: *mut u8, capacity: usize) -> usize;
     fn intercom_dtls_exported_keys(storage: *mut c_void, output: *mut u8) -> c_int;
@@ -592,6 +718,97 @@ mod tests {
     }
 
     #[test]
+    fn cached_identity_handshake_reuses_fingerprint_and_exports_matching_srtp_keys() {
+        let _guard = super::DTLS_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut gen_resources = DtlsSrtpResources::new();
+        let identity =
+            super::DtlsIdentity::generate([0x42; 32], &mut gen_resources).expect("generate identity");
+        assert!(!identity.cert_der().is_empty());
+        assert!(!identity.key_der().is_empty());
+        assert_ne!(identity.fingerprint_sha256(), [0u8; 32]);
+
+        let mut server_resources = DtlsSrtpResources::new();
+        let mut client_resources = DtlsSrtpResources::new();
+        let mut server =
+            DtlsSrtpEngine::new_with_identity(DtlsRole::Server, [0x42; 32], &identity, &mut server_resources)
+                .expect("server init with identity");
+        let mut client =
+            DtlsSrtpEngine::new_with_identity(DtlsRole::Client, [0x99; 32], &identity, &mut client_resources)
+                .expect("client init with identity");
+        assert_eq!(server.local_cert_sha256(), identity.fingerprint_sha256());
+        assert_eq!(client.local_cert_sha256(), identity.fingerprint_sha256());
+
+        server
+            .set_peer_transport_id(b"verified-ice-peer")
+            .expect("server peer id");
+        let _ = client.set_peer_transport_id(b"client-peer-id");
+
+        let mut wire_buffer = [0u8; 1500];
+        let mut client_done = false;
+        let mut server_done = false;
+        for tick in 0..64u64 {
+            if !client_done {
+                client_done = client.step(tick * 10).expect("client step");
+            }
+            while let Some(len) = client.pop_outbound_datagram(&mut wire_buffer) {
+                server
+                    .push_inbound_datagram(&wire_buffer[..len])
+                    .expect("server push");
+            }
+            if !server_done {
+                server_done = server.step(tick * 10).expect("server step");
+            }
+            while let Some(len) = server.pop_outbound_datagram(&mut wire_buffer) {
+                client
+                    .push_inbound_datagram(&wire_buffer[..len])
+                    .expect("client push");
+            }
+            if client_done && server_done {
+                break;
+            }
+        }
+        assert!(client_done && server_done);
+        let server_keys = server.exported_srtp_keys().expect("server keys");
+        let client_keys = client.exported_srtp_keys().expect("client keys");
+        assert_eq!(server_keys, client_keys);
+    }
+
+    #[test]
+    fn multi_datagram_server_flight_queues_without_want_write() {
+        let _guard = super::DTLS_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut server_resources = DtlsSrtpResources::new();
+        let mut client_resources = DtlsSrtpResources::new();
+        let mut server = DtlsSrtpEngine::new(DtlsRole::Server, [0x42; 32], &mut server_resources)
+            .expect("server init");
+        let mut client = DtlsSrtpEngine::new(DtlsRole::Client, [0x99; 32], &mut client_resources)
+            .expect("client init");
+        server
+            .set_peer_transport_id(b"verified-ice-peer")
+            .expect("server peer id");
+
+        let mut wire = [0u8; 1500];
+        // ICE-verified server skips HelloVerifyRequest and emits multi-datagram flight on ch1.
+        server.set_mtu(300);
+        client.step(0).expect("client step 0");
+        let len = client.pop_outbound_datagram(&mut wire).expect("ch1");
+        server.push_inbound_datagram(&wire[..len]).expect("srv ch1");
+
+        server.step(0).expect("server flight step");
+        let mut popped = 0usize;
+        while server.pop_outbound_datagram(&mut wire).is_some() {
+            popped += 1;
+        }
+        assert!(
+            popped >= 2,
+            "expected multi-datagram flight in one step, got {popped}"
+        );
+    }
+
+    #[test]
     fn allocator_arena_is_released_and_can_be_reinitialized() {
         // Arrange
         let _guard = super::DTLS_TEST_LOCK
@@ -614,5 +831,120 @@ mod tests {
         assert_eq!(failed_init, Err(super::DtlsError::HeapInitializationFailed));
         assert_eq!(reset_after_failure, 0);
         assert!(!second.step(0).expect("step after arena reinitialization"));
+    }
+
+    #[test]
+    fn benchmark_cached_vs_uncached_startup() {
+        let _guard = super::DTLS_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut gen_resources = DtlsSrtpResources::new();
+        let identity =
+            super::DtlsIdentity::generate([0x42; 32], &mut gen_resources).expect("identity");
+
+        let iterations = 10u32;
+        let mut uncached_total_us = 0u128;
+        let mut cached_total_us = 0u128;
+        for i in 0..iterations {
+            let mut r1 = DtlsSrtpResources::new();
+            let t0 = std::time::Instant::now();
+            let engine = DtlsSrtpEngine::new(DtlsRole::Server, [i as u8; 32], &mut r1)
+                .expect("uncached init");
+            uncached_total_us += t0.elapsed().as_micros();
+            drop(engine);
+
+            let mut r2 = DtlsSrtpResources::new();
+            let t1 = std::time::Instant::now();
+            let engine = DtlsSrtpEngine::new_with_identity(
+                DtlsRole::Server,
+                [i as u8; 32],
+                &identity,
+                &mut r2,
+            )
+            .expect("cached init");
+            cached_total_us += t1.elapsed().as_micros();
+            drop(engine);
+        }
+        let uncached_avg_us = uncached_total_us / u128::from(iterations);
+        let cached_avg_us = cached_total_us / u128::from(iterations);
+
+        // Multi-datagram handshake step count: popping 1 datagram per step vs draining all per step.
+        let count_handshake_steps = |drain_all: bool| -> usize {
+            let mut srv_res = DtlsSrtpResources::new();
+            let mut cli_res = DtlsSrtpResources::new();
+            let mut srv = DtlsSrtpEngine::new_with_identity(
+                DtlsRole::Server,
+                [0x42; 32],
+                &identity,
+                &mut srv_res,
+            )
+            .expect("srv");
+            let mut cli = DtlsSrtpEngine::new_with_identity(
+                DtlsRole::Client,
+                [0x99; 32],
+                &identity,
+                &mut cli_res,
+            )
+            .expect("cli");
+            srv.set_mtu(300);
+            cli.set_mtu(300);
+            srv.set_peer_transport_id(b"verified-ice-peer")
+                .expect("peer id");
+            let mut wire = [0u8; 1500];
+            let mut steps = 0usize;
+            let mut cli_done = false;
+            let mut srv_done = false;
+            while !(cli_done && srv_done) && steps < 64 {
+                steps += 1;
+                if !cli_done {
+                    cli_done = cli.step(steps as u64 * 10).expect("cli step");
+                }
+                if drain_all {
+                    while let Some(len) = cli.pop_outbound_datagram(&mut wire) {
+                        srv.push_inbound_datagram(&wire[..len]).expect("srv push");
+                        if !srv_done {
+                            srv_done = srv.step(steps as u64 * 10).expect("srv step");
+                        }
+                    }
+                } else if let Some(len) = cli.pop_outbound_datagram(&mut wire) {
+                    srv.push_inbound_datagram(&wire[..len]).expect("srv push");
+                    if !srv_done {
+                        srv_done = srv.step(steps as u64 * 10).expect("srv step");
+                    }
+                }
+                if !srv_done {
+                    srv_done = srv.step(steps as u64 * 10).expect("srv step");
+                }
+                if drain_all {
+                    while let Some(len) = srv.pop_outbound_datagram(&mut wire) {
+                        cli.push_inbound_datagram(&wire[..len]).expect("cli push");
+                        if !cli_done {
+                            cli_done = cli.step(steps as u64 * 10).expect("cli step");
+                        }
+                    }
+                } else if let Some(len) = srv.pop_outbound_datagram(&mut wire) {
+                    cli.push_inbound_datagram(&wire[..len]).expect("cli push");
+                    if !cli_done {
+                        cli_done = cli.step(steps as u64 * 10).expect("cli step");
+                    }
+                }
+            }
+            assert!(cli_done && srv_done);
+            steps
+        };
+
+        let single_pop_steps = count_handshake_steps(false);
+        let multi_drain_steps = count_handshake_steps(true);
+        std::println!(
+            "DTLS startup benchmark: uncached_avg_us={uncached_avg_us} cached_avg_us={cached_avg_us} single_pop_steps={single_pop_steps} multi_drain_steps={multi_drain_steps}"
+        );
+        assert!(
+            cached_avg_us < uncached_avg_us,
+            "expected cached init ({cached_avg_us} us) < uncached ({uncached_avg_us} us)"
+        );
+        assert!(
+            multi_drain_steps < single_pop_steps,
+            "expected multi-drain steps ({multi_drain_steps}) < single-pop steps ({single_pop_steps})"
+        );
     }
 }

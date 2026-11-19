@@ -27,6 +27,7 @@ int intercom_mbedtls_printf(const char *format, ...);
 #define MBEDTLS_ECDH_C
 #define MBEDTLS_ECP_C
 #define MBEDTLS_ECP_DP_SECP256R1_ENABLED
+#define MBEDTLS_ECP_NIST_OPTIM
 #define MBEDTLS_BIGNUM_C
 #define MBEDTLS_ASN1_PARSE_C
 #define MBEDTLS_ASN1_WRITE_C

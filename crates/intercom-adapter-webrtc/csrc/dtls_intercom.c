@@ -17,6 +17,11 @@
 #include <string.h>
 
 typedef struct {
+    uint8_t seed[32];
+    uint32_t entropy_counter;
+} intercom_entropy_state;
+
+typedef struct {
     mbedtls_ssl_context ssl;
     mbedtls_ssl_config config;
     mbedtls_ctr_drbg_context ctr_drbg;
@@ -24,8 +29,7 @@ typedef struct {
     mbedtls_x509_crt local_cert;
     mbedtls_pk_context local_key;
     mbedtls_ssl_srtp_profile srtp_profiles[2];
-    uint8_t seed[32];
-    uint32_t entropy_counter;
+    intercom_entropy_state entropy;
     uint64_t now_ms;
     uint64_t timer_start_ms;
     uint32_t timer_intermediate_ms;
@@ -41,9 +45,11 @@ typedef struct {
     uint16_t client_hello_fragment_seq;
     uint8_t client_hello_record_header[13];
     bool client_hello_fragment_active;
-    uint8_t output[INTERCOM_DTLS_DATAGRAM_MAX];
-    size_t output_length;
-    bool output_pending;
+    uint8_t output_slots[INTERCOM_DTLS_OUTPUT_SLOTS][INTERCOM_DTLS_DATAGRAM_MAX];
+    size_t output_lengths[INTERCOM_DTLS_OUTPUT_SLOTS];
+    size_t output_head;
+    size_t output_tail;
+    size_t output_count;
     uint8_t exported_keys[60];
     bool keys_ready;
     int export_error;
@@ -104,14 +110,14 @@ int intercom_mbedtls_printf(const char *format, ...)
 static int intercom_seed_entropy(void *context, unsigned char *output,
                                  size_t length)
 {
-    intercom_dtls_state *state = (intercom_dtls_state *) context;
+    intercom_entropy_state *entropy = (intercom_entropy_state *) context;
     uint8_t input[36];
     uint8_t digest[32];
     size_t copied = 0;
 
-    memcpy(input, state->seed, sizeof(state->seed));
+    memcpy(input, entropy->seed, sizeof(entropy->seed));
     while (copied < length) {
-        const uint32_t counter = state->entropy_counter++;
+        const uint32_t counter = entropy->entropy_counter++;
         input[32] = (uint8_t) (counter >> 24);
         input[33] = (uint8_t) (counter >> 16);
         input[34] = (uint8_t) (counter >> 8);
@@ -131,15 +137,16 @@ static int intercom_seed_entropy(void *context, unsigned char *output,
 static int intercom_bio_send(void *context, const unsigned char *data, size_t length)
 {
     intercom_dtls_state *state = (intercom_dtls_state *) context;
-    if (state->output_pending) {
+    if (state->output_count >= INTERCOM_DTLS_OUTPUT_SLOTS) {
         return MBEDTLS_ERR_SSL_WANT_WRITE;
     }
-    if (length > sizeof(state->output)) {
+    if (length > INTERCOM_DTLS_DATAGRAM_MAX) {
         return MBEDTLS_ERR_SSL_BUFFER_TOO_SMALL;
     }
-    memcpy(state->output, data, length);
-    state->output_length = length;
-    state->output_pending = true;
+    memcpy(state->output_slots[state->output_tail], data, length);
+    state->output_lengths[state->output_tail] = length;
+    state->output_tail = (state->output_tail + 1) % INTERCOM_DTLS_OUTPUT_SLOTS;
+    state->output_count++;
     return (int) length;
 }
 
@@ -324,26 +331,59 @@ static void intercom_export_srtp_keys(void *context,
     state->keys_ready = state->export_error == 0;
 }
 
-static int intercom_make_self_signed_certificate(intercom_dtls_state *state)
+static int intercom_write_self_signed_cert_der(mbedtls_pk_context *key,
+                                               mbedtls_ctr_drbg_context *ctr_drbg,
+                                               const uint8_t seed[32],
+                                               uint8_t *der_scratch,
+                                               size_t der_scratch_size,
+                                               const unsigned char **cert_start_out,
+                                               size_t *cert_len_out)
 {
     int result;
     mbedtls_x509write_cert writer;
     uint8_t serial[16];
     memset(&writer, 0, sizeof(writer));
-    memcpy(serial, state->seed, sizeof(serial));
+    memcpy(serial, seed, sizeof(serial));
     serial[0] |= 0x01;
 
-    if ((result = mbedtls_pk_setup(&state->local_key,
-                                   mbedtls_pk_info_from_type(MBEDTLS_PK_ECKEY))) != 0) {
+    if ((result = mbedtls_pk_setup(key, mbedtls_pk_info_from_type(MBEDTLS_PK_ECKEY))) != 0) {
         return result;
     }
     if ((result = mbedtls_ecp_gen_key(MBEDTLS_ECP_DP_SECP256R1,
-                                      mbedtls_pk_ec(state->local_key),
+                                      mbedtls_pk_ec(*key),
                                       mbedtls_ctr_drbg_random,
-                                      &state->ctr_drbg)) != 0) {
+                                      ctr_drbg)) != 0) {
         return result;
     }
 
+    mbedtls_x509write_crt_init(&writer);
+    mbedtls_x509write_crt_set_version(&writer, MBEDTLS_X509_CRT_VERSION_3);
+    mbedtls_x509write_crt_set_md_alg(&writer, MBEDTLS_MD_SHA256);
+    mbedtls_x509write_crt_set_subject_key(&writer, key);
+    mbedtls_x509write_crt_set_issuer_key(&writer, key);
+    if ((result = mbedtls_x509write_crt_set_subject_name(&writer, "CN=Intercom Audio")) != 0 ||
+        (result = mbedtls_x509write_crt_set_issuer_name(&writer, "CN=Intercom Audio")) != 0 ||
+        (result = mbedtls_x509write_crt_set_serial_raw(&writer, serial, sizeof(serial))) != 0 ||
+        (result = mbedtls_x509write_crt_set_validity(&writer, "20260101000000", "20360101000000")) != 0 ||
+        (result = mbedtls_x509write_crt_set_basic_constraints(&writer, 0, -1)) != 0) {
+        mbedtls_x509write_crt_free(&writer);
+        return result;
+    }
+
+    const int der_length = mbedtls_x509write_crt_der(&writer, der_scratch, der_scratch_size,
+                                                     mbedtls_ctr_drbg_random,
+                                                     ctr_drbg);
+    mbedtls_x509write_crt_free(&writer);
+    if (der_length <= 0) {
+        return der_length == 0 ? MBEDTLS_ERR_X509_BAD_INPUT_DATA : der_length;
+    }
+    *cert_start_out = der_scratch + der_scratch_size - (size_t) der_length;
+    *cert_len_out = (size_t) der_length;
+    return 0;
+}
+
+static int intercom_make_self_signed_certificate(intercom_dtls_state *state)
+{
     // P-256 certificate generation already has a deep call stack on the C6.
     // Keep the DER scratch space in the bounded Mbed TLS arena instead of
     // consuming another 2 KiB of the Embassy main task stack.
@@ -351,39 +391,86 @@ static int intercom_make_self_signed_certificate(intercom_dtls_state *state)
     if (der == NULL) {
         return MBEDTLS_ERR_X509_ALLOC_FAILED;
     }
-
-    mbedtls_x509write_crt_init(&writer);
-    mbedtls_x509write_crt_set_version(&writer, MBEDTLS_X509_CRT_VERSION_3);
-    mbedtls_x509write_crt_set_md_alg(&writer, MBEDTLS_MD_SHA256);
-    mbedtls_x509write_crt_set_subject_key(&writer, &state->local_key);
-    mbedtls_x509write_crt_set_issuer_key(&writer, &state->local_key);
-    if ((result = mbedtls_x509write_crt_set_subject_name(&writer, "CN=Intercom Audio")) != 0 ||
-        (result = mbedtls_x509write_crt_set_issuer_name(&writer, "CN=Intercom Audio")) != 0 ||
-        (result = mbedtls_x509write_crt_set_serial_raw(&writer, serial, sizeof(serial))) != 0 ||
-        (result = mbedtls_x509write_crt_set_validity(&writer, "20260101000000", "20360101000000")) != 0 ||
-        (result = mbedtls_x509write_crt_set_basic_constraints(&writer, 0, -1)) != 0) {
-        mbedtls_x509write_crt_free(&writer);
-        mbedtls_free(der);
-        return result;
+    const unsigned char *der_start = NULL;
+    size_t der_length = 0;
+    int result = intercom_write_self_signed_cert_der(
+        &state->local_key, &state->ctr_drbg, state->entropy.seed,
+        der, 2048, &der_start, &der_length);
+    if (result == 0) {
+        result = mbedtls_x509_crt_parse_der(&state->local_cert, der_start, der_length);
     }
-
-    const int der_length = mbedtls_x509write_crt_der(&writer, der, 2048,
-                                                     mbedtls_ctr_drbg_random,
-                                                     &state->ctr_drbg);
-    mbedtls_x509write_crt_free(&writer);
-    if (der_length <= 0) {
-        mbedtls_free(der);
-        return der_length;
+    if (result == 0) {
+        result = mbedtls_sha256(der_start, der_length, state->local_fingerprint, 0);
     }
-    const unsigned char *der_start = der + 2048 - (size_t) der_length;
-    if ((result = mbedtls_x509_crt_parse_der(&state->local_cert, der_start,
-                                             (size_t) der_length)) != 0) {
-        mbedtls_free(der);
-        return result;
-    }
-    result = mbedtls_sha256(der_start, (size_t) der_length,
-                            state->local_fingerprint, 0);
     mbedtls_free(der);
+    return result;
+}
+
+int intercom_dtls_generate_identity(const unsigned char seed[32],
+                                    unsigned char *cert_der_out,
+                                    size_t cert_der_capacity,
+                                    size_t *cert_der_len_out,
+                                    unsigned char *key_der_out,
+                                    size_t key_der_capacity,
+                                    size_t *key_der_len_out,
+                                    unsigned char fingerprint_out[32])
+{
+    if (seed == NULL || cert_der_out == NULL || cert_der_len_out == NULL ||
+        key_der_out == NULL || key_der_len_out == NULL || fingerprint_out == NULL ||
+        !g_heap_initialized) {
+        return MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
+    }
+
+    intercom_entropy_state entropy;
+    memset(&entropy, 0, sizeof(entropy));
+    memcpy(entropy.seed, seed, sizeof(entropy.seed));
+
+    mbedtls_ctr_drbg_context ctr_drbg;
+    mbedtls_pk_context key;
+    mbedtls_ctr_drbg_init(&ctr_drbg);
+    mbedtls_pk_init(&key);
+
+    uint8_t *der = mbedtls_calloc(1, 2048);
+    if (der == NULL) {
+        mbedtls_pk_free(&key);
+        mbedtls_ctr_drbg_free(&ctr_drbg);
+        return MBEDTLS_ERR_X509_ALLOC_FAILED;
+    }
+
+    int result = mbedtls_ctr_drbg_seed(&ctr_drbg, intercom_seed_entropy,
+                                       &entropy, entropy.seed, sizeof(entropy.seed));
+    const unsigned char *cert_start = NULL;
+    size_t cert_len = 0;
+    if (result == 0) {
+        result = intercom_write_self_signed_cert_der(
+            &key, &ctr_drbg, entropy.seed, der, 2048, &cert_start, &cert_len);
+    }
+    if (result == 0) {
+        if (cert_len > cert_der_capacity) {
+            result = MBEDTLS_ERR_SSL_BUFFER_TOO_SMALL;
+        } else {
+            memcpy(cert_der_out, cert_start, cert_len);
+            *cert_der_len_out = cert_len;
+            result = mbedtls_sha256(cert_start, cert_len, fingerprint_out, 0);
+        }
+    }
+    if (result == 0) {
+        uint8_t key_scratch[512];
+        const int key_len = mbedtls_pk_write_key_der(&key, key_scratch, sizeof(key_scratch));
+        if (key_len <= 0) {
+            result = key_len == 0 ? MBEDTLS_ERR_PK_BAD_INPUT_DATA : key_len;
+        } else if ((size_t) key_len > key_der_capacity) {
+            result = MBEDTLS_ERR_SSL_BUFFER_TOO_SMALL;
+        } else {
+            memcpy(key_der_out, key_scratch + sizeof(key_scratch) - (size_t) key_len, (size_t) key_len);
+            *key_der_len_out = (size_t) key_len;
+        }
+        memset(key_scratch, 0, sizeof(key_scratch));
+    }
+
+    mbedtls_free(der);
+    mbedtls_pk_free(&key);
+    mbedtls_ctr_drbg_free(&ctr_drbg);
     return result;
 }
 
@@ -411,8 +498,13 @@ size_t intercom_dtls_state_size(void)
     return sizeof(intercom_dtls_state);
 }
 
-int intercom_dtls_init(void *storage, size_t storage_length, int role,
-                       const unsigned char seed[32])
+static int intercom_dtls_init_common(void *storage, size_t storage_length, int role,
+                                     const unsigned char seed[32],
+                                     const unsigned char *cert_der,
+                                     size_t cert_der_len,
+                                     const unsigned char *key_der,
+                                     size_t key_der_len,
+                                     const unsigned char *fingerprint)
 {
     if (storage == NULL || storage_length < sizeof(intercom_dtls_state) ||
         seed == NULL || !g_heap_initialized ||
@@ -422,7 +514,7 @@ int intercom_dtls_init(void *storage, size_t storage_length, int role,
     intercom_dtls_state *state = (intercom_dtls_state *) storage;
     memset(state, 0, sizeof(*state));
     state->is_server = role == MBEDTLS_SSL_IS_SERVER;
-    memcpy(state->seed, seed, sizeof(state->seed));
+    memcpy(state->entropy.seed, seed, sizeof(state->entropy.seed));
     state->client_hello_fragment_data = mbedtls_calloc(
         1, INTERCOM_DTLS_CLIENT_HELLO_CAPACITY);
     if (state->client_hello_fragment_data == NULL) {
@@ -437,7 +529,8 @@ int intercom_dtls_init(void *storage, size_t storage_length, int role,
     mbedtls_pk_init(&state->local_key);
 
     int result = mbedtls_ctr_drbg_seed(&state->ctr_drbg, intercom_seed_entropy,
-                                       state, state->seed, sizeof(state->seed));
+                                       &state->entropy, state->entropy.seed,
+                                       sizeof(state->entropy.seed));
     if (result != 0) {
         goto fail;
     }
@@ -446,9 +539,22 @@ int intercom_dtls_init(void *storage, size_t storage_length, int role,
     if (result != 0) {
         goto fail;
     }
-    result = intercom_make_self_signed_certificate(state);
-    if (result != 0) {
-        goto fail;
+    if (cert_der != NULL && key_der != NULL && fingerprint != NULL) {
+        result = mbedtls_x509_crt_parse_der(&state->local_cert, cert_der, cert_der_len);
+        if (result != 0) {
+            goto fail;
+        }
+        result = mbedtls_pk_parse_key(&state->local_key, key_der, key_der_len,
+                                      NULL, 0, mbedtls_ctr_drbg_random, &state->ctr_drbg);
+        if (result != 0) {
+            goto fail;
+        }
+        memcpy(state->local_fingerprint, fingerprint, sizeof(state->local_fingerprint));
+    } else {
+        result = intercom_make_self_signed_certificate(state);
+        if (result != 0) {
+            goto fail;
+        }
     }
     result = mbedtls_ssl_config_defaults(&state->config, role,
                                         MBEDTLS_SSL_TRANSPORT_DATAGRAM,
@@ -511,6 +617,30 @@ fail:
     return result;
 }
 
+int intercom_dtls_init(void *storage, size_t storage_length, int role,
+                       const unsigned char seed[32])
+{
+    return intercom_dtls_init_common(storage, storage_length, role, seed,
+                                     NULL, 0, NULL, 0, NULL);
+}
+
+int intercom_dtls_init_with_identity(void *storage, size_t storage_length, int role,
+                                     const unsigned char seed[32],
+                                     const unsigned char *cert_der,
+                                     size_t cert_der_len,
+                                     const unsigned char *key_der,
+                                     size_t key_der_len,
+                                     const unsigned char fingerprint[32])
+{
+    if (cert_der == NULL || cert_der_len == 0 ||
+        key_der == NULL || key_der_len == 0 || fingerprint == NULL) {
+        return MBEDTLS_ERR_SSL_BAD_INPUT_DATA;
+    }
+    return intercom_dtls_init_common(storage, storage_length, role, seed,
+                                     cert_der, cert_der_len,
+                                     key_der, key_der_len, fingerprint);
+}
+
 void intercom_dtls_free(void *storage)
 {
     if (storage == NULL) {
@@ -565,7 +695,21 @@ int intercom_dtls_set_peer_transport_id(void *storage, const unsigned char *data
     }
     memcpy(state->peer_transport_id, data, length);
     state->peer_transport_id_length = length;
+    // Peer address is already authenticated by ICE-Lite STUN MESSAGE-INTEGRITY;
+    // skip the HelloVerifyRequest round-trip to cut DTLS startup latency.
+    mbedtls_ssl_conf_dtls_cookies(&state->config, NULL, NULL, NULL);
     return mbedtls_ssl_set_client_transport_id(&state->ssl, data, length);
+}
+
+void intercom_dtls_set_mtu(void *storage, uint16_t mtu)
+{
+    if (storage == NULL) {
+        return;
+    }
+    intercom_dtls_state *state = (intercom_dtls_state *) storage;
+    if (state->initialized) {
+        mbedtls_ssl_set_mtu(&state->ssl, mtu);
+    }
 }
 
 int intercom_dtls_step(void *storage, uint64_t now_ms)
@@ -630,13 +774,17 @@ size_t intercom_dtls_pop_output(void *storage, unsigned char *output, size_t cap
         return 0;
     }
     intercom_dtls_state *state = (intercom_dtls_state *) storage;
-    if (!state->output_pending || state->output_length > capacity) {
+    if (state->output_count == 0) {
         return 0;
     }
-    memcpy(output, state->output, state->output_length);
-    const size_t length = state->output_length;
-    state->output_pending = false;
-    state->output_length = 0;
+    const size_t length = state->output_lengths[state->output_head];
+    if (length > capacity) {
+        return 0;
+    }
+    memcpy(output, state->output_slots[state->output_head], length);
+    state->output_lengths[state->output_head] = 0;
+    state->output_head = (state->output_head + 1) % INTERCOM_DTLS_OUTPUT_SLOTS;
+    state->output_count--;
     return length;
 }
 

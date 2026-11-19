@@ -9,9 +9,7 @@ use embassy_net::tcp::TcpSocket;
 use embassy_net::Stack;
 use embassy_time::{Duration, Timer};
 use intercom_adapter_webrtc::session::WebRtcSessionHandle;
-use intercom_adapter_webrtc::signaling::{
-    SecureRandom, SignalingError, WebRtcSignalingFacade,
-};
+use intercom_adapter_webrtc::signaling::{SecureRandom, SignalingError, WebRtcSignalingFacade};
 use intercom_core::domain::ecosystem::{EcosystemId, EcosystemType};
 use intercom_core::domain::intercom::SessionOwner;
 use intercom_core::events::SystemStateSender;
@@ -28,6 +26,7 @@ use crate::config::{
     HttpServerConfig, HTTP_BUFFER_SIZE, JSON_BUFFER_SIZE, LOG_BUFFER_SIZE,
     STREAM_WRITE_BUFFER_SIZE, TCP_RX_BUFFER_SIZE, TCP_TX_BUFFER_SIZE,
 };
+use crate::router::MemorySnapshot;
 use crate::DASHBOARD_HTML_GZ;
 
 // ============================================================================
@@ -42,11 +41,7 @@ pub trait DebugWebRtcSignaling {
 
 impl<R: SecureRandom> DebugWebRtcSignaling for WebRtcSignalingFacade<'_, R> {
     fn accept_offer(&self, offer: &str, answer_out: &mut [u8]) -> Result<usize, SignalingError> {
-        self.accept_offer_for_owner(
-            offer,
-            answer_out,
-            SessionOwner::HttpDebug,
-        )
+        self.accept_offer_for_owner(offer, answer_out, SessionOwner::HttpDebug)
     }
 
     fn stop(&self) {
@@ -65,6 +60,7 @@ pub(crate) struct AppState<
     pub(crate) access_handle: AccessControllerHandle<'a>,
     pub(crate) bus_safety: &'a dyn BusSafetyDriver,
     pub(crate) diagnostics: &'a DiagnosticsService<'a, H, E, T>,
+    pub(crate) memory_info: Option<fn() -> MemorySnapshot>,
     pub(crate) ota_busy: Option<&'a core::cell::Cell<bool>>,
     pub(crate) ota_driver: &'a core::cell::RefCell<&'a mut O>,
     pub(crate) state_sender: Option<SystemStateSender<'a>>,
@@ -122,6 +118,7 @@ pub struct HttpServer<
     audio_media: Option<crate::HttpAudioMedia<'a>>,
     webrtc_session: Option<&'a WebRtcSessionHandle<'a>>,
     debug_webrtc_signaling: Option<&'a dyn DebugWebRtcSignaling>,
+    memory_info: Option<fn() -> MemorySnapshot>,
 }
 
 impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, T: EcosystemType>
@@ -148,6 +145,7 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, T: Ec
             audio_media: None,
             webrtc_session: None,
             debug_webrtc_signaling: None,
+            memory_info: None,
             log_provider,
             config,
         }
@@ -186,6 +184,7 @@ impl<
             audio_media: None,
             webrtc_session: None,
             debug_webrtc_signaling: None,
+            memory_info: None,
             log_provider,
             config,
         }
@@ -197,6 +196,12 @@ impl<
         self
     }
 
+    /// Attach a provider for internal RAM and external PSRAM allocator statistics.
+    pub fn with_memory_info_provider(mut self, provider: fn() -> MemorySnapshot) -> Self {
+        self.memory_info = Some(provider);
+        self
+    }
+
     /// Attach the WebRTC session so OTA can wait for active media buffers to be released.
     pub fn with_webrtc_session(mut self, session: &'a WebRtcSessionHandle<'a>) -> Self {
         self.webrtc_session = Some(session);
@@ -204,10 +209,7 @@ impl<
     }
 
     /// Attach the signaling facade used by the Debug UI's shared WebRTC session.
-    pub fn with_debug_webrtc_signaling(
-        mut self,
-        signaling: &'a dyn DebugWebRtcSignaling,
-    ) -> Self {
+    pub fn with_debug_webrtc_signaling(mut self, signaling: &'a dyn DebugWebRtcSignaling) -> Self {
         self.debug_webrtc_signaling = Some(signaling);
         self
     }
@@ -228,6 +230,7 @@ impl<
             audio_media: self.audio_media,
             webrtc_session: self.webrtc_session,
             debug_webrtc_signaling: self.debug_webrtc_signaling,
+            memory_info: self.memory_info,
             log_provider: self.log_provider,
             config: self.config,
         }
@@ -264,6 +267,7 @@ impl<
             audio_media: self.audio_media,
             webrtc_session: self.webrtc_session,
             debug_webrtc_signaling: self.debug_webrtc_signaling,
+            memory_info: self.memory_info,
             tarpit_delay: self.config.tarpit_delay,
             read_request_timeout: self.config.read_request_timeout,
             had_error: &had_error,
@@ -312,6 +316,7 @@ impl<
         let audio_media = self.audio_media;
         let webrtc_session = self.webrtc_session;
         let debug_webrtc_signaling = self.debug_webrtc_signaling;
+        let memory_info = self.memory_info;
         let log_provider = self.log_provider;
         let proxy = crate::ota_proxy::OtaProxy::new();
         let picoserve_config = picoserve::Config::new(picoserve::Timeouts {
@@ -343,6 +348,7 @@ impl<
                     audio_media,
                     webrtc_session,
                     debug_webrtc_signaling,
+                    memory_info,
                     tarpit_delay: config.tarpit_delay,
                     read_request_timeout: config.read_request_timeout,
                     had_error: &had_error,
@@ -425,7 +431,20 @@ fn build_router<
                 >| async move {
                     let diag = state.diagnostics.snapshot();
                     let mut json_buf = [0u8; JSON_BUFFER_SIZE];
-                    let json_str = match crate::router::format_status_json(&diag, &mut json_buf) {
+                    let memory = state.memory_info.map(|provider| provider()).unwrap_or(
+                        MemorySnapshot {
+                            internal: crate::router::MemoryRegion {
+                                free_bytes: diag.free_heap_bytes,
+                                total_bytes: diag.total_heap_bytes,
+                            },
+                            psram: None,
+                        },
+                    );
+                    let json_str = match crate::router::format_status_json_with_memory(
+                        &diag,
+                        memory,
+                        &mut json_buf,
+                    ) {
                         Ok(len) => alloc::string::String::from(
                             core::str::from_utf8(&json_buf[..len]).unwrap_or("{}"),
                         ),
@@ -763,7 +782,9 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, T: Ec
             .headers()
             .get("content-length")
             .and_then(|value| value.as_str().ok()?.parse::<usize>().ok());
-        let Some(content_length) = content_length.filter(|len| *len > 0 && *len <= DEBUG_SDP_BUFFER_SIZE) else {
+        let Some(content_length) =
+            content_length.filter(|len| *len > 0 && *len <= DEBUG_SDP_BUFFER_SIZE)
+        else {
             return picoserve::response::Response::new(
                 picoserve::response::StatusCode::BAD_REQUEST,
                 "invalid SDP body length",

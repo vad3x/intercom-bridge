@@ -11,6 +11,7 @@ pub mod config;
 pub mod devkit_led;
 pub mod disabled_ota;
 pub mod hardware_info;
+pub mod platform;
 pub mod reset;
 pub mod utils;
 pub mod version;

@@ -1,0 +1,5 @@
+schema: spec-driven
+created: 2026-11-17
+goal: Verify S31 hardware behavior against the migration acceptance criteria on
+  physical hardware.
+skip_specs: true

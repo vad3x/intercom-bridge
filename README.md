@@ -101,6 +101,35 @@ mise exec -- cargo build -p intercom-firmware
 
 The resulting binary is located at `target/riscv32imac-unknown-none-elf/debug/intercom-bridge`.
 
+#### ESP32-S3-N16R8
+
+The S3-N16R8 profile has 16 MiB Quad SPI flash, 8 MiB Octal SPI PSRAM, and a WS2812 RGB indicator routed to GPIO47 in the supplied board pinout. The shared RMT LED driver uses GRB color order. Because prebuilt Xtensa Rust toolchains are not distributed for x86_64 macOS, `scripts/cargo-s3` encapsulates the build inside the pinned Linux container `espressif/idf-rust:esp32s3_1.95.0.0` (Rust `1.95.0.0`, target `xtensa-esp32s3-none-elf`, `rust-src`, and Xtensa GCC/binutils `15.2.0`), while flashing runs on the macOS host via `espflash`:
+
+```bash
+# Build S3 release ELF (via Docker container):
+mise exec -- cargo build-s3
+
+# Build S3 4MB factory-only ELF (via Docker container):
+mise exec -- cargo build-s3-factory
+
+# Flash the built S3 ELF from the macOS host:
+mise exec -- cargo flash-s3 --port "$S3_PORT"
+```
+
+The current rollback-capable partition table uses the first 8 MiB of flash. Confirm the release ELF fits its `0x350000`-byte app slot before packaging or flashing. Board-specific pins and bring-up checks are listed in [docs/hardware/esp32-s3-bring-up.md](docs/hardware/esp32-s3-bring-up.md); verify the exact dev-board revision before connecting fixtures.
+
+### Signed OTA image packaging
+
+`scripts/ota.py` keeps the ESP32-C6 / 8 MiB defaults. For an S3-N16R8 build, pass the chip, flash capacity, partition table, and target app partition explicitly:
+
+```bash
+python3 scripts/ota.py --target "$S3_IP" --chip esp32s3 --flash-size 16mb \
+    --partition-table partitions.csv --target-app-partition ota_0 \
+    target/xtensa-esp32s3-none-elf/release/intercom-bridge
+```
+
+The OTA tool uses the selected app partition's capacity to reject oversized images and checks the ESP image chip ID. `espflash save-image` receives its supported `--chip` and `--flash-size` options; the OTA server chooses the inactive slot when it stages the signed upload.
+
 ### 3. Flash & Monitor
 
 Build, flash to the connected ESP32-C6 (8 MB production board), and open the serial monitor in one command:

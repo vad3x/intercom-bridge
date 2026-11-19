@@ -26,6 +26,7 @@ use intercom_media::{
 };
 
 use crate::pcm_slots::{decode_frame, encode_frame, DMA_FRAME_BYTES};
+use crate::{forwards_hardware_capture, I2sCaptureSource};
 
 /// Owns the continuous RX and TX streams, including their static DMA buffers.
 pub struct I2sAudioPipeline {
@@ -90,14 +91,25 @@ impl I2sAudioPipeline {
 
     /// Runs until a DMA failure. Dropping the pipeline then stops both streams.
     pub async fn run(
+        self,
+        rx_sender: RxAudioSender<'_>,
+        tx_receiver: TxAudioReceiver<'_>,
+    ) -> Result<(), DmaError> {
+        self.run_with_capture_source(rx_sender, tx_receiver, I2sCaptureSource::Codec)
+            .await
+    }
+
+    /// Run the DMA streams while optionally routing input from an embedded source.
+    pub async fn run_with_capture_source(
         mut self,
         rx_sender: RxAudioSender<'_>,
         tx_receiver: TxAudioReceiver<'_>,
+        capture_source: I2sCaptureSource,
     ) -> Result<(), DmaError> {
         // A failed stream cannot progress. Return its error so the composition
         // root can reset safely instead of repeatedly polling a stopped DMA.
         match select(
-            Self::receive_frames(&mut self.rx_transfer, rx_sender),
+            Self::receive_frames(&mut self.rx_transfer, rx_sender, capture_source),
             Self::transmit_frames(&mut self.tx_transfer, tx_receiver),
         )
         .await
@@ -109,6 +121,7 @@ impl I2sAudioPipeline {
     async fn receive_frames(
         transfer: &mut I2sRxDmaTransfer<'static, Async, DmaRxStreamBuf>,
         mut sender: RxAudioSender<'_>,
+        capture_source: I2sCaptureSource,
     ) -> Result<(), DmaError> {
         let mut input_window = AudioFrameDropWindow::new();
         let mut max_dma_backlog_frames = 0usize;
@@ -127,11 +140,15 @@ impl I2sAudioPipeline {
                 .ok_or(DmaError::BufferTooSmall)?;
             let frame = decode_frame(raw);
             transfer.consume(DMA_FRAME_BYTES);
-            let levels = compute_frame_levels_dbfs(&frame);
-            update_rx_levels_dbfs(levels.rms_dbfs, levels.peak_dbfs);
-            let queue_dropped = sender.try_send_frame(frame).is_err();
+            let queue_dropped = if forwards_hardware_capture(capture_source) {
+                let levels = compute_frame_levels_dbfs(&frame);
+                update_rx_levels_dbfs(levels.rms_dbfs, levels.peak_dbfs);
+                sender.try_send_frame(frame).is_err()
+            } else {
+                false
+            };
             if let Some(queue_drops) = input_window.record(queue_dropped) {
-                log::info!(
+                log::debug!(
                     "I2S audio input window frames={} queue_drops={} max_dma_backlog_frames={}",
                     AUDIO_FRAME_DROP_WINDOW_FRAMES,
                     queue_drops,

@@ -5,6 +5,12 @@ edition.workspace = true
 license.workspace = true
 description = "TLV320AIC3204 I2C codec driver and 16 kHz ESP32-C6 I2S GDMA audio pipeline"
 
+[features]
+default = ["esp32c6"]
+esp32c6 = []
+esp32s31 = []
+esp32s3 = []
+
 [dependencies]
 embedded-hal = { workspace = true }
 embassy-futures = { workspace = true }
@@ -14,5 +20,5 @@ intercom-media = { path = "../intercom-media" }
 log = { workspace = true }
 portable-atomic = { workspace = true }
 
-[target.'cfg(target_arch = "riscv32")'.dependencies]
+[target.'cfg(target_os = "none")'.dependencies]
 esp-hal = { workspace = true }

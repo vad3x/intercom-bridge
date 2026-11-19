@@ -1,133 +1,47 @@
-//! Intercom Bridge - ESP32-C6 Firmware Composition Root
+//! Intercom Bridge - Firmware Composition Root
 //!
 //! Door lock control and ring detection via Apple Home (HomeKit)
 //! using the Matter protocol over WiFi with BLE commissioning.
-//!
-//! Hardware: PCB v2.0 with ESP32-C6
-//! Protocol: Matter over WiFi (BLE for commissioning)
-#![cfg_attr(target_arch = "riscv32", no_std)]
-#![cfg_attr(target_arch = "riscv32", no_main)]
+#![no_std]
+#![no_main]
 #![recursion_limit = "256"]
 #![allow(unexpected_cfgs, async_fn_in_trait)]
 
-#[cfg(not(target_arch = "riscv32"))]
-fn main() {}
-
-#[cfg(target_arch = "riscv32")]
 extern crate alloc;
 
-#[cfg(target_arch = "riscv32")]
-mod config;
-#[cfg(target_arch = "riscv32")]
-mod hardware_info;
-#[cfg(target_arch = "riscv32")]
-mod reset;
-#[cfg(target_arch = "riscv32")]
-mod utils;
-#[cfg(target_arch = "riscv32")]
-mod version;
-
-#[cfg(target_arch = "riscv32")]
-use core::mem::MaybeUninit;
-#[cfg(target_arch = "riscv32")]
-use core::pin::pin;
-
-#[cfg(target_arch = "riscv32")]
-use embassy_executor::Spawner;
-#[cfg(target_arch = "riscv32")]
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-#[cfg(target_arch = "riscv32")]
-use embassy_sync::channel::Channel;
-#[cfg(target_arch = "riscv32")]
-#[cfg(target_arch = "riscv32")]
-use esp_alloc::heap_allocator;
-#[cfg(target_arch = "riscv32")]
-use esp_backtrace as _;
-#[cfg(target_arch = "riscv32")]
-use esp_hal::ram;
-#[cfg(target_arch = "riscv32")]
-use esp_hal::timer::timg::TimerGroup;
-#[cfg(target_arch = "riscv32")]
-use esp_metadata_generated::memory_range;
-#[cfg(target_arch = "riscv32")]
-use log::{info, warn};
-#[cfg(target_arch = "riscv32")]
-use static_cell::StaticCell;
-
-#[cfg(target_arch = "riscv32")]
-#[cfg(feature = "dummy-persist")]
-use rs_matter_embassy::matter::persist::DummyKvBlobStore;
-
-#[cfg(target_arch = "riscv32")]
-use intercom_core::app::App;
-#[cfg(target_arch = "riscv32")]
-use intercom_core::events::{SystemStateSender, SystemStateWatch};
-#[cfg(target_arch = "riscv32")]
-use intercom_core::ports::inbound::{AccessControllerHandle, CommandChannel};
-#[cfg(target_arch = "riscv32")]
-use intercom_core::service::DiagnosticsService;
-
-#[cfg(target_arch = "riscv32")]
-#[cfg(not(feature = "ota-disabled"))]
-use edf_ota::driver::FlashOtaDriver;
-#[cfg(target_arch = "riscv32")]
-use intercom_adapter_http::{HttpAudioMedia, HttpServer, HttpServerConfig};
-#[cfg(target_arch = "riscv32")]
-use intercom_adapter_webrtc::dtls::{DtlsSrtpResourceCell, DtlsSrtpResources};
-#[cfg(target_arch = "riscv32")]
-use intercom_adapter_webrtc::session::{
-    WebRtcMediaEngine, WebRtcMediaResources, WebRtcSessionConfig, WebRtcSessionHandle,
-};
-#[cfg(target_arch = "riscv32")]
-use intercom_adapter_webrtc::signaling::{SecureRandom, SignalingError, WebRtcSignalingFacade};
-#[cfg(target_arch = "riscv32")]
-#[cfg(feature = "ota-disabled")]
-use intercom_firmware::disabled_ota::DisabledOtaDriver;
-
-#[cfg(target_arch = "riscv32")]
-use intercom_adapter_gpio::boot_button::{GpioBootButtonConfig, GpioBootButtonDriver};
-#[cfg(target_arch = "riscv32")]
-use intercom_adapter_gpio::bus::{GpioBusConfig, GpioBusDriver};
-#[cfg(target_arch = "riscv32")]
-#[cfg(not(feature = "led-smartled"))]
-use intercom_adapter_gpio::led::GpioLedDriver;
-#[cfg(target_arch = "riscv32")]
-use intercom_adapter_gpio::ring::{GpioRingConfig, GpioRingDriver};
-
-#[cfg(target_arch = "riscv32")]
-use intercom_adapter_matter::{
-    ClusterReadinessBarrier, DeviceInfo, IntercomAudioAvCluster, IntercomChime, IntercomDoorLock,
-    IntercomDoorLockConfig, IntercomDoorbellSwitch, IntercomWebRtcHooks, MatterAccessControlDriver,
-    MatterController, MatterControllerConfig, MatterPeripherals,
+use {
+    core::pin::pin,
+    embassy_executor::Spawner,
+    embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel},
+    esp_backtrace as _,
+    intercom_adapter_http::{config::HttpServerConfig, server::HttpServer, HttpAudioMedia},
+    intercom_adapter_matter::{
+        ClusterReadinessBarrier, DeviceInfo, IntercomAudioAvCluster, IntercomChime,
+        IntercomDoorLock, IntercomDoorLockConfig, IntercomDoorbellSwitch, IntercomWebRtcHooks,
+        MatterAccessControlDriver, MatterController, MatterControllerConfig,
+    },
+    intercom_adapter_webrtc::{
+        dtls::{DtlsIdentity, DtlsSrtpResourceCell},
+        session::{WebRtcSessionConfig, WebRtcSessionHandle},
+        signaling::{SecureRandom as _, WebRtcSignalingFacade},
+    },
+    intercom_core::{
+        app::App,
+        events::{SystemStateSender, SystemStateWatch},
+        ports::{inbound::CommandChannel, AccessControllerHandle},
+        service::DiagnosticsService,
+    },
+    intercom_firmware::{
+        config,
+        hardware_info::FirmwareHardwareInfo,
+        platform::{self, ActivePlatform, HardwareSecureRandom, PlatformDriver},
+        reset::{self, FirmwarePersistenceReporter, FirmwareResetDriver},
+        utils, version,
+    },
+    log::info,
+    static_cell::StaticCell,
 };
 
-#[cfg(target_arch = "riscv32")]
-use self::hardware_info::FirmwareHardwareInfo;
-#[cfg(target_arch = "riscv32")]
-use self::reset::{FirmwarePersistenceReporter, FirmwareResetDriver};
-
-#[cfg(target_arch = "riscv32")]
-const RECLAIMED_RAM: usize =
-    memory_range!("DRAM2_UNINIT").end - memory_range!("DRAM2_UNINIT").start;
-
-#[cfg(target_arch = "riscv32")]
-fn media_free_heap_bytes() -> u32 {
-    esp_alloc::HEAP.free().min(u32::MAX as usize) as u32
-}
-
-#[cfg(target_arch = "riscv32")]
-struct HardwareSecureRandom;
-
-#[cfg(target_arch = "riscv32")]
-impl SecureRandom for HardwareSecureRandom {
-    fn fill(&self, out: &mut [u8]) -> Result<(), SignalingError> {
-        let trng = esp_hal::rng::Trng::try_new().map_err(|_| SignalingError::NotReady)?;
-        trng.read(out);
-        Ok(())
-    }
-}
-
-#[cfg(target_arch = "riscv32")]
 esp_bootloader_esp_idf::esp_app_desc!(
     version::SW_VER_STR,
     "intercom-bridge",
@@ -140,26 +54,16 @@ esp_bootloader_esp_idf::esp_app_desc!(
     esp_bootloader_esp_idf::SECURE_VERSION
 );
 
-// ============================================================================
-// Panic handler: reboot instead of hanging
-// ============================================================================
-
 /// Called by `esp-backtrace` after printing the backtrace on panic.
 /// Triggers a software reset so the device recovers automatically.
-#[cfg(target_arch = "riscv32")]
 #[unsafe(no_mangle)]
 pub fn custom_halt() -> ! {
-    crate::reset::force_bus_relays_low();
-    esp_hal::system::software_reset();
+    ActivePlatform::force_bus_relays_low();
+    ActivePlatform::software_reset();
 }
 
-// ============================================================================
-// Main entry point
-// ============================================================================
-
-#[cfg(target_arch = "riscv32")]
 #[esp_rtos::main]
-async fn main(_spawner: Spawner) {
+async fn main(spawner: Spawner) {
     if let Err(error) = utils::uptime_logger::init(log::LevelFilter::Info) {
         esp_println::println!("Failed to initialize uptime logger: {error:?}");
         custom_halt();
@@ -173,17 +77,8 @@ async fn main(_spawner: Spawner) {
         version::SW_VER
     );
 
-    heap_allocator!(size: config::HEAP_SIZE - RECLAIMED_RAM);
-    heap_allocator!(#[ram(reclaimed)] size: RECLAIMED_RAM - core::mem::size_of::<DtlsSrtpResources>());
-
-    // Initialize ESP-HAL peripherals
-    let peripherals = esp_hal::init(
-        esp_hal::Config::default().with_cpu_clock(esp_hal::clock::CpuClock::max()),
-    );
-
-    // Initialize Embassy async runtime via esp-rtos
-    let timg0 = TimerGroup::new(peripherals.TIMG0);
-    esp_rtos::start(timg0.timer0, peripherals.FROM_CPU_INTR0);
+    let (mut platform, platform_drivers) = ActivePlatform::init();
+    let peripherals = platform_drivers.peripherals;
 
     info!("Hardware initialized");
 
@@ -205,9 +100,6 @@ async fn main(_spawner: Spawner) {
         Channel::new();
     static WEBRTC_STATE: portable_atomic::AtomicU8 = portable_atomic::AtomicU8::new(0);
     static WEBRTC_HANDLE: StaticCell<WebRtcSessionHandle<'static>> = StaticCell::new();
-    static mut WEBRTC_RESOURCES: WebRtcMediaResources = WebRtcMediaResources::new();
-    #[esp_hal::ram(reclaimed)]
-    static mut WEBRTC_DTLS_RESOURCES: MaybeUninit<DtlsSrtpResources> = MaybeUninit::uninit();
     static WEBRTC_DTLS_RESOURCE_CELL: StaticCell<DtlsSrtpResourceCell<'static>> = StaticCell::new();
 
     static COMMAND_CHANNEL: CommandChannel = CommandChannel::new();
@@ -217,59 +109,62 @@ async fn main(_spawner: Spawner) {
     static READINESS: StaticCell<ClusterReadinessBarrier> = StaticCell::new();
     let readiness = READINESS.init(ClusterReadinessBarrier::new(state_sender));
 
-    let dtls_resources = unsafe {
-        let storage = core::ptr::addr_of_mut!(WEBRTC_DTLS_RESOURCES);
-        core::ptr::write_bytes(
-            storage.cast::<u8>(),
-            0,
-            core::mem::size_of::<DtlsSrtpResources>(),
-        );
-        (&mut *storage).assume_init_mut()
-    };
+    static SECURE_RANDOM: HardwareSecureRandom = HardwareSecureRandom;
+    static WEBRTC_DTLS_IDENTITY: StaticCell<DtlsIdentity> = StaticCell::new();
+    let mut dtls_seed = [0u8; 32];
+    SECURE_RANDOM
+        .fill(&mut dtls_seed)
+        .expect("WebRTC DTLS seed RNG");
+    let dtls_resources = platform::allocate_dtls_srtp_resources();
+    let dtls_identity = WEBRTC_DTLS_IDENTITY.init(
+        DtlsIdentity::generate(dtls_seed, dtls_resources).expect("WebRTC DTLS identity"),
+    );
     let dtls_resource_cell =
         WEBRTC_DTLS_RESOURCE_CELL.init(DtlsSrtpResourceCell::new(dtls_resources));
-    let webrtc_resources = unsafe { &mut *core::ptr::addr_of_mut!(WEBRTC_RESOURCES) };
-    let (mut webrtc_engine, webrtc_session_handle) = WebRtcMediaEngine::new(
+    let webrtc_resources = platform::allocate_webrtc_media_resources();
+    let (webrtc_engine, webrtc_session_handle) = platform::create_webrtc_engine(
         &WEBRTC_REQUESTS,
         &WEBRTC_STATE,
         access_handle,
-        RX_AUDIO_CHANNEL.receiver(),
-        TX_AUDIO_CHANNEL.sender(),
+        &RX_AUDIO_CHANNEL,
+        &TX_AUDIO_CHANNEL,
         webrtc_resources,
         dtls_resource_cell,
     );
+    let mut webrtc_engine = webrtc_engine.with_opus_encoder_config(config::OPUS_ENCODER_CONFIG);
     let webrtc_session_handle = WEBRTC_HANDLE.init(webrtc_session_handle);
-    static SECURE_RANDOM: HardwareSecureRandom = HardwareSecureRandom;
-    let webrtc_signaling = WebRtcSignalingFacade::new_with_resources(
+    let webrtc_signaling = WebRtcSignalingFacade::new_with_identity(
         *webrtc_session_handle,
         &SECURE_RANDOM,
-        dtls_resource_cell,
+        dtls_identity,
     );
 
     // ========================================================================
     // Persistence & initial configuration
     // ========================================================================
 
-    #[cfg(not(feature = "dummy-persist"))]
-    let mut store = reset::create_kv_blob_store(config::MATTER_KVS_RANGE, config::SYSTEM_KVS_RANGE);
-    #[cfg(not(feature = "dummy-persist"))]
-    let initial_duration_sec = reset::load_door_duration(&mut store);
-    #[cfg(feature = "dummy-persist")]
-    let store = DummyKvBlobStore;
-    #[cfg(feature = "dummy-persist")]
-    let initial_duration_sec = intercom_core::config::DEFAULT_DOOR_UNLOCK_DURATION_SEC;
-
-    #[cfg(not(feature = "dummy-persist"))]
-    let (initial_rx_gain, initial_tx_gain) = reset::load_audio_gains(&mut store);
-    #[cfg(feature = "dummy-persist")]
-    let (initial_rx_gain, initial_tx_gain) = (
-        intercom_core::domain::policy::RxPgaGain::default(),
-        intercom_core::domain::policy::TxDacGain::default(),
-    );
+    let (store, initial_duration_sec, initial_rx_gain, initial_tx_gain) =
+        reset::init_persistence();
     intercom_core::domain::diagnostics::update_audio_gains(initial_rx_gain, initial_tx_gain);
-
     info!("Loaded door unlock duration: {}s", initial_duration_sec);
     intercom_core::domain::diagnostics::update_door_unlock_duration(initial_duration_sec);
+
+    // ========================================================================
+    // Wire board hardware + audio pipeline
+    // ========================================================================
+
+    let mut hw = platform::wire_board(
+        &mut platform,
+        peripherals,
+        spawner,
+        &RX_AUDIO_CHANNEL,
+        &TX_AUDIO_CHANNEL,
+        &CALL_STATE_WATCH,
+        &STATE_WATCH,
+        initial_rx_gain,
+        initial_tx_gain,
+    )
+    .await;
 
     // ========================================================================
     // Matter drivers — own their state internally
@@ -277,13 +172,12 @@ async fn main(_spawner: Spawner) {
 
     let doorbell_switch = IntercomDoorbellSwitch::new(readiness);
     let audio_av_cluster = IntercomAudioAvCluster::new(access_handle);
-    #[cfg(feature = "devkit")]
-    {
+    if platform::ENABLE_SYNTHETIC_AUDIO_STREAM {
         let stream_id = audio_av_cluster
             .allocate_synthetic_audio_stream()
             .await
-            .expect("allocate DevKit synthetic audio stream");
-        info!("DevKit synthetic audio stream allocated: {}", stream_id);
+            .expect("allocate synthetic audio stream");
+        info!("Synthetic audio stream allocated: {}", stream_id);
     }
     let chime_cluster = IntercomChime::new();
     let door_lock = IntercomDoorLock::new(IntercomDoorLockConfig {
@@ -296,14 +190,10 @@ async fn main(_spawner: Spawner) {
     // Matter controller — register cluster handlers via builder
     // ========================================================================
 
+    let matter_stack_storage = platform::allocate_matter_stack_storage();
     let matter = MatterController::new(
         MatterControllerConfig {
-            peripherals: MatterPeripherals {
-                wifi: peripherals.WIFI,
-                bt: peripherals.BT,
-                rng: peripherals.RNG,
-                adc1: peripherals.ADC1,
-            },
+            wireless: hw.wireless,
             device_info: DeviceInfo {
                 hw_ver: config::HW_VER,
                 hw_ver_str: config::HW_VER_STR,
@@ -321,6 +211,7 @@ async fn main(_spawner: Spawner) {
         state_sender,
         readiness,
         FirmwareResetDriver,
+        matter_stack_storage,
     );
     let webrtc_prov_cluster = matter.webrtc_prov_cluster(IntercomWebRtcHooks::new(
         access_handle,
@@ -335,84 +226,24 @@ async fn main(_spawner: Spawner) {
         .register(&door_lock);
 
     // ========================================================================
-    // Create GPIO + access control drivers → wire into App
+    // Wire App + Diagnostics
     // ========================================================================
-
-    let ring = GpioRingDriver::new(GpioRingConfig::new(peripherals.GPIO2));
-    let bus = intercom_core::service::BusSafetyInterlock::new(GpioBusDriver::new(
-        GpioBusConfig::new(peripherals.GPIO7, peripherals.GPIO10, peripherals.GPIO18),
-    ));
-    // Start MCLK/BCLK/WS before releasing CODEC_RST_N (GPIO11).
-    #[cfg(not(feature = "devkit"))]
-    let i2s_pipeline = intercom_adapter_audio::I2sAudioPipeline::new(
-        peripherals.I2S0,
-        peripherals.DMA_CH0,
-        peripherals.GPIO22,
-        peripherals.GPIO23,
-        peripherals.GPIO15,
-        peripherals.GPIO20,
-        peripherals.GPIO21,
-    )
-    .expect("I2S0 init");
-    let i2c_config =
-        esp_hal::i2c::master::Config::default().with_frequency(esp_hal::time::Rate::from_khz(400));
-    let i2c0 = esp_hal::i2c::master::I2c::new(peripherals.I2C0, i2c_config)
-        .expect("I2C0 init")
-        .with_sda(peripherals.GPIO0)
-        .with_scl(peripherals.GPIO1);
-    let codec_rst = esp_hal::gpio::Output::new(
-        peripherals.GPIO11,
-        esp_hal::gpio::Level::Low,
-        esp_hal::gpio::OutputConfig::default(),
-    );
-    let mut audio_ctrl = intercom_adapter_audio::Aic3204AudioDriver::new(i2c0, codec_rst);
-    if let Err(error) = audio_ctrl.init(initial_rx_gain, initial_tx_gain).await {
-        warn!(
-            "TLV320AIC3204 init failed (bench without codec?): {:?}",
-            error
-        );
-    }
-
-    #[cfg(not(feature = "led-smartled"))]
-    static INDICATOR: StaticCell<GpioLedDriver> = StaticCell::new();
-    #[cfg(not(feature = "led-smartled"))]
-    let indicator: &'static GpioLedDriver =
-        &*INDICATOR.init(GpioLedDriver::new(peripherals.GPIO19));
-
-    #[cfg(feature = "led-smartled")]
-    static DEVKIT_INDICATOR: StaticCell<intercom_firmware::devkit_led::DevKitLedDriver> =
-        StaticCell::new();
-    #[cfg(feature = "led-smartled")]
-    let indicator: &'static intercom_firmware::devkit_led::DevKitLedDriver = &*DEVKIT_INDICATOR
-        .init(intercom_firmware::devkit_led::DevKitLedDriver::new(
-            peripherals.RMT,
-            peripherals.GPIO8,
-        ));
 
     let access_driver = MatterAccessControlDriver::new(&door_lock, &doorbell_switch);
     let call_broadcaster =
         intercom_core::events::CallStateBroadcastReporter::new(&CALL_STATE_WATCH);
     let reporter = (
         access_driver,
-        indicator,
+        hw.indicator,
         (FirmwarePersistenceReporter, call_broadcaster),
     );
 
-    #[cfg(not(feature = "led-smartled"))]
-    let boot_button = GpioBootButtonDriver::new(
-        GpioBootButtonConfig::new(peripherals.GPIO9).with_indicator(indicator),
-    );
-    #[cfg(feature = "led-smartled")]
-    let boot_button = GpioBootButtonDriver::new(
-        GpioBootButtonConfig::new(peripherals.GPIO9).with_hold_feedback(indicator),
-    );
-
     let app = App::with_duration(
-        ring,
-        &bus,
-        audio_ctrl,
+        hw.ring,
+        hw.bus,
+        hw.audio_ctrl,
         reporter,
-        boot_button,
+        hw.boot_button,
         FirmwareResetDriver,
         initial_duration_sec,
     );
@@ -426,37 +257,20 @@ async fn main(_spawner: Spawner) {
         config::AVAILABLE_ECOSYSTEMS,
         &STATE_WATCH,
     );
-    #[cfg(not(feature = "ota-disabled"))]
-    let mut ota_driver = FlashOtaDriver::new(config::OTA_PUBLIC_KEY);
-    #[cfg(feature = "ota-disabled")]
-    let mut ota_driver = DisabledOtaDriver;
+
     // ========================================================================
-    // Run App, Matter, LED, HTTP, and I2S services concurrently
+    // Run App, Matter, LED, HTTP, and WebRTC/Audio services concurrently
     // ========================================================================
 
     let app_future = app.run(state_sender, &command_receiver, access_handle);
     static CLOCK_SYNC_DRIVER: utils::uptime_logger::FirmwareClockSyncDriver =
         utils::uptime_logger::FirmwareClockSyncDriver;
+    platform::log_pre_matter_heap();
     let matter_future = pin!(matter.run(&CLOCK_SYNC_DRIVER));
-    let led_future = indicator.run(state_receiver);
+    let led_future = hw.indicator.run(state_receiver);
     let http_future = async {
         let stack = rs_matter_embassy::enet::wait_global_stack().await;
-
-        #[cfg(not(feature = "ota-disabled"))]
-        {
-            // Mark the running slot valid now that hardware, Wi-Fi, and network stack are operational.
-            // If an OTA update failed to boot or crashes before reaching this point, the ESP-IDF
-            // 2nd-stage bootloader will automatically roll back to the previously functioning slot.
-            if let Err(e) = edf_ota::bootloader::mark_running_slot_valid() {
-                warn!("Failed to mark running slot valid: {:?}", e);
-            } else {
-                info!("Running firmware slot confirmed valid (rollback watchdog cancelled)");
-            }
-        }
-        #[cfg(feature = "ota-disabled")]
-        {
-            info!("OTA rollback watchdog check skipped (OTA updates disabled on this profile)");
-        }
+        platform::mark_running_slot_valid();
 
         let http_config = HttpServerConfig {
             port: config::HTTP_PORT,
@@ -473,14 +287,15 @@ async fn main(_spawner: Spawner) {
         let mut http_server = HttpServer::new(
             stack,
             access_handle,
-            &bus,
+            hw.bus,
             &diagnostics_service,
-            &mut ota_driver,
+            &mut hw.ota_driver,
             &FirmwareResetDriver,
             Some(state_sender),
             utils::uptime_logger::get_buffered_logs,
             http_config,
         )
+        .with_memory_info_provider(FirmwareHardwareInfo::memory_info)
         .with_audio_media(HttpAudioMedia {
             rx_audio: &RX_AUDIO_CHANNEL,
             tx_audio: &TX_AUDIO_CHANNEL,
@@ -495,54 +310,7 @@ async fn main(_spawner: Spawner) {
 
     info!("Matter Controller Running");
 
-    #[cfg(not(feature = "devkit"))]
-    let audio_input_future = async {
-        if let Err(error) = i2s_pipeline
-            .run(RX_AUDIO_CHANNEL.sender(), TX_AUDIO_CHANNEL.receiver())
-            .await
-        {
-            warn!("I2S DMA stream failed: {:?}", error);
-            #[cfg(not(feature = "devkit"))]
-            custom_halt();
-            #[cfg(feature = "devkit")]
-            core::future::pending::<()>().await;
-        }
-    };
-    #[cfg(feature = "devkit")]
-    let audio_input_future = async {
-        let mut speech = intercom_media::Pcm16LeLoopingSource::new(
-            include_bytes!("../assets/devkit_test_speech_short.pcm"),
-            intercom_media::AUDIO_SAMPLE_RATE_HZ as usize,
-        )
-        .expect("embedded DevKit speech sample must contain complete PCM samples");
-        let mut schedule =
-            intercom_media::AudioCaptureSchedule::new(embassy_time::Instant::now().as_millis());
-        let mut drop_window = intercom_media::AudioFrameDropWindow::new();
-        let mut simulated_dma_overruns = 0u64;
-        let levels = intercom_media::compute_frame_levels_dbfs(&speech.next_frame());
-        intercom_core::domain::diagnostics::update_rx_levels_dbfs(
-            levels.rms_dbfs,
-            levels.peak_dbfs,
-        );
-        info!("DevKit audio input: embedded 16 kHz mono speech sample, 1 s repeat pause");
-        loop {
-            let now_ms = embassy_time::Instant::now().as_millis();
-            embassy_time::Timer::after_millis(schedule.delay_until_next_ms(now_ms)).await;
-            let batch = schedule.take_due_frames(embassy_time::Instant::now().as_millis());
-            simulated_dma_overruns = simulated_dma_overruns.saturating_add(batch.overruns);
-
-            for _ in 0..batch.frames {
-                let queue_dropped = RX_AUDIO_CHANNEL.try_send(speech.next_frame()).is_err();
-                if let Some(queue_drops) = drop_window.record(queue_dropped) {
-                    info!(
-                        "DevKit audio capture frames=50 simulated_dma_overruns={} queue_drops={}",
-                        simulated_dma_overruns, queue_drops,
-                    );
-                    simulated_dma_overruns = 0;
-                }
-            }
-        }
-    };
+    let audio_input_future = platform::run_bench_audio_input(&RX_AUDIO_CHANNEL);
 
     let webrtc_future = async {
         let stack = rs_matter_embassy::enet::wait_global_stack().await;
@@ -564,8 +332,11 @@ async fn main(_spawner: Spawner) {
                 embassy_time::Timer::after_secs(2).await;
             }
         };
-        embassy_futures::join::join(webrtc_engine.run(stack, media_free_heap_bytes), refresh_ip)
-            .await;
+        let media_future = embassy_futures::join::join(
+            webrtc_engine.run(stack, platform::record_and_log_media_free_heap_bytes),
+            refresh_ip,
+        );
+        media_future.await;
     };
 
     embassy_futures::join::join5(

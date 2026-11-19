@@ -4,10 +4,18 @@ target = "riscv32imac-unknown-none-elf"
 [env]
 CC_riscv32imac_unknown_none_elf = "/private/tmp/riscv32-esp-elf/bin/riscv32-esp-elf-gcc"
 AR_riscv32imac_unknown_none_elf = "/private/tmp/riscv32-esp-elf/bin/riscv32-esp-elf-ar"
+CFLAGS_xtensa_esp32s3_none_elf = "-mlongcalls"
 
 [target.riscv32imac-unknown-none-elf]
 runner = "espflash flash --partition-table partitions.csv --erase-parts otadata --monitor"
 rustflags = ["-C", "link-arg=-Tlinkall.x", "-C", "force-frame-pointers"]
+
+[target.riscv32imafc-unknown-none-elf]
+rustflags = ["-C", "link-arg=-Tlinkall.x", "-C", "force-frame-pointers"]
+
+[target.xtensa-esp32s3-none-elf]
+runner = "espflash flash --chip esp32s3 --partition-table partitions.csv --monitor"
+rustflags = ["-C", "link-arg=-Tlinkall.x"]
 
 [unstable]
 build-std = ["core", "alloc", "panic_abort"]
@@ -15,6 +23,9 @@ build-std = ["core", "alloc", "panic_abort"]
 [alias]
 qr = ["run", "-p", "intercom-pairing-tool", "--target", "x86_64-apple-darwin", "--"]
 build-devkit = ["build", "-p", "intercom-firmware", "--release", "--features", "devkit"]
+build-s3 = ["s3", "build"]
+build-s3-factory = ["s3", "factory"]
+flash-s3 = ["s3", "flash"]
 fe-dev = ["fe", "dev"]
 fe-build = ["fe", "build"]
 fe-check = ["fe", "check"]
