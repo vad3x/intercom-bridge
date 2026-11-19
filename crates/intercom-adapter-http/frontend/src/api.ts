@@ -24,6 +24,21 @@ export async function fetchLogs(): Promise<string> {
   return preserveHttpError(dashboardApi.fetchLogs, (status) => `HTTP error ${status}`);
 }
 
+export async function fetchLastFailure(): Promise<string> {
+  const res = await fetch('/api/last-failure');
+  if (!res.ok) {
+    throw new Error(`HTTP error ${res.status}`);
+  }
+  return (await res.text()).trim();
+}
+
+export async function clearLastFailure(): Promise<void> {
+  const res = await fetch('/api/action/clear-failure', { method: 'POST' });
+  if (!res.ok) {
+    throw new Error(`Failed to clear failure: HTTP ${res.status}`);
+  }
+}
+
 export async function triggerUnlock(): Promise<void> {
   const res = await fetch('/api/action/unlock', { method: 'POST' });
   if (!res.ok) {

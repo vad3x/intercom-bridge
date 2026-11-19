@@ -306,6 +306,10 @@ async fn main(_spawner: Spawner) {
             Some(state_sender),
             utils::uptime_logger::get_buffered_logs,
             http_config,
+        )
+        .with_last_failure_handlers(
+            diag::read_last_failure_bytes,
+            reset::clear_persisted_last_failure,
         );
         http_server.run().await;
     };

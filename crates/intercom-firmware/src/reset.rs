@@ -175,6 +175,18 @@ pub fn read_persisted_last_failure(out: &mut [u8]) -> Option<&str> {
     }
 }
 
+/// Remove the last recorded failure diagnostic summary from `system_kvs` flash.
+pub fn clear_persisted_last_failure() {
+    #[cfg(target_arch = "riscv32")]
+    #[cfg(not(feature = "dummy-persist"))]
+    {
+        let system_flash = EspFlash::new(crate::config::SYSTEM_KVS_RANGE);
+        let mut store = SeqMapKvBlobStore::new(system_flash, crate::config::SYSTEM_KVS_RANGE);
+        let mut scratch = [0u8; 1024];
+        let _ = store.remove(crate::config::LAST_FAILURE_KEY, &mut scratch);
+    }
+}
+
 /// Outbound reporter that synchronizes runtime lock and duration state with telemetry
 /// and persists duration changes into system flash.
 pub struct FirmwarePersistenceReporter;

@@ -74,6 +74,18 @@ pub fn build_dns_probe_query(tx_id: u16) -> [u8; 27] {
     ]
 }
 
+/// Copy the persisted last-failure summary into `out`, returning bytes written (`0` if none).
+pub fn read_last_failure_bytes(out: &mut [u8]) -> usize {
+    let mut scratch = [0u8; 1024];
+    let Some(summary) = crate::reset::read_persisted_last_failure(&mut scratch) else {
+        return 0;
+    };
+    let bytes = summary.as_bytes();
+    let copy_len = bytes.len().min(out.len());
+    out[..copy_len].copy_from_slice(&bytes[..copy_len]);
+    copy_len
+}
+
 #[cfg(target_arch = "riscv32")]
 mod target {
     use core::ptr::{addr_of, addr_of_mut};

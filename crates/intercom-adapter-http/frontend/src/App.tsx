@@ -7,12 +7,14 @@ import {
 } from '@embedded-device-foundation/dashboard-core';
 import { DoorClosed, Layers } from 'lucide-solid';
 import { createSignal, onCleanup, onMount } from 'solid-js';
-import { fetchLogs } from './api';
+import { clearLastFailure, fetchLastFailure, fetchLogs } from './api';
 import { IntercomControls } from './components/IntercomControls';
 import { createIntercomStore } from './store/intercomStore';
 
 export function App() {
   const store = createIntercomStore();
+  const [lastFailure, setLastFailure] = createSignal<string>('');
+  const [isClearingFailure, setIsClearingFailure] = createSignal(false);
   const [toastMsg, setToastMsg] = createSignal<string | null>(null);
   const [toastType, setToastType] = createSignal<'info' | 'success' | 'error'>('info');
 
@@ -114,7 +116,7 @@ export function App() {
             { label: 'Chime / Ring', propertyKey: 'ring_sensor_subscribed' },
           ]}
           endpointIcon={(endpoint) => {
-            switch (endpoint.cluster) {
+            switch (endpoint.clusters?.[0]?.name) {
               case 'DoorLock':
                 return '🔒 ';
               case 'OccupancySensing':
@@ -130,10 +132,37 @@ export function App() {
     },
   ];
 
+  const refreshLastFailure = async () => {
+    try {
+      setLastFailure(await fetchLastFailure());
+    } catch {
+      // Ignore transient poll errors
+    }
+  };
+
+  const handleClearLastFailure = async () => {
+    setIsClearingFailure(true);
+    try {
+      await clearLastFailure();
+      setLastFailure('');
+      showToast('Persisted failure record cleared', 'success');
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Failed to clear failure record';
+      showToast(msg, 'error');
+    } finally {
+      setIsClearingFailure(false);
+    }
+  };
+
   onMount(() => {
     store.poll();
+    void refreshLastFailure();
     const interval = setInterval(store.poll, 2500);
-    onCleanup(() => clearInterval(interval));
+    const failureInterval = setInterval(refreshLastFailure, 30000);
+    onCleanup(() => {
+      clearInterval(interval);
+      clearInterval(failureInterval);
+    });
   });
 
   return (
@@ -153,9 +182,12 @@ export function App() {
           doorUnlockDurationSec={store.doorUnlockDurationSec()}
           isUnlocking={store.isUnlocking()}
           isRinging={store.isRinging()}
+          lastFailure={lastFailure()}
+          isClearingFailure={isClearingFailure()}
           onUnlock={handleUnlock}
           onRing={handleRing}
           onDurationChange={handleDurationChange}
+          onClearLastFailure={handleClearLastFailure}
         />
       }
       status={store.status()}
