@@ -268,7 +268,7 @@ mod target {
         #[cfg(any(feature = "devkit", feature = "esp32s3"))]
         {
             let mut speech = intercom_media::Pcm16LeLoopingSource::new(
-                include_bytes!("../../assets/devkit_test_speech_short.pcm"),
+                include_bytes!("../../assets/devkit_test_music.pcm"),
                 0,
             )
             .expect("embedded DevKit speech sample must contain complete PCM samples");
