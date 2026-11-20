@@ -77,6 +77,11 @@ esp32s3 = [
     "led-smartled",
     "esp-hal-smartled/esp32s3",
 ]
+bench-talk-loopback = [
+    "intercom-media/bench-talk-loopback",
+    "intercom-adapter-audio/bench-talk-loopback",
+    "intercom-adapter-http/bench-talk-loopback",
+]
 devkit = ["esp32c6", "flash-4mb", "led-smartled", "esp-hal-smartled/esp32c6", "ota-disabled"]
 flash-4mb = []
 led-smartled = ["dep:esp-hal-smartled", "dep:smart-leds"]

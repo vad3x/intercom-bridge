@@ -172,8 +172,12 @@ impl I2sAudioPipeline {
             }
             let frame = if is_tone_active() {
                 tone.next_frame()
+            } else if let Some(tx_frame) = receiver.try_receive_frame() {
+                #[cfg(feature = "bench-talk-loopback")]
+                intercom_media::tap_bench_tx_frame(&tx_frame);
+                tx_frame
             } else {
-                receiver.try_receive_frame().unwrap_or(PcmFrame::SILENCE)
+                PcmFrame::SILENCE
             };
             let written = transfer.push_with(|buffer| {
                 if let Some(raw) = buffer.first_chunk_mut::<DMA_FRAME_BYTES>() {

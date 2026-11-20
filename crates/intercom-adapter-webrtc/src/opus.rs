@@ -151,9 +151,13 @@ impl HalfDuplexOpusCodec {
         self.ensure_decoder()?;
         let dec_ptr = self.arena.as_mut_ptr() as *mut OpusDecoder;
         let mut decoded_samples = [0i16; AUDIO_FRAME_SAMPLES * 2];
-        let (ptr, len) = match packet {
-            Some(bytes) => (bytes.as_ptr(), bytes.len() as c_int),
-            None => (core::ptr::null(), 0),
+        let (ptr, len, max_frame_samples) = match packet {
+            Some(bytes) => (
+                bytes.as_ptr(),
+                bytes.len() as c_int,
+                (AUDIO_FRAME_SAMPLES * 2) as c_int,
+            ),
+            None => (core::ptr::null(), 0, AUDIO_FRAME_SAMPLES as c_int),
         };
         let rc = unsafe {
             opus_decode(
@@ -161,7 +165,7 @@ impl HalfDuplexOpusCodec {
                 ptr,
                 len,
                 decoded_samples.as_mut_ptr(),
-                (AUDIO_FRAME_SAMPLES * 2) as c_int,
+                max_frame_samples,
                 0,
             )
         };
@@ -345,7 +349,7 @@ mod tests {
             "decoded signal too quiet: {:?}",
             levels
         );
-        assert_eq!(plc_count, 2);
+        assert_eq!(plc_count, 1);
         assert_ne!(plc_frames[0].samples, PcmFrame::SILENCE.samples);
     }
 
@@ -484,5 +488,15 @@ mod tests {
             )
             .expect("encode 16 kHz frame");
         assert!(len > 0);
+    }
+
+    #[test]
+    fn plc_decode_none_emits_single_20ms_frame() {
+        let mut codec = HalfDuplexOpusCodec::new();
+        let (_frames, count) = codec.decode_talk_frames(None).expect("PLC decode");
+        assert_eq!(
+            count, 1,
+            "PLC for one 20ms interval must emit 1 frame, not 2"
+        );
     }
 }

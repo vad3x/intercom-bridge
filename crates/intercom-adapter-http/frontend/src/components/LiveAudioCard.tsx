@@ -1,41 +1,49 @@
 import { Badge, Card, CardBody, CardTitle } from '@embedded-device-foundation/dashboard-core';
-import { AudioWaveform, Mic, PhoneCall, PhoneOff, Volume2 } from 'lucide-solid';
-import { type Component, createEffect, createSignal, onCleanup } from 'solid-js';
+import { Mic, PhoneOff, Volume2 } from 'lucide-solid';
+import { type Component, createSignal, onCleanup } from 'solid-js';
 import { WebRtcIntercomClient } from '../audio/webrtcIntercomClient';
-import { createPttHandlers } from './pttHandlers';
-import { createToneCountdown } from './toneCountdown';
+import type { BusLineState, CallState } from '../types';
 
 export interface LiveAudioCardProps {
+  busState: BusLineState | undefined;
+  callState: CallState | undefined;
   rxRmsDbfs: number | undefined;
   rxPeakDbfs: number | undefined;
   rxGainHalfDb: number | undefined;
   txGainHalfDb: number | undefined;
-  toneActive: boolean | undefined;
+  onStartListen: () => Promise<void> | void;
+  onStartTalk: () => Promise<void> | void;
+  onStopTalk: () => Promise<void> | void;
+  onHangup: () => Promise<void> | void;
   onGainChange: (rxHalfDb: number, txHalfDb: number) => Promise<void> | void;
-  onToggleTone: (enable: boolean) => Promise<void> | void;
   onNotify: (msg: string, kind: 'info' | 'success' | 'error') => void;
 }
 
 export const LiveAudioCard: Component<LiveAudioCardProps> = (props) => {
+  const [transport, setTransport] = createSignal<'webrtc' | 'relay'>('webrtc');
   const [connected, setConnected] = createSignal(false);
   const [talking, setTalking] = createSignal(false);
   const [connecting, setConnecting] = createSignal(false);
+  const [pendingTalk, setPendingTalk] = createSignal(false);
   const [txRms, setTxRms] = createSignal(-96);
-  const [toneSeconds, setToneSeconds] = createSignal<number | undefined>();
-  const updateCountdown = createToneCountdown();
 
-  createEffect(() => {
-    const active = props.toneActive ?? false;
-    setToneSeconds(updateCountdown(active, Date.now()));
-    if (!active) return;
-    const timer = setInterval(() => setToneSeconds(updateCountdown(true, Date.now())), 1000);
-    onCleanup(() => clearInterval(timer));
-  });
+  const runAction = async (action: () => Promise<void> | void) => {
+    try {
+      await action();
+    } catch (error: unknown) {
+      props.onNotify(error instanceof Error ? error.message : 'Audio action failed', 'error');
+    }
+  };
 
   const client = new WebRtcIntercomClient({
     onConnectedChange: (value) => {
       setConnected(value);
       setConnecting(false);
+      if (value && pendingTalk()) {
+        void runAction(() => client.startTalk()).finally(() => setPendingTalk(false));
+      } else if (!value) {
+        setPendingTalk(false);
+      }
     },
     onTalkingChange: setTalking,
     onTxLevelChange: setTxRms,
@@ -50,45 +58,135 @@ export const LiveAudioCard: Component<LiveAudioCardProps> = (props) => {
   const peak = () => props.rxPeakDbfs ?? -96;
   const meterPct = (dbfs: number) => Math.max(0, Math.min(100, ((dbfs + 96) / 96) * 100));
 
-  const toggleConnection = async () => {
-    if (connected()) {
+  type AudioMode = 'idle' | 'listen' | 'talk';
+  const effectiveBus = () => props.busState ?? 'idle';
+  const effectiveCall = () => props.callState ?? 'idle';
+
+  const mode = (): AudioMode => {
+    if (transport() === 'relay') {
+      if (effectiveCall() === 'talking') return 'talk';
+      if (effectiveCall() === 'listening' || effectiveCall() === 'settling') return 'listen';
+      return 'idle';
+    }
+    if (talking() || pendingTalk()) return 'talk';
+    if (connected() || connecting()) return 'listen';
+    return 'idle';
+  };
+
+  const switchTransport = async (next: 'webrtc' | 'relay') => {
+    if (next === transport()) return;
+    setPendingTalk(false);
+    setConnecting(false);
+    client.setRemoteMuted(false);
+    client.disconnect();
+    if (effectiveCall() !== 'idle') {
+      await runAction(() => props.onHangup());
+    }
+    setTransport(next);
+  };
+
+  const selectMode = async (next: AudioMode) => {
+    if (transport() === 'relay') {
+      if (next === 'idle') {
+        await runAction(() => props.onHangup());
+      } else if (next === 'listen') {
+        if (effectiveCall() === 'talking') {
+          await runAction(() => props.onStopTalk());
+        } else {
+          await runAction(() => props.onStartListen());
+        }
+      } else {
+        await runAction(() => props.onStartTalk());
+      }
+      return;
+    }
+
+    if (next === 'idle') {
+      setPendingTalk(false);
+      setConnecting(false);
+      client.setRemoteMuted(false);
       client.disconnect();
-    } else {
+      return;
+    }
+
+    if (next === 'listen') {
+      setPendingTalk(false);
+      client.setRemoteMuted(false);
+      if (talking()) {
+        client.stopTalk();
+        return;
+      }
+      if (!connected() && !connecting()) {
+        setConnecting(true);
+        try {
+          await client.connect();
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : 'Audio connection failed';
+          setConnecting(false);
+          props.onNotify(msg, 'error');
+        }
+      }
+      return;
+    }
+
+    client.setRemoteMuted(true);
+    if (connected()) {
+      setPendingTalk(true);
+      await runAction(() => client.startTalk()).finally(() => setPendingTalk(false));
+      return;
+    }
+
+    setPendingTalk(true);
+    if (!connecting()) {
       setConnecting(true);
       try {
         await client.connect();
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : 'Audio connection failed';
+        setPendingTalk(false);
         setConnecting(false);
+        client.setRemoteMuted(false);
         props.onNotify(msg, 'error');
       }
     }
   };
 
-  const runAction = async (action: () => Promise<void> | void) => {
-    try {
-      await action();
-    } catch (error: unknown) {
-      props.onNotify(error instanceof Error ? error.message : 'Audio action failed', 'error');
-    }
-  };
-
-  const { handlePttDown, handlePttUp } = createPttHandlers(
-    () => runAction(() => client.startTalk()),
-    () => client.stopTalk(),
-  );
-
   return (
     <Card>
       <CardBody class="gap-4">
-        <div class="flex items-center justify-between">
+        <div class="flex flex-wrap items-center justify-between gap-2">
           <CardTitle class="flex items-center gap-2 text-base">
             <Volume2 class="w-4 h-4 text-primary" />
-            <span>Live Browser PTT &amp; Codec Calibration</span>
+            <span>Live Audio &amp; Bus Control</span>
           </CardTitle>
-          <Badge variant={connected() ? 'success' : 'neutral'}>
-            <span>{connected() ? (talking() ? 'tx talking' : 'rx listening') : 'offline'}</span>
-          </Badge>
+          <div class="flex flex-wrap items-center gap-2">
+            <Badge variant={effectiveBus() === 'idle' ? 'neutral' : 'info'}>
+              <span>relay: {effectiveBus()}</span>
+            </Badge>
+            <Badge variant={effectiveCall() === 'talking' ? 'warning' : 'neutral'}>
+              <span>phase: {effectiveCall()}</span>
+            </Badge>
+            <fieldset class="join" aria-label="Control Mode">
+              <button
+                type="button"
+                class={`btn btn-xs join-item ${
+                  transport() === 'webrtc' ? 'btn-primary' : 'btn-outline'
+                }`}
+                onClick={() => void switchTransport('webrtc')}
+              >
+                WebRTC
+              </button>
+              <button
+                type="button"
+                class={`btn btn-xs join-item ${
+                  transport() === 'relay' ? 'btn-secondary' : 'btn-outline'
+                }`}
+                onClick={() => void switchTransport('relay')}
+              >
+                Relay Only
+              </button>
+            </fieldset>
+          </div>
         </div>
 
         <div class="flex flex-col gap-1">
@@ -116,48 +214,42 @@ export const LiveAudioCard: Component<LiveAudioCardProps> = (props) => {
           />
         </div>
 
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+        <fieldset class="join w-full" aria-label="Audio Mode">
           <button
             type="button"
-            class={`btn btn-sm gap-2 ${connected() ? 'btn-error btn-outline' : 'btn-primary'}`}
-            disabled={connecting()}
-            onClick={() => void toggleConnection()}
+            class={`btn btn-sm join-item flex-1 gap-1.5 ${
+              mode() === 'idle' ? 'btn-neutral' : 'btn-outline'
+            }`}
+            onClick={() => void selectMode('idle')}
           >
-            {connected() ? <PhoneOff class="w-4 h-4" /> : <PhoneCall class="w-4 h-4" />}
-            <span>
-              {connecting()
-                ? 'Connecting Audio…'
-                : connected()
-                  ? 'Disconnect Audio'
-                  : 'Connect Live Audio'}
-            </span>
+            <PhoneOff class="w-4 h-4" />
+            <span>Idle</span>
           </button>
-
           <button
             type="button"
-            class="btn btn-sm btn-warning gap-2 select-none touch-none"
-            disabled={!connected()}
-            onPointerDown={handlePttDown}
-            onPointerUp={handlePttUp}
-            onPointerCancel={handlePttUp}
-            onPointerLeave={handlePttUp}
+            class={`btn btn-sm join-item flex-1 gap-1.5 ${
+              mode() === 'listen' ? 'btn-primary' : 'btn-outline'
+            }`}
+            onClick={() => void selectMode('listen')}
           >
-            <Mic class="w-4 h-4" />
-            <span>Hold to Speak (PTT)</span>
+            <Volume2 class="w-4 h-4" />
+            <span>{connecting() && !pendingTalk() ? 'Connecting…' : 'Listen'}</span>
           </button>
-
           <button
             type="button"
-            class={`btn btn-sm gap-2 ${props.toneActive ? 'btn-accent' : 'btn-outline'}`}
-            onClick={() => void runAction(() => props.onToggleTone(!props.toneActive))}
+            class={`btn btn-sm join-item flex-1 gap-1.5 ${
+              talking() ? 'btn-error' : pendingTalk() ? 'btn-warning btn-outline' : 'btn-outline'
+            }`}
+            onClick={() => void selectMode('talk')}
           >
-            <AudioWaveform class="w-4 h-4" />
-            <span>{props.toneActive ? 'Stop 1 kHz Tone' : '1 kHz Test Tone'}</span>
-            <span title="Estimated from when this dashboard observed the tone; the device enforces the 60s cutoff.">
-              {toneSeconds() === undefined ? '' : `~${toneSeconds()}s left`}
-            </span>
+            {talking() ? (
+              <span class="w-2 h-2 rounded-full bg-current animate-pulse" />
+            ) : (
+              <Mic class="w-4 h-4" />
+            )}
+            <span>{talking() ? 'Live (Speak)' : pendingTalk() ? 'Starting…' : 'Talk'}</span>
           </button>
-        </div>
+        </fieldset>
 
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
           <label class="form-control">

@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 description = "Zero-infrastructure no_std 16 kHz PCM frame and media stream contracts"
 
+[features]
+bench-talk-loopback = []
+
 [dependencies]
 embassy-sync = { workspace = true }
 

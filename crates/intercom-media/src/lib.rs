@@ -15,7 +15,7 @@ pub const AUDIO_FRAME_DROP_WINDOW_FRAMES: u8 = 50;
 pub const AUDIO_CAPTURE_INTERVAL_MS: u64 = 20;
 pub const AUDIO_DMA_BUFFER_FRAMES: u8 = 4;
 pub const SILENCE_DBFS: i8 = -96;
-pub const MAX_OPUS_PACKET_BYTES: usize = 256;
+pub const MAX_OPUS_PACKET_BYTES: usize = 512;
 pub const OPUS_CHANNEL_CAPACITY: usize = 4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -307,6 +307,180 @@ fn amplitude_to_dbfs(amp_q10: u64) -> i8 {
 const DBFS_FRACTION_HUNDREDTHS: [u16; 17] = [
     602, 550, 500, 453, 408, 366, 326, 287, 250, 214, 180, 147, 116, 86, 56, 28, 0,
 ];
+
+/// Gap in milliseconds after the last Talk TX frame before playback loops the recorded burst.
+pub const BENCH_LOOPBACK_RELEASE_GAP_MS: u64 = 500;
+
+/// Pure no_std state machine that records a Talk TX burst and loops it on Listen after release.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BenchLoopbackState {
+    recording: bool,
+    recorded_len: usize,
+    play_index: usize,
+    last_tx_ms: u64,
+}
+
+impl BenchLoopbackState {
+    pub const fn new() -> Self {
+        Self {
+            recording: false,
+            recorded_len: 0,
+            play_index: 0,
+            last_tx_ms: 0,
+        }
+    }
+
+    pub fn push_tx_frame(&mut self, buffer: &mut [PcmFrame], frame: &PcmFrame, now_ms: u64) {
+        let new_burst = !self.recording
+            || now_ms.saturating_sub(self.last_tx_ms) > BENCH_LOOPBACK_RELEASE_GAP_MS;
+        if new_burst {
+            self.recorded_len = 0;
+            self.play_index = 0;
+            self.recording = true;
+        }
+        self.last_tx_ms = now_ms;
+        if self.recorded_len < buffer.len() {
+            buffer[self.recorded_len] = *frame;
+            self.recorded_len += 1;
+        }
+    }
+
+    pub fn poll_playback_frame(
+        &mut self,
+        buffer: &mut [PcmFrame],
+        now_ms: u64,
+    ) -> Option<PcmFrame> {
+        if self.recording {
+            if now_ms.saturating_sub(self.last_tx_ms) > BENCH_LOOPBACK_RELEASE_GAP_MS {
+                self.recording = false;
+                self.play_index = 0;
+                let len = self.recorded_len.min(buffer.len());
+                if len > 0 {
+                    apply_ramp_in(&mut buffer[0].samples[..AUDIO_RAMP_SAMPLES]);
+                    let last = len - 1;
+                    let tail_start = AUDIO_FRAME_SAMPLES - AUDIO_RAMP_SAMPLES;
+                    apply_ramp_out(&mut buffer[last].samples[tail_start..]);
+                }
+            } else {
+                return Some(PcmFrame::SILENCE);
+            }
+        }
+        if self.recorded_len == 0 || buffer.is_empty() {
+            return None;
+        }
+        let len = self.recorded_len.min(buffer.len());
+        let index = self.play_index % len;
+        let frame = buffer[index];
+        self.play_index = (index + 1) % len;
+        Some(frame)
+    }
+
+    pub const fn recorded_frames(&self) -> usize {
+        self.recorded_len
+    }
+
+    pub const fn is_recording(&self) -> bool {
+        self.recording
+    }
+}
+
+impl Default for BenchLoopbackState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(feature = "bench-talk-loopback")]
+static BENCH_TX_TAP: embassy_sync::blocking_mutex::Mutex<
+    CriticalSectionRawMutex,
+    core::cell::Cell<Option<fn(&PcmFrame)>>,
+> = embassy_sync::blocking_mutex::Mutex::new(core::cell::Cell::new(None));
+
+#[cfg(feature = "bench-talk-loopback")]
+pub fn set_bench_tx_tap(tap: Option<fn(&PcmFrame)>) {
+    BENCH_TX_TAP.lock(|cell| cell.set(tap));
+}
+
+#[cfg(feature = "bench-talk-loopback")]
+pub fn tap_bench_tx_frame(frame: &PcmFrame) {
+    if let Some(tap) = BENCH_TX_TAP.lock(|cell| cell.get()) {
+        tap(frame);
+    }
+}
+
+/// Builds a 44-byte RIFF/WAVE PCM16 header for 16 kHz mono audio.
+pub fn wav_header_16khz_mono(data_bytes: u32) -> [u8; 44] {
+    let riff_size = 36u32.saturating_add(data_bytes).to_le_bytes();
+    let sample_rate = AUDIO_SAMPLE_RATE_HZ.to_le_bytes();
+    let byte_rate = (AUDIO_SAMPLE_RATE_HZ * 2).to_le_bytes();
+    let data_size = data_bytes.to_le_bytes();
+    [
+        b'R',
+        b'I',
+        b'F',
+        b'F',
+        riff_size[0],
+        riff_size[1],
+        riff_size[2],
+        riff_size[3],
+        b'W',
+        b'A',
+        b'V',
+        b'E',
+        b'f',
+        b'm',
+        b't',
+        b' ',
+        16,
+        0,
+        0,
+        0, // PCM fmt chunk size
+        1,
+        0, // PCM format
+        1,
+        0, // mono
+        sample_rate[0],
+        sample_rate[1],
+        sample_rate[2],
+        sample_rate[3],
+        byte_rate[0],
+        byte_rate[1],
+        byte_rate[2],
+        byte_rate[3],
+        2,
+        0, // block align
+        16,
+        0, // bits per sample
+        b'd',
+        b'a',
+        b't',
+        b'a',
+        data_size[0],
+        data_size[1],
+        data_size[2],
+        data_size[3],
+    ]
+}
+
+#[cfg(feature = "bench-talk-loopback")]
+static BENCH_LOOPBACK_READER: embassy_sync::blocking_mutex::Mutex<
+    CriticalSectionRawMutex,
+    core::cell::Cell<Option<fn(usize) -> (usize, Option<PcmFrame>)>>,
+> = embassy_sync::blocking_mutex::Mutex::new(core::cell::Cell::new(None));
+
+#[cfg(feature = "bench-talk-loopback")]
+pub fn set_bench_loopback_reader(reader: Option<fn(usize) -> (usize, Option<PcmFrame>)>) {
+    BENCH_LOOPBACK_READER.lock(|cell| cell.set(reader));
+}
+
+#[cfg(feature = "bench-talk-loopback")]
+pub fn read_bench_loopback_frame(index: usize) -> (usize, Option<PcmFrame>) {
+    if let Some(reader) = BENCH_LOOPBACK_READER.lock(|cell| cell.get()) {
+        reader(index)
+    } else {
+        (0, None)
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -663,5 +837,69 @@ mod tests {
         assert_ne!(first.samples[0], 0);
         assert_eq!(first.samples[0], 100);
         assert_eq!(second.samples[0], 100);
+    }
+
+    #[test]
+    fn bench_loopback_records_talk_burst_and_loops_after_release_gap() {
+        let mut storage = [PcmFrame::SILENCE; 4];
+        let mut loopback = BenchLoopbackState::new();
+
+        assert_eq!(loopback.poll_playback_frame(&mut storage, 100), None);
+
+        let f1 = PcmFrame {
+            samples: [111; AUDIO_FRAME_SAMPLES],
+        };
+        let f2 = PcmFrame {
+            samples: [222; AUDIO_FRAME_SAMPLES],
+        };
+        loopback.push_tx_frame(&mut storage, &f1, 100);
+        loopback.push_tx_frame(&mut storage, &f2, 120);
+
+        // Still actively talking: emit silence so default music does not leak.
+        assert_eq!(
+            loopback.poll_playback_frame(&mut storage, 140),
+            Some(PcmFrame::SILENCE)
+        );
+
+        // Released (>500ms gap): applies fade-in/fade-out and loops recorded frames.
+        let p1 = loopback.poll_playback_frame(&mut storage, 700).unwrap();
+        let p2 = loopback.poll_playback_frame(&mut storage, 720).unwrap();
+        let p3 = loopback.poll_playback_frame(&mut storage, 740).unwrap();
+        assert_eq!(p1.samples[0], 0);
+        assert_eq!(p1.samples[AUDIO_FRAME_SAMPLES - 1], 111);
+        assert_eq!(p2.samples[0], 222);
+        assert!(p2.samples[AUDIO_FRAME_SAMPLES - 1] < 222);
+        assert_eq!(p3, p1);
+
+        // New talk burst overwrites previous recording.
+        let f3 = PcmFrame {
+            samples: [333; AUDIO_FRAME_SAMPLES],
+        };
+        loopback.push_tx_frame(&mut storage, &f3, 1_300);
+        assert_eq!(
+            loopback.poll_playback_frame(&mut storage, 1_320),
+            Some(PcmFrame::SILENCE)
+        );
+        let p4 = loopback.poll_playback_frame(&mut storage, 1_900).unwrap();
+        assert_eq!(p4.samples[0], 0);
+        assert!(p4.samples[AUDIO_FRAME_SAMPLES - 1] < 10);
+    }
+
+    #[test]
+    fn wav_header_encodes_16khz_mono_pcm16_fields() {
+        let header = wav_header_16khz_mono(640);
+        assert_eq!(&header[0..4], b"RIFF");
+        assert_eq!(u32::from_le_bytes(header[4..8].try_into().unwrap()), 676);
+        assert_eq!(&header[8..16], b"WAVEfmt ");
+        assert_eq!(
+            u32::from_le_bytes(header[24..28].try_into().unwrap()),
+            16_000
+        );
+        assert_eq!(
+            u32::from_le_bytes(header[28..32].try_into().unwrap()),
+            32_000
+        );
+        assert_eq!(&header[36..40], b"data");
+        assert_eq!(u32::from_le_bytes(header[40..44].try_into().unwrap()), 640);
     }
 }

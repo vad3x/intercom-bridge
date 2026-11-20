@@ -269,9 +269,99 @@ mod target {
         }
     }
 
+    #[cfg(all(
+        feature = "bench-talk-loopback",
+        any(feature = "devkit", feature = "esp32s3")
+    ))]
+    mod bench_loopback {
+        use core::cell::RefCell;
+
+        use embassy_sync::blocking_mutex::{raw::CriticalSectionRawMutex, Mutex};
+
+        const MAX_LOOPBACK_FRAMES: usize = 500; // 10 seconds @ 20 ms/frame
+
+        struct Storage {
+            state: intercom_media::BenchLoopbackState,
+            frames: alloc::vec::Vec<intercom_media::PcmFrame>,
+            was_recording: bool,
+        }
+
+        static STORAGE: Mutex<CriticalSectionRawMutex, RefCell<Option<Storage>>> =
+            Mutex::new(RefCell::new(None));
+
+        pub fn init() {
+            let frames = alloc::vec![intercom_media::PcmFrame::SILENCE; MAX_LOOPBACK_FRAMES];
+            STORAGE.lock(|cell| {
+                *cell.borrow_mut() = Some(Storage {
+                    state: intercom_media::BenchLoopbackState::new(),
+                    frames,
+                    was_recording: false,
+                });
+            });
+            intercom_media::set_bench_tx_tap(Some(on_tx_frame));
+            intercom_media::set_bench_loopback_reader(Some(read_frame));
+            log::info!(
+                "Bench talk loopback enabled: {} frames ({} s max)",
+                MAX_LOOPBACK_FRAMES,
+                MAX_LOOPBACK_FRAMES / 50
+            );
+        }
+
+        fn read_frame(index: usize) -> (usize, Option<intercom_media::PcmFrame>) {
+            STORAGE.lock(|cell| {
+                let guard = cell.borrow();
+                let Some(storage) = guard.as_ref() else {
+                    return (0, None);
+                };
+                let len = storage.state.recorded_frames().min(storage.frames.len());
+                let frame = (index < len).then(|| storage.frames[index]);
+                (len, frame)
+            })
+        }
+
+        fn on_tx_frame(frame: &intercom_media::PcmFrame) {
+            let now_ms = embassy_time::Instant::now().as_millis();
+            STORAGE.lock(|cell| {
+                let mut guard = cell.borrow_mut();
+                let Some(storage) = guard.as_mut() else {
+                    return;
+                };
+                storage
+                    .state
+                    .push_tx_frame(&mut storage.frames, frame, now_ms);
+                storage.was_recording = true;
+            });
+        }
+
+        pub fn next_playback_frame(now_ms: u64) -> Option<intercom_media::PcmFrame> {
+            STORAGE.lock(|cell| {
+                let mut guard = cell.borrow_mut();
+                let storage = guard.as_mut()?;
+                let Storage {
+                    state,
+                    frames,
+                    was_recording,
+                } = storage;
+                let frame = state.poll_playback_frame(frames, now_ms);
+                if !state.is_recording() && *was_recording {
+                    *was_recording = false;
+                    log::info!(
+                        "Bench talk loopback: looping {} recorded frames ({} ms)",
+                        state.recorded_frames(),
+                        state.recorded_frames() * 20
+                    );
+                }
+                frame
+            })
+        }
+    }
+
     pub async fn run_bench_audio_input(rx_audio: &'static intercom_media::RxAudioChannel) {
         #[cfg(any(feature = "devkit", feature = "esp32s3"))]
         {
+            #[cfg(feature = "bench-talk-loopback")]
+            bench_loopback::init();
+
             let mut speech = intercom_media::Pcm16LeLoopingSource::new(
                 include_bytes!("../../assets/devkit_test_music.pcm"),
                 0,
@@ -294,7 +384,20 @@ mod target {
                 simulated_dma_overruns = simulated_dma_overruns.saturating_add(batch.overruns);
 
                 for _ in 0..batch.frames {
-                    let queue_dropped = rx_audio.try_send(speech.next_frame()).is_err();
+                    #[cfg(feature = "bench-talk-loopback")]
+                    let frame = bench_loopback::next_playback_frame(
+                        embassy_time::Instant::now().as_millis(),
+                    )
+                    .unwrap_or_else(|| speech.next_frame());
+                    #[cfg(not(feature = "bench-talk-loopback"))]
+                    let frame = speech.next_frame();
+
+                    let levels = intercom_media::compute_frame_levels_dbfs(&frame);
+                    intercom_core::domain::diagnostics::update_rx_levels_dbfs(
+                        levels.rms_dbfs,
+                        levels.peak_dbfs,
+                    );
+                    let queue_dropped = rx_audio.try_send(frame).is_err();
                     if let Some(queue_drops) = drop_window.record(queue_dropped) {
                         log::debug!(
                             "Test audio frames=50 simulated_overruns={} queue_drops={}",

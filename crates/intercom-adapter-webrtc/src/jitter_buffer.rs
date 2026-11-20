@@ -64,6 +64,16 @@ impl<const N: usize> JitterBuffer<N> {
     pub const fn next_sequence(&self) -> u16 {
         self.next_sequence
     }
+
+    /// Return the number of buffered packets currently awaiting playout.
+    pub fn buffered_count(&self) -> usize {
+        self.slots.iter().filter(|slot| slot.is_some()).count()
+    }
+
+    /// Return `true` when no packets are buffered.
+    pub fn is_empty(&self) -> bool {
+        self.slots.iter().all(Option::is_none)
+    }
 }
 
 #[cfg(test)]

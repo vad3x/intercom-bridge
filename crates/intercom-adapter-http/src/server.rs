@@ -428,7 +428,7 @@ fn build_router<
 >(
     app_state: AppState<'a, H, E, O, T>,
 ) -> picoserve::Router<impl picoserve::routing::PathRouter + 'a> {
-    picoserve::Router::new()
+    let router = picoserve::Router::new()
         .route(
             "/",
             picoserve::routing::get(|| async move {
@@ -591,7 +591,15 @@ fn build_router<
                         .with_content_type("application/json")
                 },
             ),
-        )
+        );
+
+    #[cfg(feature = "bench-talk-loopback")]
+    let router = router.route(
+        "/api/debug/audio/loopback.wav",
+        picoserve::routing::get_service(BenchLoopbackWavService),
+    );
+
+    router
         .route(
             "/api/action/listen",
             picoserve::routing::post(
@@ -634,7 +642,9 @@ fn build_router<
                 |picoserve::extract::State(state): picoserve::extract::State<
                     AppState<'a, H, E, O, T>,
                 >| async move {
-                    state.access_handle.session_heartbeat(SessionOwner::HttpDebug);
+                    state
+                        .access_handle
+                        .session_heartbeat(SessionOwner::HttpDebug);
                     picoserve::response::Response::ok("{\"status\":\"ok\"}")
                         .with_content_type("application/json")
                 },
@@ -776,6 +786,79 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, T: Ec
 }
 
 const DEBUG_SDP_BUFFER_SIZE: usize = 3_072;
+
+#[cfg(feature = "bench-talk-loopback")]
+struct BenchLoopbackWavContent {
+    total_frames: usize,
+}
+
+#[cfg(feature = "bench-talk-loopback")]
+impl picoserve::response::Content for BenchLoopbackWavContent {
+    fn content_type(&self) -> &'static str {
+        "audio/wav"
+    }
+
+    fn content_length(&self) -> usize {
+        44 + self.total_frames * (intercom_media::AUDIO_FRAME_SAMPLES * 2)
+    }
+
+    async fn write_content<W: picoserve::io::Write>(self, mut writer: W) -> Result<(), W::Error> {
+        let data_bytes = (self.total_frames * (intercom_media::AUDIO_FRAME_SAMPLES * 2)) as u32;
+        let header = intercom_media::wav_header_16khz_mono(data_bytes);
+        writer.write_all(&header).await?;
+        let mut frame_bytes = [0u8; intercom_media::AUDIO_FRAME_SAMPLES * 2];
+        for idx in 0..self.total_frames {
+            let (_, frame) = intercom_media::read_bench_loopback_frame(idx);
+            let frame = frame.unwrap_or(intercom_media::PcmFrame::SILENCE);
+            for (dst, sample) in frame_bytes.chunks_exact_mut(2).zip(frame.samples) {
+                dst.copy_from_slice(&sample.to_le_bytes());
+            }
+            writer.write_all(&frame_bytes).await?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(feature = "bench-talk-loopback")]
+struct BenchLoopbackWavService;
+
+#[cfg(feature = "bench-talk-loopback")]
+impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, T: EcosystemType>
+    picoserve::routing::RequestHandlerService<AppState<'a, H, E, O, T>>
+    for BenchLoopbackWavService
+{
+    async fn call_request_handler_service<
+        R: picoserve::io::Read,
+        W: picoserve::response::ResponseWriter<Error = R::Error>,
+    >(
+        &self,
+        _state: &AppState<'a, H, E, O, T>,
+        _path_parameters: (),
+        request: picoserve::request::Request<'_, R>,
+        response_writer: W,
+    ) -> Result<picoserve::ResponseSent, W::Error> {
+        let (total_frames, _) = intercom_media::read_bench_loopback_frame(0);
+        if total_frames == 0 {
+            return picoserve::response::Response::new(
+                picoserve::response::StatusCode::NOT_FOUND,
+                "{\"error\":\"no_recording\"}",
+            )
+            .with_content_type("application/json")
+            .write_to(request.body_connection.finalize().await?, response_writer)
+            .await;
+        }
+        picoserve::response::Response::new(
+            picoserve::response::StatusCode::OK,
+            BenchLoopbackWavContent { total_frames },
+        )
+        .with_header(
+            "Content-Disposition",
+            "attachment; filename=\"loopback.wav\"",
+        )
+        .write_to(request.body_connection.finalize().await?, response_writer)
+        .await
+    }
+}
 
 struct DebugWebRtcOfferService;
 

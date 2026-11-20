@@ -5,6 +5,7 @@ edition = "2021"
 
 [features]
 large-ota-buffers = []
+bench-talk-loopback = ["intercom-media/bench-talk-loopback"]
 
 [dependencies]
 edf-core = { workspace = true }

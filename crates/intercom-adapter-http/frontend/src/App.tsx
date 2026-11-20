@@ -8,7 +8,6 @@ import {
 import { DoorClosed, Layers } from 'lucide-solid';
 import { createSignal, onCleanup, onMount } from 'solid-js';
 import { fetchLogs } from './api';
-import { BusDebugCard } from './components/BusDebugCard';
 import { IntercomControls } from './components/IntercomControls';
 import { LiveAudioCard } from './components/LiveAudioCard';
 import { createIntercomStore } from './store/intercomStore';
@@ -177,22 +176,18 @@ export function App() {
             onRing={handleRing}
             onDurationChange={handleDurationChange}
           />
-          <BusDebugCard
+          <LiveAudioCard
             busState={store.status()?.bus_state}
             callState={store.status()?.call_state}
-            onStartListen={store.startListen}
-            onStartTalk={store.startTalk}
-            onStopTalk={store.stopTalk}
-            onHangup={store.hangupSession}
-          />
-          <LiveAudioCard
             rxRmsDbfs={store.status()?.rx_rms_dbfs}
             rxPeakDbfs={store.status()?.rx_peak_dbfs}
             rxGainHalfDb={store.rxGainHalfDb()}
             txGainHalfDb={store.txGainHalfDb()}
-            toneActive={store.status()?.tone_active}
+            onStartListen={store.startListen}
+            onStartTalk={store.startTalk}
+            onStopTalk={store.stopTalk}
+            onHangup={store.hangupSession}
             onGainChange={store.updateAudioGain}
-            onToggleTone={store.toggleBenchTone}
             onNotify={showToast}
           />
         </>

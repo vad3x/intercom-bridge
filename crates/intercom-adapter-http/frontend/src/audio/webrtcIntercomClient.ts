@@ -22,6 +22,7 @@ export class WebRtcIntercomClient {
   private talking = false;
   private talkRequested = false;
   private talkGeneration = 0;
+  private remoteMuted = false;
 
   constructor(private readonly callbacks: WebRtcIntercomCallbacks) {}
 
@@ -77,10 +78,18 @@ export class WebRtcIntercomClient {
     }
   }
 
+  setRemoteMuted(muted: boolean): void {
+    this.remoteMuted = muted;
+    if (this.remoteAudio) {
+      this.remoteAudio.muted = muted;
+    }
+  }
+
   async startTalk(): Promise<void> {
     const peer = this.peer;
     const sender = this.sender;
     if (!peer || !sender || peer.connectionState !== 'connected' || this.talkRequested) return;
+    this.setRemoteMuted(true);
     this.talkRequested = true;
     const generation = ++this.talkGeneration;
     let stream: MediaStream | null = null;
@@ -114,6 +123,7 @@ export class WebRtcIntercomClient {
   }
 
   stopTalk(): void {
+    this.setRemoteMuted(false);
     this.talkRequested = false;
     this.talkGeneration += 1;
     if (this.talking) void this.sender?.replaceTrack(null).catch(() => {});
@@ -160,6 +170,7 @@ export class WebRtcIntercomClient {
     if (this.peer !== peer) return;
     const audio = new Audio();
     audio.autoplay = true;
+    audio.muted = this.remoteMuted;
     audio.setAttribute('playsinline', '');
     audio.srcObject = event.streams[0] ?? new MediaStream([event.track]);
     this.remoteAudio = audio;

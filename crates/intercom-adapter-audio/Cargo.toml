@@ -10,6 +10,7 @@ default = ["esp32c6"]
 esp32c6 = []
 esp32s31 = []
 esp32s3 = []
+bench-talk-loopback = ["intercom-media/bench-talk-loopback"]
 
 [dependencies]
 embedded-hal = { workspace = true }
