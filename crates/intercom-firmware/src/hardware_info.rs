@@ -4,10 +4,13 @@
 //! and Wi-Fi diagnostics via platform and ESP-IDF / esp-radio APIs.
 
 use core::cell::RefCell;
+use core::sync::atomic::{AtomicU32, Ordering};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::blocking_mutex::Mutex;
 use intercom_core::domain::diagnostics::WifiSsid;
 use intercom_core::ports::diagnostics::HardwareInfoDriver;
+
+static CACHED_IPV4: AtomicU32 = AtomicU32::new(0);
 
 static MEDIA_RESOURCE_LOW_WATER: Mutex<CriticalSectionRawMutex, RefCell<MediaResourceLowWater>> =
     Mutex::new(RefCell::new(MediaResourceLowWater {
@@ -103,7 +106,7 @@ impl HardwareInfoDriver for FirmwareHardwareInfo {
     }
 
     fn ip_address(&self) -> Option<[u8; 4]> {
-        target_impl::ip_address()
+        cached_ip_address()
     }
 
     fn mac_address(&self) -> [u8; 6] {
@@ -176,12 +179,6 @@ mod target_impl {
         }
     }
 
-    pub fn ip_address() -> Option<[u8; 4]> {
-        let stack = rs_matter_embassy::enet::global_stack()?;
-        let config = stack.config_v4()?;
-        Some(config.address.address().octets())
-    }
-
     pub fn mac_address() -> [u8; 6] {
         let mac = esp_hal::efuse::base_mac_address();
         mac.as_bytes().try_into().unwrap_or([0u8; 6])
@@ -242,10 +239,6 @@ mod target_impl {
         0
     }
 
-    pub fn ip_address() -> Option<[u8; 4]> {
-        None
-    }
-
     pub fn mac_address() -> [u8; 6] {
         [0u8; 6]
     }
@@ -256,6 +249,27 @@ mod target_impl {
 
     pub fn is_slot_valid() -> bool {
         true
+    }
+}
+
+/// Update the cached IPv4 address reported by `FirmwareHardwareInfo::ip_address()`.
+#[inline]
+pub fn set_cached_ip_address(ip: Option<[u8; 4]>) {
+    let encoded = match ip {
+        Some(octets) => u32::from_be_bytes(octets),
+        None => 0,
+    };
+    CACHED_IPV4.store(encoded, Ordering::Relaxed);
+}
+
+/// Read the cached IPv4 address, returning `None` when unset (`0.0.0.0`).
+#[inline]
+pub fn cached_ip_address() -> Option<[u8; 4]> {
+    let encoded = CACHED_IPV4.load(Ordering::Relaxed);
+    if encoded == 0 {
+        None
+    } else {
+        Some(encoded.to_be_bytes())
     }
 }
 
@@ -317,5 +331,23 @@ mod tests {
         assert_eq!(measurement.min_internal_free_bytes, 32_000);
         assert_eq!(measurement.min_audio_stack_free_bytes, 18_000);
         assert_eq!(measurement.latest_psram_free_bytes, 200_000);
+    }
+
+    #[test]
+    fn cached_ipv4_address_roundtrips_without_global_stack() {
+        let info = FirmwareHardwareInfo;
+
+        set_cached_ip_address(Some([192, 168, 1, 42]));
+        assert_eq!(info.ip_address(), Some([192, 168, 1, 42]));
+
+        set_cached_ip_address(None);
+        assert_eq!(info.ip_address(), None);
+
+        let forbidden = concat!("rs_matter_embassy::enet::", "global_stack");
+        assert!(
+            !include_str!("hardware_info.rs").contains(forbidden),
+            "hardware_info.rs must not reference {}",
+            forbidden
+        );
     }
 }

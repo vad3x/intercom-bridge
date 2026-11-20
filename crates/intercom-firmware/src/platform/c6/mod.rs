@@ -42,6 +42,10 @@ mod target_init {
     impl PlatformDriver for C6Platform {
         type Drivers = PlatformDrivers<C6Peripherals>;
 
+        // With PreexistingWireless, peak Matter bump usage is about 32,144 bytes.
+        // This leaves about 1.8 KiB of headroom and reserves SRAM for the main stack.
+        const MATTER_BUMP_SIZE: usize = 34_000;
+
         fn init() -> (Self, Self::Drivers) {
             let peripherals = esp_hal::init(
                 esp_hal::Config::default().with_cpu_clock(esp_hal::clock::CpuClock::max()),

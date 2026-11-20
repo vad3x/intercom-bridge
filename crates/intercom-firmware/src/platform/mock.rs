@@ -8,6 +8,8 @@ pub struct MockPlatform;
 impl PlatformDriver for MockPlatform {
     type Drivers = PlatformDrivers<()>;
 
+    const MATTER_BUMP_SIZE: usize = 38_000;
+
     fn init() -> (Self, Self::Drivers) {
         (Self, PlatformDrivers { peripherals: () })
     }

@@ -100,8 +100,41 @@ pub fn allocate_webrtc_media_resources() -> &'static mut WebRtcMediaResources {
     super::memory::allocate_webrtc_media_resources()
 }
 
-pub fn allocate_matter_stack_storage() -> &'static mut MaybeUninit<MatterStackStorage> {
-    alloc_psram_uninit::<MatterStackStorage>()
+pub fn allocate_matter_stack_storage(
+) -> &'static mut MaybeUninit<MatterStackStorage<{ S3Platform::MATTER_BUMP_SIZE }>> {
+    alloc_psram_uninit()
+}
+
+#[inline(never)]
+pub fn allocate_enet_resources() -> platform::EnetResources {
+    use rs_matter_embassy::matter::utils::init::InitMaybeUninit;
+
+    static TCP_CONFIG: rs_matter::transport::network::tcp::TcpConfig =
+        rs_matter::transport::network::tcp::TcpConfig::new();
+
+    let stack_resources = unsafe {
+        alloc_psram_uninit::<rs_matter_embassy::enet::EnetMatterStackResources>().assume_init_mut()
+    };
+    let udp_buffers = alloc_psram_uninit::<rs_matter_embassy::enet::EnetMatterUdpBuffers>()
+        .init_with(rs_matter_embassy::enet::EnetMatterUdpBuffers::init());
+    let tcp_buffers = alloc_psram_uninit::<rs_matter_embassy::enet::EnetMatterTcpBuffers>()
+        .init_with(rs_matter_embassy::enet::EnetMatterTcpBuffers::init());
+    let matter_tcp_buffers =
+        alloc_psram_uninit::<rs_matter_embassy::enet::EnetMatterTcpTransportBuffers>()
+            .init_with(rs_matter_embassy::enet::EnetMatterTcpTransportBuffers::init());
+    let btp_gatt = alloc_psram_uninit::<rs_matter_embassy::ble::BtpGattContext>()
+        .init_with(rs_matter_embassy::ble::BtpGattContext::init());
+
+    platform::EnetResources {
+        stack_resources,
+        buffers: platform::EnetMatterBuffers {
+            udp_buffers,
+            tcp_buffers,
+            matter_tcp_buffers,
+            tcp_config: &TCP_CONFIG,
+            btp_gatt,
+        },
+    }
 }
 
 pub fn create_webrtc_engine(
@@ -275,8 +308,11 @@ pub async fn wire_board(
 
     BoardHardware {
         wireless: BoardWireless {
-            wifi: peripherals.WIFI,
+            wifi: Some(peripherals.WIFI),
             bt: peripherals.BT,
+            wifi_controller: None,
+            enet_stack: None,
+            enet_buffers: None,
         },
         bus,
         ring,

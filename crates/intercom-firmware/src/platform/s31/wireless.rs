@@ -4,7 +4,8 @@ use intercom_adapter_matter::{rand_core, MatterStackStorage, MatterWirelessDrive
 use log::info;
 use rs_matter::dm::{AsyncHandler, Node};
 use rs_matter::persist::KvBlobStore;
-use rs_matter_embassy::wireless::{EmbassyWifi, PreexistingWifiRadio};
+
+use crate::platform;
 
 #[derive(Clone, Copy)]
 pub struct S31RadioEntropyRng(pub(crate) esp_hal::rng::Rng);
@@ -30,24 +31,41 @@ impl rand_core::CryptoRng for S31RadioEntropyRng {}
 pub struct BoardWireless {
     pub(crate) wifi: Option<esp_hal::peripherals::WIFI<'static>>,
     pub(crate) wifi_controller: Option<esp_radio::wifi::WifiController<'static>>,
+    pub(crate) enet_stack: Option<rs_matter_embassy::enet::net::Stack<'static>>,
+    pub(crate) enet_buffers: Option<platform::EnetMatterBuffers>,
+}
+
+impl BoardWireless {
+    pub fn init_network(
+        &mut self,
+        hostname: &str,
+        seed: u64,
+        enet_resources: platform::EnetResources,
+    ) -> (
+        rs_matter_embassy::enet::net::Stack<'static>,
+        rs_matter_embassy::enet::net::Runner<
+            'static,
+            rs_matter_embassy::enet::MatterEnetDriver<esp_radio::wifi::Interface>,
+        >,
+    ) {
+        let wifi = self.wifi.take().expect("S31 WIFI already consumed");
+        let (controller, stack, runner) =
+            platform::init_esp_network(wifi, hostname, seed, enet_resources.stack_resources);
+        self.wifi_controller = Some(controller);
+        self.enet_stack = Some(stack);
+        self.enet_buffers = Some(enet_resources.buffers);
+        (stack, runner)
+    }
 }
 
 impl MatterWirelessDriver for BoardWireless {
     type Rng = S31RadioEntropyRng;
 
     async fn init_entropy(&mut self) -> Self::Rng {
-        let wifi = self.wifi.take().expect("S31 WIFI already consumed");
-        let mut controller = esp_radio::wifi::WifiController::new(
-            wifi,
-            esp_radio::wifi::ControllerConfig::default(),
-        )
-        .expect("Failed to create S31 Wi-Fi controller");
-        controller
-            .set_power_saving(esp_radio::wifi::PowerSaveMode::None)
-            .expect("Failed to disable S31 Wi-Fi power saving");
-        controller
-            .set_max_tx_power(80)
-            .expect("Failed to set S31 Wi-Fi transmit power");
+        let controller = self
+            .wifi_controller
+            .as_mut()
+            .expect("S31 Wi-Fi controller not initialized");
         controller
             .set_config(&esp_radio::wifi::Config::Station(
                 esp_radio::wifi::sta::StationConfig::default(),
@@ -57,15 +75,13 @@ impl MatterWirelessDriver for BoardWireless {
             .scan_async(&esp_radio::wifi::scan::ScanConfig::default())
             .await
             .expect("Failed to initialize S31 Wi-Fi RF entropy source");
-        self.wifi_controller = Some(controller);
         S31RadioEntropyRng(esp_hal::rng::Rng::new())
     }
 
-    async fn run_stack<'a, C, H, S, const KB: usize, M>(
+    async fn run_stack<'a, const BUMP_SIZE: usize, C, H, S, const KB: usize, M>(
         mut self,
-        stack: &'a MatterStackStorage,
-        weak_rand: C::WeakRand<'a>,
-        hostname: &'a str,
+        stack: &'a MatterStackStorage<BUMP_SIZE>,
+        _weak_rand: C::WeakRand<'a>,
         _is_commissioned: bool,
         crypto: &'a C,
         handler: (Node<'a>, H),
@@ -81,20 +97,31 @@ impl MatterWirelessDriver for BoardWireless {
             .wifi_controller
             .take()
             .expect("S31 Wi-Fi controller not initialized");
-        let wifi = EmbassyWifi::new(
-            PreexistingWifiRadio::new(
-                esp_radio::wifi::Interface::station(),
-                rs_matter_embassy::wifi::esp::EspWifiController::new(wifi_controller),
-                (),
-            ),
-            weak_rand,
-            false,
-            stack,
-        )
-        .with_hostname(hostname);
+        let enet_stack = self.enet_stack.expect("S31 enet stack not initialized");
+        let enet_buffers = self.enet_buffers.expect("S31 enet buffers not initialized");
+        let net_stack = rs_matter_embassy::enet::EnetStack::new_with_tcp(
+            enet_stack,
+            enet_buffers.udp_buffers,
+            enet_buffers.tcp_buffers,
+            enet_buffers.matter_tcp_buffers,
+            enet_buffers.tcp_config,
+        );
+        let netif = rs_matter_embassy::enet::EnetNetif::new(
+            enet_stack,
+            rs_matter_embassy::matter::dm::clusters::gen_diag::InterfaceTypeEnum::WiFi,
+        );
+        let net_ctl = rs_matter_embassy::wifi::esp::EspWifiController::new(wifi_controller);
+        let mdns = rs_matter_embassy::matter::transport::network::mdns::builtin::BuiltinMdns::new();
+        let wireless = rs_matter_embassy::stack::wireless::PreexistingWireless::new(
+            net_stack,
+            netif,
+            net_ctl,
+            mdns,
+            (),
+        );
         info!("Starting Wi-Fi-only Matter commissioning and operational stack");
         stack
-            .run_wifi_oper(wifi, crypto, handler, kv, monitor)
+            .run_wifi_oper(wireless, crypto, handler, kv, monitor)
             .await
             .expect("Matter operational Wi-Fi stack fatal error");
     }
