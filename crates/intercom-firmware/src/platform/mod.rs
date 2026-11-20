@@ -1,21 +1,25 @@
 //! Hardware platform selection and lifecycle abstraction.
 
-/// A `StaticCell` wrapper that can reside in the bootloader-reclaimed RAM section.
+/// A `MaybeUninit` wrapper that can reside in the bootloader-reclaimed RAM section
+/// (which is not zero-initialized at startup, so it must not contain a `StaticCell` guard).
 #[repr(transparent)]
-pub struct ReclaimedCell<T>(static_cell::StaticCell<T>);
+pub struct ReclaimedCell<T>(core::cell::UnsafeCell<core::mem::MaybeUninit<T>>);
+
+unsafe impl<T: Send> Sync for ReclaimedCell<T> {}
 
 #[cfg(target_os = "none")]
-// SAFETY: StaticCell stores its value in MaybeUninit behind UnsafeCell. Its
+// SAFETY: `ReclaimedCell` wraps `MaybeUninit<T>` behind `UnsafeCell`. Its
 // constructor requires no initialized bytes, which is the reclaimed section's contract.
 unsafe impl<T> esp_hal::Uninit for ReclaimedCell<T> {}
 
 impl<T> ReclaimedCell<T> {
     pub const fn new() -> Self {
-        Self(static_cell::StaticCell::new())
+        Self(core::cell::UnsafeCell::new(core::mem::MaybeUninit::uninit()))
     }
 
     pub fn init(&'static self, value: T) -> &'static mut T {
-        self.0.init(value)
+        // SAFETY: callers invoke `init` once during single-threaded startup before any alias exists.
+        unsafe { (*self.0.get()).write(value) }
     }
 }
 
@@ -46,6 +50,17 @@ pub struct PlatformDrivers<P> {
     pub peripherals: P,
 }
 
+/// Build an `embassy_net::DhcpConfig` with DHCPv4 Option 12 hostname when non-empty and <= 32 bytes.
+pub fn dhcp_config_with_hostname(hostname: &str) -> embassy_net::DhcpConfig {
+    let mut dhcp = embassy_net::DhcpConfig::default();
+    if !hostname.is_empty() {
+        if let Ok(parsed) = heapless::String::try_from(hostname) {
+            dhcp.hostname = Some(parsed);
+        }
+    }
+    dhcp
+}
+
 /// Consume the latest shared call and lifecycle state updates for an audio worker.
 pub fn take_audio_state_updates(
     call_state: &mut intercom_core::events::CallStateReceiver<'_>,
@@ -60,6 +75,9 @@ pub fn take_audio_state_updates(
 /// Initializes a hardware target and starts platform-specific worker tasks.
 pub trait PlatformDriver: Sized {
     type Drivers;
+
+    /// Bytes reserved for the Matter stack's bump allocator.
+    const MATTER_BUMP_SIZE: usize;
 
     fn init() -> (Self, Self::Drivers);
 
@@ -87,7 +105,7 @@ mod target {
     pub use super::s31::board as active_board;
 
     pub use active_board::{
-        allocate_dtls_srtp_resources, allocate_matter_stack_storage,
+        allocate_dtls_srtp_resources, allocate_enet_resources, allocate_matter_stack_storage,
         allocate_webrtc_media_resources, create_webrtc_engine, log_pre_matter_heap, wire_board,
         BoardAudioCtrl, BoardWireless,
     };
@@ -220,13 +238,76 @@ mod target {
         }
     }
 
-    #[cfg(any(feature = "esp32c6", feature = "esp32s3"))]
-    pub async fn run_esp_coex_or_oper_stack<'a, C, H, S, const KB: usize, M>(
+    /// Pre-allocated `embassy-net` and Matter transport buffers owned by the application.
+    pub struct EnetMatterBuffers {
+        pub udp_buffers: &'static rs_matter_embassy::enet::EnetMatterUdpBuffers,
+        pub tcp_buffers: &'static rs_matter_embassy::enet::EnetMatterTcpBuffers,
+        pub matter_tcp_buffers: &'static rs_matter_embassy::enet::EnetMatterTcpTransportBuffers,
+        pub tcp_config: &'static rs_matter::transport::network::tcp::TcpConfig,
+        #[cfg(any(feature = "esp32c6", feature = "esp32s3"))]
+        pub btp_gatt: &'static rs_matter_embassy::ble::BtpGattContext,
+    }
+
+    pub struct EnetResources {
+        pub stack_resources: &'static mut rs_matter_embassy::enet::EnetMatterStackResources,
+        pub buffers: EnetMatterBuffers,
+    }
+
+    /// Initialize the `esp-radio` Wi-Fi controller and `embassy-net` stack once for the application.
+    pub fn init_esp_network(
         wifi: esp_hal::peripherals::WIFI<'static>,
+        hostname: &str,
+        seed: u64,
+        stack_resources: &'static mut rs_matter_embassy::enet::EnetMatterStackResources,
+    ) -> (
+        esp_radio::wifi::WifiController<'static>,
+        rs_matter_embassy::enet::net::Stack<'static>,
+        rs_matter_embassy::enet::net::Runner<
+            'static,
+            rs_matter_embassy::enet::MatterEnetDriver<esp_radio::wifi::Interface>,
+        >,
+    ) {
+        let mut controller = esp_radio::wifi::WifiController::new(
+            wifi,
+            esp_radio::wifi::ControllerConfig::default().with_sta_disconnected_pm(false),
+        )
+        .expect("Failed to create Wi-Fi controller");
+        controller
+            .set_power_saving(esp_radio::wifi::PowerSaveMode::None)
+            .expect("Failed to disable Wi-Fi power saving");
+        controller
+            .set_max_tx_power(80)
+            .expect("Failed to set Wi-Fi transmit power");
+
+        let (stack, runner) = rs_matter_embassy::enet::create_enet_stack(
+            esp_radio::wifi::Interface::station(),
+            seed,
+            stack_resources,
+        );
+        stack.set_config_v4(embassy_net::ConfigV4::Dhcp(
+            super::dhcp_config_with_hostname(hostname),
+        ));
+
+        (controller, stack, runner)
+    }
+
+    #[cfg(any(feature = "esp32c6", feature = "esp32s3"))]
+    #[allow(clippy::too_many_arguments)]
+    pub async fn run_esp_preexisting_stack<
+        'a,
+        const BUMP_SIZE: usize,
+        C,
+        H,
+        S,
+        const KB: usize,
+        M,
+    >(
+        wifi_controller: esp_radio::wifi::WifiController<'static>,
         bt: esp_hal::peripherals::BT<'static>,
-        stack: &'a intercom_adapter_matter::MatterStackStorage,
+        enet_stack: rs_matter_embassy::enet::net::Stack<'static>,
+        enet_buffers: EnetMatterBuffers,
+        stack: &'a intercom_adapter_matter::MatterStackStorage<BUMP_SIZE>,
         weak_rand: C::WeakRand<'a>,
-        hostname: &'a str,
         is_commissioned: bool,
         crypto: &'a C,
         handler: (rs_matter::dm::Node<'a>, H),
@@ -238,9 +319,20 @@ mod target {
         S: rs_matter::persist::KvBlobStore,
         M: rs_matter_embassy::stack::UserTask,
     {
-        let radio = rs_matter_embassy::wireless::esp::EspWifiRadio::new(wifi, bt);
+        let net_stack = rs_matter_embassy::enet::EnetStack::new_with_tcp(
+            enet_stack,
+            enet_buffers.udp_buffers,
+            enet_buffers.tcp_buffers,
+            enet_buffers.matter_tcp_buffers,
+            enet_buffers.tcp_config,
+        );
+        let netif = rs_matter_embassy::enet::EnetNetif::new(
+            enet_stack,
+            rs_matter_embassy::matter::dm::clusters::gen_diag::InterfaceTypeEnum::WiFi,
+        );
+        let net_ctl = rs_matter_embassy::wifi::esp::EspWifiController::new(wifi_controller);
         #[cfg(feature = "esp32c6")]
-        let radio = radio.with_protocols(
+        let net_ctl = net_ctl.with_protocols(
             rs_matter_embassy::wireless::esp::Protocols::default().with_2_4(
                 rs_matter_embassy::wireless::esp::Protocol::B
                     | rs_matter_embassy::wireless::esp::Protocol::G
@@ -248,21 +340,28 @@ mod target {
                     | rs_matter_embassy::wireless::esp::Protocol::AX,
             ),
         );
-        let wifi = rs_matter_embassy::wireless::EmbassyWifi::new(radio, weak_rand, true, stack)
-            .with_hostname(hostname);
+        let mdns = rs_matter_embassy::matter::transport::network::mdns::builtin::BuiltinMdns::new();
+        let gatt = rs_matter_embassy::wireless::esp::EspGattPeripheral::new(
+            bt,
+            Some(weak_rand),
+            enet_buffers.btp_gatt,
+        );
+        let wireless = rs_matter_embassy::stack::wireless::PreexistingWireless::new(
+            net_stack, netif, net_ctl, mdns, gatt,
+        );
 
         match intercom_adapter_matter::commissioning::select_wireless_boot_mode(is_commissioned) {
             intercom_adapter_matter::commissioning::WirelessBootMode::OperationalWifiOnly => {
                 log::info!("Commissioned fabric present -> starting Wi-Fi-only operational stack");
                 stack
-                    .run_wifi_oper(wifi, crypto, handler, kv, monitor)
+                    .run_wifi_oper(wireless, crypto, handler, kv, monitor)
                     .await
                     .expect("Matter operational Wi-Fi stack fatal error");
             }
             intercom_adapter_matter::commissioning::WirelessBootMode::BleWifiCoex => {
                 log::info!("Uncommissioned -> starting concurrent BLE + Wi-Fi commissioning");
                 stack
-                    .run_wifi(wifi, crypto, handler, kv, monitor)
+                    .run_wifi(wireless, crypto, handler, kv, monitor)
                     .await
                     .expect("Matter coex stack fatal error");
             }
@@ -545,6 +644,18 @@ mod tests {
         SystemStateSender, SystemStateWatch,
     };
     use intercom_core::ports::IntercomReporter;
+
+    #[test]
+    fn dhcp_config_with_hostname_sets_valid_names_and_ignores_invalid() {
+        let valid = super::dhcp_config_with_hostname("intercom-bridge");
+        assert_eq!(valid.hostname.as_deref(), Some("intercom-bridge"));
+
+        let empty = super::dhcp_config_with_hostname("");
+        assert_eq!(empty.hostname, None);
+
+        let oversized = super::dhcp_config_with_hostname("intercom-bridge-hostname-over-32-bytes");
+        assert_eq!(oversized.hostname, None);
+    }
 
     #[test]
     fn reclaimed_cell_initializes_value_in_shared_platform_module() {

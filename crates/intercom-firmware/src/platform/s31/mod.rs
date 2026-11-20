@@ -59,6 +59,8 @@ mod target_init {
     impl PlatformDriver for S31Platform {
         type Drivers = PlatformDrivers<S31Peripherals>;
 
+        const MATTER_BUMP_SIZE: usize = 38_000;
+
         fn init() -> (Self, Self::Drivers) {
             let peripherals = esp_hal::init(
                 esp_hal::Config::default().with_cpu_clock(esp_hal::clock::CpuClock::max()),

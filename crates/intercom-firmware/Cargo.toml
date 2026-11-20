@@ -105,8 +105,10 @@ sha2 = { version = "=0.10.9", default-features = false }
 hmac = { version = "=0.12.1", default-features = false }
 embassy-executor = { workspace = true }
 embassy-futures = { workspace = true }
+embassy-net = { workspace = true, features = ["dhcpv4", "dhcpv4-hostname"] }
 embassy-sync = { workspace = true }
 embassy-time = { workspace = true, features = ["generic-queue-8"] }
+heapless = { workspace = true }
 portable-atomic = { workspace = true, features = ["critical-section"] }
 static_cell = { workspace = true }
 
@@ -116,6 +118,7 @@ intercom-adapter-gpio = { path = "../intercom-adapter-gpio", default-features = 
 intercom-adapter-matter = { path = "../intercom-adapter-matter", default-features = false }
 esp-backtrace = { workspace = true, features = ["panic-handler", "println", "custom-halt"] }
 esp-hal = { workspace = true, features = ["log-04", "unstable", "exception-handler"] }
+esp-radio = { workspace = true, default-features = false, features = ["log-04", "unstable"] }
 esp-rtos = { workspace = true, features = ["esp-radio", "embassy"] }
 esp-alloc = { workspace = true }
 esp-println = { workspace = true, features = ["log-04"] }

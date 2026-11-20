@@ -7,28 +7,47 @@ use rs_matter::persist::KvBlobStore;
 use crate::platform;
 
 pub struct BoardWireless {
-    pub(crate) wifi: esp_hal::peripherals::WIFI<'static>,
+    pub(crate) wifi: Option<esp_hal::peripherals::WIFI<'static>>,
     pub(crate) bt: esp_hal::peripherals::BT<'static>,
-    pub(crate) rng: Option<esp_hal::peripherals::RNG<'static>>,
-    pub(crate) adc1: Option<esp_hal::peripherals::ADC1<'static>>,
-    pub(crate) _trng_source: Option<esp_hal::rng::TrngSource<'static>>,
+    pub(crate) wifi_controller: Option<esp_radio::wifi::WifiController<'static>>,
+    pub(crate) enet_stack: Option<rs_matter_embassy::enet::net::Stack<'static>>,
+    pub(crate) enet_buffers: Option<platform::EnetMatterBuffers>,
+}
+
+impl BoardWireless {
+    pub fn init_network(
+        &mut self,
+        hostname: &str,
+        seed: u64,
+        enet_resources: platform::EnetResources,
+    ) -> (
+        rs_matter_embassy::enet::net::Stack<'static>,
+        rs_matter_embassy::enet::net::Runner<
+            'static,
+            rs_matter_embassy::enet::MatterEnetDriver<esp_radio::wifi::Interface>,
+        >,
+    ) {
+        let wifi = self.wifi.take().expect("C6 WIFI already consumed");
+        let (controller, stack, runner) =
+            platform::init_esp_network(wifi, hostname, seed, enet_resources.stack_resources);
+        self.wifi_controller = Some(controller);
+        self.enet_stack = Some(stack);
+        self.enet_buffers = Some(enet_resources.buffers);
+        (stack, runner)
+    }
 }
 
 impl MatterWirelessDriver for BoardWireless {
     type Rng = esp_hal::rng::Trng;
 
     async fn init_entropy(&mut self) -> Self::Rng {
-        let rng = self.rng.take().expect("C6 RNG already consumed");
-        let adc1 = self.adc1.take().expect("C6 ADC1 already consumed");
-        self._trng_source = Some(esp_hal::rng::TrngSource::new(rng, adc1));
-        esp_hal::rng::Trng::try_new().expect("TrngSource initialized above")
+        esp_hal::rng::Trng::try_new().expect("TrngSource initialized in wire_board")
     }
 
-    async fn run_stack<'a, C, H, S, const KB: usize, M>(
+    async fn run_stack<'a, const BUMP_SIZE: usize, C, H, S, const KB: usize, M>(
         self,
-        stack: &'a MatterStackStorage,
+        stack: &'a MatterStackStorage<BUMP_SIZE>,
         weak_rand: C::WeakRand<'a>,
-        hostname: &'a str,
         is_commissioned: bool,
         crypto: &'a C,
         handler: (Node<'a>, H),
@@ -40,12 +59,18 @@ impl MatterWirelessDriver for BoardWireless {
         S: KvBlobStore,
         M: rs_matter_embassy::stack::UserTask,
     {
-        platform::run_esp_coex_or_oper_stack(
-            self.wifi,
+        let wifi_controller = self
+            .wifi_controller
+            .expect("C6 Wi-Fi controller not initialized");
+        let enet_stack = self.enet_stack.expect("C6 enet stack not initialized");
+        let enet_buffers = self.enet_buffers.expect("C6 enet buffers not initialized");
+        platform::run_esp_preexisting_stack(
+            wifi_controller,
             self.bt,
+            enet_stack,
+            enet_buffers,
             stack,
             weak_rand,
-            hostname,
             is_commissioned,
             crypto,
             handler,

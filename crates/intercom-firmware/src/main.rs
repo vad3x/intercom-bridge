@@ -111,32 +111,6 @@ async fn main(spawner: Spawner) {
 
     static SECURE_RANDOM: HardwareSecureRandom = HardwareSecureRandom;
     static WEBRTC_DTLS_IDENTITY: StaticCell<DtlsIdentity> = StaticCell::new();
-    let mut dtls_seed = [0u8; 32];
-    SECURE_RANDOM
-        .fill(&mut dtls_seed)
-        .expect("WebRTC DTLS seed RNG");
-    let dtls_resources = platform::allocate_dtls_srtp_resources();
-    let dtls_identity = WEBRTC_DTLS_IDENTITY
-        .init(DtlsIdentity::generate(dtls_seed, dtls_resources).expect("WebRTC DTLS identity"));
-    let dtls_resource_cell =
-        WEBRTC_DTLS_RESOURCE_CELL.init(DtlsSrtpResourceCell::new(dtls_resources));
-    let webrtc_resources = platform::allocate_webrtc_media_resources();
-    let (webrtc_engine, webrtc_session_handle) = platform::create_webrtc_engine(
-        &WEBRTC_REQUESTS,
-        &WEBRTC_STATE,
-        access_handle,
-        &RX_AUDIO_CHANNEL,
-        &TX_AUDIO_CHANNEL,
-        webrtc_resources,
-        dtls_resource_cell,
-    );
-    let mut webrtc_engine = webrtc_engine.with_opus_encoder_config(config::OPUS_ENCODER_CONFIG);
-    let webrtc_session_handle = WEBRTC_HANDLE.init(webrtc_session_handle);
-    let webrtc_signaling = WebRtcSignalingFacade::new_with_identity(
-        *webrtc_session_handle,
-        &SECURE_RANDOM,
-        dtls_identity,
-    );
 
     // ========================================================================
     // Persistence & initial configuration
@@ -166,6 +140,36 @@ async fn main(spawner: Spawner) {
     )
     .await;
 
+    let mut seeds = [0u8; 40];
+    SECURE_RANDOM
+        .fill(&mut seeds)
+        .expect("WebRTC DTLS + Ethernet seed RNG");
+    let mut dtls_seed = [0u8; 32];
+    dtls_seed.copy_from_slice(&seeds[..32]);
+    let enet_seed: [u8; 8] = seeds[32..].try_into().unwrap();
+    let dtls_resources = platform::allocate_dtls_srtp_resources();
+    let dtls_identity = WEBRTC_DTLS_IDENTITY
+        .init(DtlsIdentity::generate(dtls_seed, dtls_resources).expect("WebRTC DTLS identity"));
+    let dtls_resource_cell =
+        WEBRTC_DTLS_RESOURCE_CELL.init(DtlsSrtpResourceCell::new(dtls_resources));
+    let webrtc_resources = platform::allocate_webrtc_media_resources();
+    let (webrtc_engine, webrtc_session_handle) = platform::create_webrtc_engine(
+        &WEBRTC_REQUESTS,
+        &WEBRTC_STATE,
+        access_handle,
+        &RX_AUDIO_CHANNEL,
+        &TX_AUDIO_CHANNEL,
+        webrtc_resources,
+        dtls_resource_cell,
+    );
+    let mut webrtc_engine = webrtc_engine.with_opus_encoder_config(config::OPUS_ENCODER_CONFIG);
+    let webrtc_session_handle = WEBRTC_HANDLE.init(webrtc_session_handle);
+    let webrtc_signaling = WebRtcSignalingFacade::new_with_identity(
+        *webrtc_session_handle,
+        &SECURE_RANDOM,
+        dtls_identity,
+    );
+
     // ========================================================================
     // Matter drivers — own their state internally
     // ========================================================================
@@ -189,6 +193,17 @@ async fn main(spawner: Spawner) {
     // ========================================================================
     // Matter controller — register cluster handlers via builder
     // ========================================================================
+
+    let enet_resources = platform::allocate_enet_resources();
+    let enet_identity = intercom_adapter_matter::commissioning::derive_intercom_identity(
+        &intercom_core::ports::diagnostics::HardwareInfoDriver::mac_address(&FirmwareHardwareInfo),
+    )
+    .expect("valid Intercom identity prefixes");
+    let (stack, mut enet_runner) = hw.wireless.init_network(
+        enet_identity.hostname_str(),
+        u64::from_le_bytes(enet_seed),
+        enet_resources,
+    );
 
     let matter_stack_storage = platform::allocate_matter_stack_storage();
     let matter = MatterController::new(
@@ -266,10 +281,12 @@ async fn main(spawner: Spawner) {
     static CLOCK_SYNC_DRIVER: utils::uptime_logger::FirmwareClockSyncDriver =
         utils::uptime_logger::FirmwareClockSyncDriver;
     platform::log_pre_matter_heap();
-    let matter_future = pin!(matter.run(&CLOCK_SYNC_DRIVER));
+    let matter_future = pin!(embassy_futures::join::join(
+        enet_runner.run(),
+        matter.run(&CLOCK_SYNC_DRIVER),
+    ));
     let led_future = hw.indicator.run(state_receiver);
     let http_future = async {
-        let stack = rs_matter_embassy::enet::wait_global_stack().await;
         platform::mark_running_slot_valid();
 
         let http_config = HttpServerConfig {
@@ -314,22 +331,23 @@ async fn main(spawner: Spawner) {
     let audio_input_future = platform::run_bench_audio_input(&RX_AUDIO_CHANNEL);
 
     let webrtc_future = async {
-        let stack = rs_matter_embassy::enet::wait_global_stack().await;
         stack.wait_config_up().await;
         loop {
             if let Some(config) = stack.config_v4() {
-                webrtc_signaling.set_local_ipv4(config.address.address().octets());
+                let octets = config.address.address().octets();
+                intercom_firmware::hardware_info::set_cached_ip_address(Some(octets));
+                webrtc_signaling.set_local_ipv4(octets);
                 break;
             }
             embassy_time::Timer::after_millis(100).await;
         }
         let refresh_ip = async {
             loop {
-                let address = stack
+                let ip = stack
                     .config_v4()
-                    .map(|config| config.address.address().octets())
-                    .unwrap_or([0; 4]);
-                webrtc_signaling.set_local_ipv4(address);
+                    .map(|config| config.address.address().octets());
+                intercom_firmware::hardware_info::set_cached_ip_address(ip);
+                webrtc_signaling.set_local_ipv4(ip.unwrap_or([0; 4]));
                 embassy_time::Timer::after_secs(2).await;
             }
         };

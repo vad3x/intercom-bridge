@@ -66,9 +66,43 @@ pub fn allocate_webrtc_media_resources() -> &'static mut WebRtcMediaResources {
     WEBRTC_RESOURCES.init(WebRtcMediaResources::new())
 }
 
-pub fn allocate_matter_stack_storage() -> &'static mut MaybeUninit<MatterStackStorage> {
-    static MATTER_STACK_STORAGE: StaticCell<MatterStackStorage> = StaticCell::new();
+pub fn allocate_matter_stack_storage(
+) -> &'static mut MaybeUninit<MatterStackStorage<{ S31Platform::MATTER_BUMP_SIZE }>> {
+    static MATTER_STACK_STORAGE: StaticCell<MatterStackStorage<{ S31Platform::MATTER_BUMP_SIZE }>> =
+        StaticCell::new();
     MATTER_STACK_STORAGE.uninit()
+}
+
+#[inline(never)]
+pub fn allocate_enet_resources() -> platform::EnetResources {
+    use rs_matter_embassy::matter::utils::init::InitMaybeUninit;
+
+    static STACK_RESOURCES: StaticCell<rs_matter_embassy::enet::EnetMatterStackResources> =
+        StaticCell::new();
+    static UDP_BUFFERS: StaticCell<rs_matter_embassy::enet::EnetMatterUdpBuffers> =
+        StaticCell::new();
+    static TCP_BUFFERS: StaticCell<rs_matter_embassy::enet::EnetMatterTcpBuffers> =
+        StaticCell::new();
+    static MATTER_TCP_BUFFERS: StaticCell<rs_matter_embassy::enet::EnetMatterTcpTransportBuffers> =
+        StaticCell::new();
+    static TCP_CONFIG: rs_matter::transport::network::tcp::TcpConfig =
+        rs_matter::transport::network::tcp::TcpConfig::new();
+
+    platform::EnetResources {
+        stack_resources: unsafe { STACK_RESOURCES.uninit().assume_init_mut() },
+        buffers: platform::EnetMatterBuffers {
+            udp_buffers: UDP_BUFFERS
+                .uninit()
+                .init_with(rs_matter_embassy::enet::EnetMatterUdpBuffers::init()),
+            tcp_buffers: TCP_BUFFERS
+                .uninit()
+                .init_with(rs_matter_embassy::enet::EnetMatterTcpBuffers::init()),
+            matter_tcp_buffers: MATTER_TCP_BUFFERS
+                .uninit()
+                .init_with(rs_matter_embassy::enet::EnetMatterTcpTransportBuffers::init()),
+            tcp_config: &TCP_CONFIG,
+        },
+    }
 }
 
 pub fn create_webrtc_engine(
@@ -219,6 +253,8 @@ pub async fn wire_board(
         wireless: BoardWireless {
             wifi: Some(peripherals.WIFI),
             wifi_controller: None,
+            enet_stack: None,
+            enet_buffers: None,
         },
         bus,
         ring,

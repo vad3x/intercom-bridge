@@ -108,11 +108,11 @@ pub const HEAP_SIZE: usize = crate::platform::s3::INTERNAL_HEAP_BYTES;
 
 /// C6 internal heap budget, balancing runtime allocations with the main task stack.
 ///
-/// Peak heap usage with WebRTC DTLS+SRTP and Matter TCP is ~108 KiB.
-/// 120 KiB leaves ~12 KiB free heap margin while giving the main task stack ~48 KiB
-/// of headroom to safely run Opus Silk fixed-point pitch analysis.
+/// Reclaimed DRAM (`64 KiB`) is shared with `DtlsSrtpResources` (`~41 KiB`), so
+/// `132 KiB` gives `~91 KiB` effective heap while keeping `.stack >= 48,240` bytes
+/// (`~48.9 KiB`) for Opus Silk fixed-point pitch analysis.
 #[cfg(any(feature = "esp32c6", feature = "esp32s31"))]
-pub const HEAP_SIZE: usize = 120 * 1024;
+pub const HEAP_SIZE: usize = 128 * 1024;
 
 /// Diagnostic log history (2 KiB), leaving room for two HTTP sockets and audio.
 pub const LOG_BUFFER_CAPACITY: usize = 2048;
@@ -224,6 +224,32 @@ const fn parse_version(version: &str) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn c6_memory_and_extra_sockets_match_upstream_embassy() {
+        let matter_cargo = include_str!("../../intercom-adapter-matter/Cargo.toml");
+        assert!(
+            matter_cargo.contains("enet-extra-sockets-4"),
+            "intercom-adapter-matter/Cargo.toml must enable rs-matter-embassy/enet-extra-sockets-4"
+        );
+        assert!(
+            !matter_cargo.contains("wifi-only"),
+            "intercom-adapter-matter/Cargo.toml must not reference wifi-only"
+        );
+        assert!(
+            !matter_cargo.contains("dhcpv4-hostname"),
+            "intercom-adapter-matter/Cargo.toml must not reference rs-matter-embassy/dhcpv4-hostname"
+        );
+
+        #[cfg(feature = "esp32c6")]
+        {
+            assert!(
+                HEAP_SIZE <= 132 * 1024,
+                "C6 HEAP_SIZE ({}) must not exceed 132 KiB so .stack stays >= 48_240 bytes",
+                HEAP_SIZE
+            );
+        }
+    }
 
     #[test]
     fn test_supported_ecosystem_ids() {

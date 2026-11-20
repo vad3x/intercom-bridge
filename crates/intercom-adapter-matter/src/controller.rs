@@ -36,15 +36,15 @@ use rs_matter::BasicCommData;
 
 use rs_matter_embassy::matter::crypto::{default_crypto, Crypto};
 use rs_matter_embassy::matter::dm::devices::test::{DAC_PRIVKEY, TEST_DEV_ATT};
+use rs_matter_embassy::matter::dm::networks::wireless::WifiNetworks;
 use rs_matter_embassy::matter::utils::init::InitMaybeUninit;
 use rs_matter_embassy::stack::{MatterStack, UserTask};
-use rs_matter_embassy::wireless::EmbassyWifiNetwork;
 
 use intercom_core::events::SystemStateSender;
 use intercom_core::ports::{ClockSyncDriver, ResetScope, SystemResetDriver};
 
 use super::audio_doorbell::{IntercomWebRtcHooks, IntercomWebRtcProvCluster, MediaSessionPort};
-use super::{commissioning, ClusterReadinessBarrier, MatterCluster, BUMP_SIZE};
+use super::{commissioning, ClusterReadinessBarrier, MatterCluster};
 
 /// Hardware-agnostic wireless transport and entropy port for [`MatterController`].
 pub trait MatterWirelessDriver {
@@ -55,11 +55,10 @@ pub trait MatterWirelessDriver {
     async fn init_entropy(&mut self) -> Self::Rng;
 
     /// Run the wireless Matter stack until completion.
-    async fn run_stack<'a, C, H, S, const KB: usize, M>(
+    async fn run_stack<'a, const BUMP_SIZE: usize, C, H, S, const KB: usize, M>(
         self,
-        stack: &'a MatterStackStorage,
+        stack: &'a MatterStackStorage<BUMP_SIZE>,
         weak_rand: C::WeakRand<'a>,
-        hostname: &'a str,
         is_commissioned: bool,
         crypto: &'a C,
         handler: (Node<'a>, H),
@@ -182,12 +181,13 @@ static DESC_DATAVER_COUNTER: portable_atomic::AtomicU32 = portable_atomic::Atomi
 const ROOT_ENDPOINT: Endpoint<'static> = rs_matter::root_endpoint!(wifi, time_sync());
 
 /// Opaque caller-owned storage for the Matter protocol stack.
-pub type MatterStackStorage = MatterStack<'static, BUMP_SIZE, EmbassyWifiNetwork>;
+pub type MatterStackStorage<const BUMP_SIZE: usize> = MatterStack<'static, BUMP_SIZE, WifiNetworks>;
 
 pub struct MatterController<
     S: KvBlobStore,
     R: SystemResetDriver,
     W: MatterWirelessDriver,
+    const BUMP_SIZE: usize,
     H = EmptyHandler,
 > {
     handler: H,
@@ -196,11 +196,12 @@ pub struct MatterController<
     state_sender: SystemStateSender<'static>,
     readiness: &'static ClusterReadinessBarrier,
     reset: R,
-    stack: &'static MatterStackStorage,
-    hostname: &'static str,
+    stack: &'static MatterStackStorage<BUMP_SIZE>,
 }
 
-impl<S: KvBlobStore, R: SystemResetDriver, W: MatterWirelessDriver> MatterController<S, R, W> {
+impl<S: KvBlobStore, R: SystemResetDriver, W: MatterWirelessDriver, const BUMP_SIZE: usize>
+    MatterController<S, R, W, BUMP_SIZE>
+{
     /// Start building a new Matter WiFi node with an empty handler chain.
     ///
     /// Lifecycle state transitions are dispatched to `state_sender`.
@@ -212,7 +213,7 @@ impl<S: KvBlobStore, R: SystemResetDriver, W: MatterWirelessDriver> MatterContro
         state_sender: SystemStateSender<'static>,
         readiness: &'static ClusterReadinessBarrier,
         reset: R,
-        stack_storage: &'static mut core::mem::MaybeUninit<MatterStackStorage>,
+        stack_storage: &'static mut core::mem::MaybeUninit<MatterStackStorage<BUMP_SIZE>>,
     ) -> Self {
         let mac = esp_hal::efuse::base_mac_address();
         let mac_bytes: [u8; 6] = mac.as_bytes().try_into().unwrap();
@@ -248,15 +249,6 @@ impl<S: KvBlobStore, R: SystemResetDriver, W: MatterWirelessDriver> MatterContro
             serial_no
         };
 
-        let hostname: &'static str = if let Some(custom_hostname) = config.device_info.hostname {
-            info!("Using custom DHCP hostname: {}", custom_hostname);
-            custom_hostname
-        } else {
-            let hostname = identity.hostname_str();
-            info!("Generated DHCP hostname from MAC {}: {}", mac, hostname);
-            hostname
-        };
-
         // Allocate device identity + stack in static cells (safe: new() is called once)
         static DEV_DET_CELL: static_cell::StaticCell<BasicInfoConfig> =
             static_cell::StaticCell::new();
@@ -276,13 +268,17 @@ impl<S: KvBlobStore, R: SystemResetDriver, W: MatterWirelessDriver> MatterContro
             readiness,
             reset,
             stack,
-            hostname,
         }
     }
 }
 
-impl<S: KvBlobStore, R: SystemResetDriver, W: MatterWirelessDriver, H: AsyncHandler>
-    MatterController<S, R, W, H>
+impl<
+        S: KvBlobStore,
+        R: SystemResetDriver,
+        W: MatterWirelessDriver,
+        const BUMP_SIZE: usize,
+        H: AsyncHandler,
+    > MatterController<S, R, W, BUMP_SIZE, H>
 {
     /// Construct the Endpoint 1 WebRTC Transport Provider cluster bound to this controller's `Matter` instance.
     pub fn webrtc_prov_cluster<'a, M: MediaSessionPort + 'static>(
@@ -300,7 +296,7 @@ impl<S: KvBlobStore, R: SystemResetDriver, W: MatterWirelessDriver, H: AsyncHand
     pub fn register<'b, C: MatterCluster>(
         mut self,
         cluster: &'b C,
-    ) -> MatterController<S, R, W, impl AsyncHandler + 'b>
+    ) -> MatterController<S, R, W, BUMP_SIZE, impl AsyncHandler + 'b>
     where
         H: 'b,
         S: 'b,
@@ -344,7 +340,7 @@ impl<S: KvBlobStore, R: SystemResetDriver, W: MatterWirelessDriver, H: AsyncHand
             ),
         );
 
-        MatterController::<S, R, W, _> {
+        MatterController::<S, R, W, BUMP_SIZE, _> {
             handler: new_handler,
             endpoint_metas: self.endpoint_metas,
             config: self.config,
@@ -352,7 +348,6 @@ impl<S: KvBlobStore, R: SystemResetDriver, W: MatterWirelessDriver, H: AsyncHand
             readiness: self.readiness,
             reset: self.reset,
             stack: self.stack,
-            hostname: self.hostname,
         }
     }
 
@@ -384,7 +379,6 @@ impl<S: KvBlobStore, R: SystemResetDriver, W: MatterWirelessDriver, H: AsyncHand
         };
 
         let stack = self.stack;
-        let hostname = self.hostname;
 
         let rng = config.wireless.init_entropy().await;
         let crypto = default_crypto(rs_matter_embassy::rand::RngAdaptor::new(rng), DAC_PRIVKEY);
@@ -395,7 +389,7 @@ impl<S: KvBlobStore, R: SystemResetDriver, W: MatterWirelessDriver, H: AsyncHand
         // Chain root endpoint (Endpoint 0) system clusters (Descriptor, Basic Info, Admin Comm, NOC, ACL, etc.)
         let handler = ChainedHandler::new_with_matcher(
             |e, _| e == rs_matter::dm::endpoints::ROOT_ENDPOINT_ID,
-            Async(MatterStack::<0, EmbassyWifiNetwork>::root_handler(
+            Async(MatterStack::<0, WifiNetworks>::root_handler(
                 stack.matter(),
                 &(),
                 crypto
@@ -440,7 +434,6 @@ impl<S: KvBlobStore, R: SystemResetDriver, W: MatterWirelessDriver, H: AsyncHand
             .run_stack(
                 stack,
                 weak_rand,
-                hostname,
                 is_commissioned,
                 &crypto,
                 (node, handler),
@@ -468,8 +461,8 @@ impl<F: core::future::Future> core::future::Future for NoInlineFuture<F> {
 }
 
 #[inline(never)]
-async fn startup_or_reset<C, H, S>(
-    stack: &MatterStack<'_, BUMP_SIZE, EmbassyWifiNetwork>,
+async fn startup_or_reset<const BUMP_SIZE: usize, C, H, S>(
+    stack: &MatterStackStorage<BUMP_SIZE>,
     crypto: &C,
     node_handler: (&Node<'_>, &H),
     kv: &mut S,

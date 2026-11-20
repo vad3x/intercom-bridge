@@ -32,9 +32,9 @@ use static_cell::StaticCell;
 pub use super::wireless::BoardWireless;
 use super::{C6Peripherals, C6Platform};
 use crate::config;
-#[cfg(not(feature = "devkit"))]
-use crate::platform::PlatformDriver;
-use crate::platform::{self, ActiveIndicator, ActiveOtaDriver, BoardHardware, ReclaimedCell};
+use crate::platform::{
+    self, ActiveIndicator, ActiveOtaDriver, BoardHardware, PlatformDriver, ReclaimedCell,
+};
 
 const RECLAIMED_RAM: usize =
     memory_range!("DRAM2_UNINIT").end - memory_range!("DRAM2_UNINIT").start;
@@ -77,9 +77,51 @@ pub fn allocate_webrtc_media_resources() -> &'static mut WebRtcMediaResources {
     WEBRTC_RESOURCES.init(WebRtcMediaResources::new())
 }
 
-pub fn allocate_matter_stack_storage() -> &'static mut MaybeUninit<MatterStackStorage> {
-    static MATTER_STACK_STORAGE: StaticCell<MatterStackStorage> = StaticCell::new();
+pub fn allocate_matter_stack_storage(
+) -> &'static mut MaybeUninit<MatterStackStorage<{ C6Platform::MATTER_BUMP_SIZE }>> {
+    static MATTER_STACK_STORAGE: StaticCell<MatterStackStorage<{ C6Platform::MATTER_BUMP_SIZE }>> =
+        StaticCell::new();
     MATTER_STACK_STORAGE.uninit()
+}
+
+#[inline(never)]
+pub fn allocate_enet_resources() -> platform::EnetResources {
+    use rs_matter_embassy::matter::utils::init::InitMaybeUninit;
+
+    static STACK_RESOURCES: StaticCell<rs_matter_embassy::enet::EnetMatterStackResources> =
+        StaticCell::new();
+    static BTP_GATT: StaticCell<rs_matter_embassy::ble::BtpGattContext> = StaticCell::new();
+    static TCP_CONFIG: rs_matter::transport::network::tcp::TcpConfig =
+        rs_matter::transport::network::tcp::TcpConfig::new();
+
+    let stack_resources =
+        STACK_RESOURCES.init(rs_matter_embassy::enet::EnetMatterStackResources::new());
+    let udp_buffers = alloc::boxed::Box::leak(alloc::boxed::Box::<
+        rs_matter_embassy::enet::EnetMatterUdpBuffers,
+    >::new_uninit())
+    .init_with(rs_matter_embassy::enet::EnetMatterUdpBuffers::init());
+    let tcp_buffers = alloc::boxed::Box::leak(alloc::boxed::Box::<
+        rs_matter_embassy::enet::EnetMatterTcpBuffers,
+    >::new_uninit())
+    .init_with(rs_matter_embassy::enet::EnetMatterTcpBuffers::init());
+    let matter_tcp_buffers = alloc::boxed::Box::leak(alloc::boxed::Box::<
+        rs_matter_embassy::enet::EnetMatterTcpTransportBuffers,
+    >::new_uninit())
+    .init_with(rs_matter_embassy::enet::EnetMatterTcpTransportBuffers::init());
+    let btp_gatt = BTP_GATT
+        .uninit()
+        .init_with(rs_matter_embassy::ble::BtpGattContext::init());
+
+    platform::EnetResources {
+        stack_resources,
+        buffers: platform::EnetMatterBuffers {
+            udp_buffers,
+            tcp_buffers,
+            matter_tcp_buffers,
+            tcp_config: &TCP_CONFIG,
+            btp_gatt,
+        },
+    }
 }
 
 pub fn create_webrtc_engine(
@@ -198,13 +240,19 @@ pub async fn wire_board(
 
     let ota_driver: ActiveOtaDriver = platform::create_default_ota_driver();
 
+    static TRNG_SOURCE: StaticCell<esp_hal::rng::TrngSource<'static>> = StaticCell::new();
+    TRNG_SOURCE.init(esp_hal::rng::TrngSource::new(
+        peripherals.RNG,
+        peripherals.ADC1,
+    ));
+
     BoardHardware {
         wireless: BoardWireless {
-            wifi: peripherals.WIFI,
+            wifi: Some(peripherals.WIFI),
             bt: peripherals.BT,
-            rng: Some(peripherals.RNG),
-            adc1: Some(peripherals.ADC1),
-            _trng_source: None,
+            wifi_controller: None,
+            enet_stack: None,
+            enet_buffers: None,
         },
         bus,
         ring,
