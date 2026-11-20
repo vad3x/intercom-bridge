@@ -15,7 +15,7 @@ esp32c6 = [
     "esp-rtos/esp32c6",
     "esp-alloc/esp32c6",
     "rs-matter-embassy/trouble",
-    "rs-matter-embassy/matter-tcp",
+    "rs-matter-embassy/tcp",
     "rs-matter/large-buffers-4096",
 ]
 esp32s31 = [
@@ -25,7 +25,7 @@ esp32s31 = [
     "esp-rtos/esp32s31",
     "esp-alloc/esp32s31",
     "rs-matter-embassy/wifi-only",
-    "rs-matter-embassy/matter-tcp",
+    "rs-matter-embassy/tcp",
     "rs-matter/large-buffers-4096",
 ]
 esp32s3 = [
@@ -36,7 +36,7 @@ esp32s3 = [
     "esp-rtos/esp32s3",
     "esp-alloc/esp32s3",
     "rs-matter-embassy/trouble",
-    "rs-matter-embassy/matter-tcp",
+    "rs-matter-embassy/tcp",
     "rs-matter/large-buffers-4096",
 ]
 
