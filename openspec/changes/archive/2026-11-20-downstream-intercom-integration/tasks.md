@@ -1,0 +1,18 @@
+# Tasks: Downstream Intercom Bridge Integration & Local Patch Elimination
+
+## 1. Bucket A: Eliminate Unneeded Local `rs-matter-embassy` Patches
+
+- [ ] 1.1 [RED] Write a test in `crates/intercom-adapter-matter/src/lib.rs` (or `crates/intercom-firmware/src/config.rs`) asserting that `crates/intercom-adapter-matter/Cargo.toml` enables `enet-extra-sockets-4` on `rs-matter-embassy` and does not reference `wifi-only`, verifying failure with: `mise exec -- cargo test -p intercom-firmware --lib --target x86_64-apple-darwin config::tests::adapter_matter_uses_upstream_extra_sockets_feature -- --exact`
+- [ ] 1.2 [GREEN] Enable `"enet-extra-sockets-4"` (and remove `"wifi-only"`) in `crates/intercom-adapter-matter/Cargo.toml`, revert the uncommitted S31 `wifi-only` working-tree changes in `../rs-matter-embassy`, and restore upstream `ENET_EXTRA_SOCKET_SET` in `../rs-matter-embassy/rs-matter-embassy/src/enet.rs`, verifying the test passes with: `mise exec -- cargo test -p intercom-firmware --lib --target x86_64-apple-darwin config::tests::adapter_matter_uses_upstream_extra_sockets_feature -- --exact`
+- [ ] 1.3 [RED] Write a test in `../rs-matter-embassy/rs-matter-embassy/src/eth.rs` (or `crates/intercom-firmware/src/config.rs`) asserting that `EmbassyNetContext` uses upstream inline `init!()` storage without `OnceCell<Box<...>>` and C6 heap/stack configuration accounts for inline `EmbassyNetContext` buffers while preserving `.stack >= 48_240` bytes, verifying failure with: `mise exec -- cargo test -p intercom-firmware --lib --target x86_64-apple-darwin config::tests::c6_heap_budget_accounts_for_inline_enet_buffers -- --exact`
+- [ ] 1.4 [GREEN] Restore `../rs-matter-embassy/rs-matter-embassy/src/eth.rs` to `upstream/master` (removing `OnceCell<Box<...>>` from `EmbassyNetContext` and `EnetTcpContext`), adjust C6 `HEAP_SIZE` / `allocate_matter_stack_storage()` in `crates/intercom-firmware/src/config.rs` and `crates/intercom-firmware/src/platform/c6/board.rs`, and verify both the unit test and C6 release link pass with: `mise exec -- cargo test -p intercom-firmware --lib --target x86_64-apple-darwin config::tests::c6_heap_budget_accounts_for_inline_enet_buffers -- --exact && mise exec -- cargo build -p intercom-firmware --release && mise exec -- cargo build-devkit`
+
+## 2. Bucket B Follow-Up: Consume Upstream Releases & Verify Hardware
+
+- [ ] 2.1 [RED] Write a manifest verification test in `crates/intercom-firmware/src/config.rs` asserting that neither root `Cargo.toml` nor `crates/intercom-adapter-matter/Cargo.toml` contains a relative `path = "../` patch for `rs-matter`, `rs-matter-stack`, or `rs-matter-embassy` once Bucket B PRs land, verifying failure with: `mise exec -- cargo test -p intercom-firmware --lib --target x86_64-apple-darwin config::tests::manifests_use_upstream_matter_dependencies -- --exact`
+- [ ] 2.2 [GREEN] Point `Cargo.toml` and `crates/intercom-adapter-matter/Cargo.toml` to the merged upstream `rs-matter` and `rs-matter-embassy` revisions, removing local directory path patches, and verify all host tests and C6/S3 builds pass with: `mise exec -- cargo test -p intercom-core -p intercom-media -p intercom-adapter-http -p intercom-adapter-webrtc -p intercom-pairing-tool -p intercom-firmware --lib --target x86_64-apple-darwin && mise exec -- cargo build -p intercom-firmware --release && mise exec -- cargo build-devkit`
+- [ ] 2.3 Perform smoke test on ESP32-C6 / ESP32-S3 hardware to verify operational Matter commissioning, `python3 scripts/test_matter_tcp.py --ip <device-ip>`, and sustained WebRTC audio streaming (`min_free_heap_bytes >= 32768`).
+
+## Workflow follow-up
+
+- Archive the OpenSpec change with `openspec archive downstream-intercom-integration`.
