@@ -2,7 +2,7 @@
 
 ## Why
 
-When running `embassy-net` (`smoltcp`) over Wi-Fi on real-world home networks, two IPv6 compatibility issues cause Matter discovery and CASE/MRP session stalls:
+When running `embassy-net` (`smoltcp`) over Wi-Fi on real-world home networks (reported in [sysgrok/rs-matter-embassy#37](https://github.com/sysgrok/rs-matter-embassy/issues/37)), two IPv6 compatibility issues cause Apple Home / Matter discovery and CASE/MRP session stalls:
 
 1. **MLDv1-only AP snooping (`mld-v1-compat`)**: `smoltcp` only emits MLDv2 Membership Reports (ICMPv6 type 143). Wi-Fi access points whose multicast-to-unicast / MLD snooping bridges only inspect MLDv1 Membership Reports (ICMPv6 type 131) drop solicited-node multicast (`ff02::1:ffxx:xxxx`) and mDNS (`ff02::fb`) after group expiry.
 2. **Unicast NDP resolution stalls (`nd-learn-from-frames`)**: When a Matter controller (Apple Home Hub / Home Assistant) sends a unicast IPv6 packet before `smoltcp` has its MAC in the neighbor cache, `smoltcp` queues a multicast Neighbor Solicitation before replying—which lossy Wi-Fi multicast frequently drops, causing 5–30s MRP/CASE timeouts.

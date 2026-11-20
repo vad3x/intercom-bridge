@@ -10,5 +10,5 @@
 
 ## Workflow follow-up
 
-- Submit PR to `sysgrok/rs-matter-embassy` repository.
+- Submit PR to `sysgrok/rs-matter-embassy` repository referencing [sysgrok/rs-matter-embassy#37](https://github.com/sysgrok/rs-matter-embassy/issues/37) (`Fixes #37`).
 - After post-merge cleanup (`1.7`), archive the OpenSpec change with `openspec archive upstream-embassy-ipv6-compat`.
