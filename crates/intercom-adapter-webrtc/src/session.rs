@@ -122,6 +122,65 @@ fn rtp_sequence(packet: &[u8]) -> Result<u16, WebRtcMediaError> {
     Ok(u16::from_be_bytes([packet[2], packet[3]]))
 }
 
+/// Stateful Talk jitter-buffer ingress and primed playout coordinator.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TalkJitterState {
+    initialized: bool,
+    primed: bool,
+}
+
+impl TalkJitterState {
+    pub const fn new() -> Self {
+        Self {
+            initialized: false,
+            primed: false,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.initialized = false;
+        self.primed = false;
+    }
+
+    /// Parse an inbound Opus RTP payload and insert it into `buffer`, initializing on the first packet.
+    pub fn push_rtp_payload(
+        &mut self,
+        buffer: &mut WebRtcJitterBuffer,
+        sequence: u16,
+        payload: &[u8],
+    ) -> bool {
+        let Some(opus_packet) = opus_packet_from_payload(payload) else {
+            return false;
+        };
+        if !self.initialized {
+            buffer.reset(sequence);
+            self.initialized = true;
+        }
+        buffer.insert(sequence, opus_packet)
+    }
+
+    /// Pop the next playout slot when primed, or reset on underrun so `next_sequence` never outruns the sender.
+    ///
+    /// Returns `None` while waiting to prime or after an underrun; returns `Some(Some(pkt))` for an
+    /// available packet or `Some(None)` when a missing packet requires one 20 ms PLC frame.
+    pub fn pop_due_packet(
+        &mut self,
+        buffer: &mut WebRtcJitterBuffer,
+    ) -> Option<Option<OpusPacket>> {
+        if !self.primed && buffer.buffered_count() >= 3 {
+            self.primed = true;
+        }
+        if !self.primed {
+            return None;
+        }
+        if buffer.is_empty() {
+            self.reset();
+            return None;
+        }
+        Some(buffer.pop())
+    }
+}
+
 fn opus_packet_from_payload(payload: &[u8]) -> Option<OpusPacket> {
     if payload.is_empty() || payload.len() > MEDIA_MAX_OPUS_PACKET_BYTES {
         return None;
@@ -707,8 +766,7 @@ impl<'a> WebRtcMediaEngine<'a> {
             jitter_buffer: internal_jitter_buffer,
         } = &mut *self.resources;
         let jitter_buffer = external_jitter_buffer.unwrap_or(internal_jitter_buffer);
-        let mut jitter_initialized = false;
-        let mut jitter_primed = false;
+        let mut talk_jitter = TalkJitterState::new();
         pending_dtls.clear();
         let mut socket = embassy_net::udp::UdpSocket::new(
             stack,
@@ -937,18 +995,11 @@ impl<'a> WebRtcMediaEngine<'a> {
                         match turn.on_inbound_rtp(payload.len(), now_ms) {
                             Some(TurnAction::StartTalk) => {
                                 self.intercom.start_talk(config.owner);
-                                jitter_initialized = false;
-                                jitter_primed = false;
+                                talk_jitter.reset();
                             }
                             Some(TurnAction::StopTalk) | None => {}
                         }
-                        if let Some(opus_packet) = opus_packet_from_payload(payload) {
-                            if !jitter_initialized {
-                                jitter_buffer.reset(sequence);
-                                jitter_initialized = true;
-                            }
-                            let _ = jitter_buffer.insert(sequence, opus_packet);
-                        }
+                        let _ = talk_jitter.push_rtp_payload(jitter_buffer, sequence, payload);
                     }
                     DemuxedPacket::Unknown => {}
                 }
@@ -960,42 +1011,30 @@ impl<'a> WebRtcMediaEngine<'a> {
             }
             if turn.poll_hangover(now_ms) == Some(TurnAction::StopTalk) {
                 self.intercom.stop_talk(config.owner);
-                jitter_initialized = false;
-                jitter_primed = false;
+                talk_jitter.reset();
             }
             let due_intervals = audio_pacer.take_due_intervals(now_ms);
             let audio_due = due_intervals > 0;
             if due_intervals > 0 && turn.is_talking() && srtp.is_some() {
-                if !jitter_primed && jitter_buffer.buffered_count() >= 3 {
-                    jitter_primed = true;
-                }
-                if jitter_primed {
-                    for _ in 0..due_intervals {
-                        if self.tx_audio.is_full() {
-                            break;
-                        }
-                        if jitter_buffer.is_empty() {
-                            // Never advance `next_sequence` past packets that have not arrived yet;
-                            // re-sync on the next incoming RTP packet after an underrun.
-                            jitter_initialized = false;
-                            jitter_primed = false;
-                            break;
-                        }
-                        let encoded = jitter_buffer.pop();
-                        let decode_start = Instant::now();
-                        let (frames, frame_count) = match encoded {
-                            Some(packet) => codec.decode_talk_frames(Some(
-                                &packet.payload[..usize::from(packet.len)],
-                            )),
-                            None => codec.decode_talk_frames(None),
-                        }
-                        .map_err(|_| WebRtcMediaError::Opus)?;
-                        self.benchmark_stats.observe_decode(
-                            decode_start.elapsed().as_micros().min(u64::from(u32::MAX)) as u32,
-                        );
-                        for frame in frames.iter().take(frame_count) {
-                            let _ = self.tx_audio.try_send(*frame);
-                        }
+                for _ in 0..due_intervals {
+                    if self.tx_audio.is_full() {
+                        break;
+                    }
+                    let Some(encoded) = talk_jitter.pop_due_packet(jitter_buffer) else {
+                        break;
+                    };
+                    let decode_start = Instant::now();
+                    let (frames, frame_count) = match encoded {
+                        Some(packet) => codec
+                            .decode_talk_frames(Some(&packet.payload[..usize::from(packet.len)])),
+                        None => codec.decode_talk_frames(None),
+                    }
+                    .map_err(|_| WebRtcMediaError::Opus)?;
+                    self.benchmark_stats.observe_decode(
+                        decode_start.elapsed().as_micros().min(u64::from(u32::MAX)) as u32,
+                    );
+                    for frame in frames.iter().take(frame_count) {
+                        let _ = self.tx_audio.try_send(*frame);
                     }
                 }
             }
