@@ -124,7 +124,7 @@ esp-alloc = { workspace = true }
 esp-println = { workspace = true, features = ["log-04"] }
 esp-bootloader-esp-idf = { workspace = true, features = ["log-04"] }
 esp-metadata-generated = { workspace = true }
-rs-matter-embassy = { path = "../../../rs-matter-embassy/rs-matter-embassy", default-features = false, features = ["esp", "embassy-net", "log", "rustcrypto", "kv-blob-store-8192", "mld-v1-compat", "nd-learn-from-frames", "max-im-buffers-4"] }
+rs-matter-embassy = { path = "../../../rs-matter-embassy/rs-matter-embassy", default-features = false, features = ["esp", "embassy-net", "log", "rustcrypto", "kv-blob-store-8192", "max-im-buffers-4"] }
 esp-wifi-sys-esp32c6 = { workspace = true, optional = true }
 esp-wifi-sys-esp32s31 = { version = "=0.3.0", optional = true }
 esp-wifi-sys-esp32s3 = { version = "=0.3.0", optional = true }

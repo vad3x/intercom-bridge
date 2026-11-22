@@ -1203,7 +1203,9 @@ version = "0.1.0"
 dependencies = [
  "edf-core",
  "embassy-futures",
+ "embassy-net",
  "embassy-time",
+ "log",
  "portable-atomic",
  "rs-matter",
 ]

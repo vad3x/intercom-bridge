@@ -22,10 +22,7 @@ impl BoardWireless {
         enet_resources: platform::EnetResources,
     ) -> (
         rs_matter_embassy::enet::net::Stack<'static>,
-        rs_matter_embassy::enet::net::Runner<
-            'static,
-            rs_matter_embassy::enet::MatterEnetDriver<esp_radio::wifi::Interface>,
-        >,
+        rs_matter_embassy::enet::net::Runner<'static, platform::EspWifiDriver>,
     ) {
         let wifi = self.wifi.take().expect("C6 WIFI already consumed");
         let (controller, stack, runner) =

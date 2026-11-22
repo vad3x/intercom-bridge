@@ -253,6 +253,8 @@ mod target {
         pub buffers: EnetMatterBuffers,
     }
 
+    pub type EspWifiDriver = edf_matter::ipv6_compat::Ipv6CompatDriver<esp_radio::wifi::Interface>;
+
     /// Initialize the `esp-radio` Wi-Fi controller and `embassy-net` stack once for the application.
     pub fn init_esp_network(
         wifi: esp_hal::peripherals::WIFI<'static>,
@@ -262,10 +264,7 @@ mod target {
     ) -> (
         esp_radio::wifi::WifiController<'static>,
         rs_matter_embassy::enet::net::Stack<'static>,
-        rs_matter_embassy::enet::net::Runner<
-            'static,
-            rs_matter_embassy::enet::MatterEnetDriver<esp_radio::wifi::Interface>,
-        >,
+        rs_matter_embassy::enet::net::Runner<'static, EspWifiDriver>,
     ) {
         let mut controller = esp_radio::wifi::WifiController::new(
             wifi,
@@ -280,7 +279,7 @@ mod target {
             .expect("Failed to set Wi-Fi transmit power");
 
         let (stack, runner) = rs_matter_embassy::enet::create_enet_stack(
-            esp_radio::wifi::Interface::station(),
+            edf_matter::ipv6_compat::wrap_ipv6_compat(esp_radio::wifi::Interface::station()),
             seed,
             stack_resources,
         );
