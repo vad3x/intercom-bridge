@@ -1,28 +1,31 @@
-# Design: Upstream Configurable Scan Method, Scan Filtering & WPA2/3 Auth in rs-matter-embassy
+# Design: Configurable ESP Wi-Fi behavior
 
-## Context
+## Configuration API
 
-`rs-matter-embassy` provides `EspWifiRadio` (`src/wireless/wifi/esp_wifi.rs`) and `EspWifiController` (`src/wifi/esp.rs`) wrapping `esp-radio` for ESP32 devices. Upstream PR `#96` (`1cc8be2`) already added an opt-in `with_protocols(Protocols)` builder on both types while keeping `StationConfig::default()` intact.
+Add one public `WifiConfig` on the ESP wireless API and an optional `with_wifi_config(WifiConfig)` builder on `EspWifiRadio` and `EspWifiController`. The radio forwards the same configuration to the controller in both `run()` and `run_coex()`.
 
-To eliminate all remaining local `src/wifi/esp.rs` diffs (`2cc1f75`, `33d93ae`, `0adec51`, `cf19288` dwell, `020b97d`), station scanning and association need:
-1. Consumer-configurable `ScanMethod` (`Fast` vs `AllChannels`), because `ScanMethod::AllChannels` overflows the device AP buffer in dense RF environments with many neighboring SSIDs.
-2. Predictable AP scan reporting (active scan dwell times, descending RSSI ordering, hidden-SSID filtering on open scans, SSID deduplication, `WpaWpa2Personal` security bitmap mapping, and `MAX_SCAN_RESULTS = 10` cap).
-3. `AuthenticationMethodConfig::Wpa2Personal` and `.with_failure_retry_cnt(3)` during station connect so standard WPA2 and WPA2/WPA3 transition-mode networks associate reliably.
+The config groups three concerns:
 
-## Decisions
+- Driver network scans use `esp_radio::wifi::scan::ScanConfig`.
+- Station association has optional `ScanMethod` and failure retry count overrides.
+- Matter scan result reporting has independent options for RSSI sorting, SSID deduplication, filtering empty SSIDs on open scans, and a final result cap.
 
-### 1. Opt-In `with_scan_method(ScanMethod)` Builder (Matching `#96`)
-- **Decision**: Add `Option<ScanMethod>` (default `None`) and `pub const fn with_scan_method(mut self, scan_method: ScanMethod) -> Self` to both `EspWifiRadio` and `EspWifiController`, forwarding `self.radio.scan_method` in `run()` and `run_coex()`. Re-export `ScanMethod` alongside `Protocol`/`Protocols` in `wireless::esp`.
-- **Rationale**: Preserves `StationConfig::default()` for existing callers while letting downstream applications choose `ScanMethod::Fast` (to avoid scan-buffer overflows in dense Wi-Fi environments) or `ScanMethod::AllChannels` (for multi-AP/roaming setups) alongside `.with_failure_retry_cnt(3)`.
+Provide defaults for the aggregate config and each result option. With no config, or with default values, preserve existing behavior. In particular, keep the driver's `ScanConfig::default()`, `StationConfig::default()` scan method and retry count, driver result order, duplicate BSSIDs, and reporting of empty SSIDs.
 
-### 2. Active Scan Timing, RSSI Sorting, Deduplication, and Cap
-- **Decision**: Extract a pure, host-testable scan-filtering helper (or test the sorting/deduplication/cap logic) and configure `ScanTypeConfig::Active { min: Duration::from_millis(30), max: Duration::from_millis(100) }`, sort scanned APs descending by `signal_strength`, skip empty SSIDs on open scans (`network.is_none()`), deduplicate by SSID keeping the strongest RSSI entry, map `AuthenticationMethod::WpaWpa2Personal` to `WPA_PERSONAL | WPA_2_PERSONAL`, and stop at `MAX_SCAN_RESULTS = 10`.
-- **Rationale**: Prevents buffer bloat, matches Matter's `CHIP_DEVICE_CONFIG_MAX_SCAN_NETWORKS_RESULTS`, and presents commissioners with the strongest BSSID per SSID.
+## Scan configuration and SSID precedence
 
-## Migration Plan
+Build each driver scan from the supplied `ScanConfig`, or from `ScanConfig::default()` when the aggregate config is absent. If Matter requests a non-empty SSID, apply it as the SSID filter while preserving all other scan settings. If the request has no SSID, retain the configured SSID filter.
 
-1. Cut clean feature branch `feat/embassy-wifi-scan-config` from `upstream/master` in `sysgrok/rs-matter-embassy`.
-2. Implement `with_scan_method`, scan filtering/dedup/cap, and WPA2/3 retry handling in `src/wifi/esp.rs` and `src/wireless/wifi/esp_wifi.rs`.
-3. Verify host unit tests and cross-compilation for `riscv32imac-unknown-none-elf`.
-4. Submit PR to `sysgrok/rs-matter-embassy`.
-5. Post-merge: Fetch `upstream/master` in `../rs-matter-embassy`, rebase local branch to drop commits `2cc1f75`, `33d93ae`, `0adec51`, `cf19288`, and `020b97d`, confirm zero diff in `src/wifi/esp.rs` and `src/wireless/wifi/esp_wifi.rs` against `upstream/master`, and archive change with `openspec archive upstream-embassy-wifi-scan-config`.
+## Connection configuration
+
+Apply association scan method and retry count only when their config fields are set. Leave the remaining `StationConfig` fields at their driver defaults. Keep connection settings independent of `ScanConfig`, which controls Matter's network discovery scan.
+
+## Result processing
+
+Apply only the result options that callers enable. If RSSI sorting is disabled, preserve driver order. If deduplication is enabled, keep the strongest RSSI result for each SSID. Preserve the first occurrence's position when replacing it with a stronger duplicate. Filter empty SSIDs only when that option is enabled and the Matter request is an open scan.
+
+Apply `max_results` to the final list after enabled filtering and deduplication. An unset cap reports all resulting entries.
+
+## Testing
+
+Use host tests for the pure result-processing logic. Cover every option independently, their interactions, strongest-BSSID selection without sorting, result ordering, final-list capping, and error propagation. Add an ESP32-C6 compile test for the public aggregate config and both builders. Keep a RED/GREEN pair for each implementation task.

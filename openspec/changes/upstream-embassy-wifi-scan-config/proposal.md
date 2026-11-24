@@ -1,33 +1,22 @@
-# Proposal: Upstream Configurable Scan Method, Scan Filtering & WPA2/3 Auth in rs-matter-embassy
+# Proposal: Configurable, backward-compatible ESP Wi-Fi behavior
 
 ## Why
 
-Upstream `sysgrok/rs-matter-embassy` (`#96`) added opt-in `with_protocols(Protocols)` for 802.11ax, but station scanning and connection in `src/wifi/esp.rs` still have three gaps for real-world deployments:
-
-1. Hardcoding `ScanMethod::AllChannels` fails in dense RF environments with many surrounding networks because the full-channel scan overflows the device's AP scan buffer, whereas `ScanMethod::Fast` avoids that overflow on known channels. Callers need to configure `ScanMethod` (`Fast` vs `AllChannels`) from the library consumer side.
-2. Unsorted, non-deduplicated scan results can exceed Matter's scan list limits (`CHIP_DEVICE_CONFIG_MAX_SCAN_NETWORKS_RESULTS = 10`) or surface weaker BSSIDs and hidden/empty SSIDs ahead of stronger ones.
-3. Standard WPA2 and WPA2/WPA3 transition-mode access points require `AuthenticationMethodConfig::Wpa2Personal`, explicit `WpaWpa2Personal` security bitmap mapping, and connection retry tuning (`failure_retry_cnt(3)`).
+The ESP Wi-Fi adapter needs configurable scan, connection, and result-handling behavior for deployments with different access points, while existing callers must retain their current behavior by default.
 
 ## What Changes
 
-- In `rs-matter-embassy/src/wifi/esp.rs` and `rs-matter-embassy/src/wireless/wifi/esp_wifi.rs`:
-  - Add an optional `with_scan_method(ScanMethod)` builder method to `EspWifiRadio` and `EspWifiController` (and re-export `ScanMethod` from `wireless::esp`), leaving `StationConfig::default()` untouched when unset.
-  - Configure active scan dwell times (`ScanTypeConfig::Active { min: 30ms, max: 100ms }`), `AuthenticationMethodConfig::Wpa2Personal` for non-empty passwords, `WpaWpa2Personal` security bitmap reporting, and `failure_retry_cnt(3)` during station connect.
-  - Sort scan results descending by RSSI, filter hidden/empty SSIDs on open scans, deduplicate identical SSIDs, and cap reported results at `MAX_SCAN_RESULTS = 10`.
-- Post-merge cleanup: Rebase local `rs-matter-embassy` onto `upstream/master` to drop local commits `2cc1f75`, `33d93ae`, `0adec51`, `cf19288`, and `020b97d`.
+- Add one optional `WifiConfig` accepted by `EspWifiRadio` and `EspWifiController`.
+- Include driver scan settings, optional station association scan method and retry count, and independently configurable result handling.
+- Preserve current behavior when callers do not supply the config or leave individual result options disabled.
+- Let a non-empty Matter SSID request override only the configured driver scan SSID filter.
 
 ## Capabilities
 
 ### New Capabilities
-- `embassy-wifi-scan-config`: Configurable `ScanMethod` (`Fast` / `AllChannels`) builder, active scan timing, WPA2/WPA3 transition auth & retry count, and RSSI-sorted/deduplicated AP scan reporting in `rs-matter-embassy`.
 
-### Modified Capabilities
-<!-- None -->
+- `embassy-wifi-scan-config` allows applications to configure ESP Matter Wi-Fi scans, station connection retries, and scan result reporting.
 
 ## Impact
 
-- **Affected Repositories**:
-  - `sysgrok/rs-matter-embassy` (`rs-matter-embassy/src/wifi/esp.rs`, `rs-matter-embassy/src/wireless/wifi/esp_wifi.rs`)
-- **API Surface**:
-  - Backward-compatible `const fn with_scan_method(mut self, scan_method: ScanMethod) -> Self` builder on `EspWifiRadio` and `EspWifiController` (matching `#96`'s `with_protocols` pattern).
-- **Breaking Changes**: None.
+The change affects `rs-matter-embassy`'s ESP Wi-Fi adapter. Existing callers keep driver scan and station connection defaults, driver result order, duplicate BSSIDs, and unfiltered results unless they opt in to changes.
