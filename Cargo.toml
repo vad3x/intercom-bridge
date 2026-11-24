@@ -67,7 +67,6 @@ tinyrlibc = { version = "=0.5.1", default-features = false }
 
 [patch.crates-io]
 rs-matter = { path = "../rs-matter/rs-matter" }
-rs-matter-stack = { path = "../rs-matter/rs-matter-stack" }
 
 [profile.dev]
 opt-level = "z"

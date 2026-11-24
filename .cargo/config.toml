@@ -7,7 +7,7 @@ AR_riscv32imac_unknown_none_elf = "/private/tmp/riscv32-esp-elf/bin/riscv32-esp-
 CFLAGS_xtensa_esp32s3_none_elf = "-mlongcalls"
 
 [target.riscv32imac-unknown-none-elf]
-runner = "espflash flash --partition-table partitions.csv --erase-parts otadata --monitor"
+runner = "espflash flash --baud 921600 --partition-table partitions.csv --erase-parts otadata --monitor"
 rustflags = ["-C", "link-arg=-Tlinkall.x", "-C", "force-frame-pointers"]
 
 [target.riscv32imafc-unknown-none-elf]
