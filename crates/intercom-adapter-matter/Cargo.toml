@@ -14,7 +14,7 @@ embassy-sync = { workspace = true }
 embassy-futures = { workspace = true }
 embassy-time = { workspace = true, features = ["generic-queue-8"] }
 rs-matter = { workspace = true }
-rs-matter-embassy = { path = "../../../rs-matter-embassy/rs-matter-embassy", default-features = false, features = ["esp", "trouble", "embassy-net", "dhcpv4-hostname", "log", "rustcrypto", "kv-blob-store-8192", "mld-v1-compat", "nd-learn-from-frames"] }
+rs-matter-embassy = { path = "../../../rs-matter-embassy/rs-matter-embassy", default-features = false, features = ["esp", "trouble", "embassy-net", "enet-extra-sockets-4", "log", "rustcrypto", "kv-blob-store-8192", "max-im-buffers-4"] }
 esp-radio = { workspace = true, features = ["ble", "coex", "log-04", "unstable", "esp32c6"] }
 esp-hal = { workspace = true, features = ["log-04", "unstable", "esp32c6"] }
 esp-rtos = { workspace = true, features = ["esp-radio", "embassy", "esp32c6"] }
@@ -23,3 +23,4 @@ embedded-storage = { workspace = true }
 embedded-storage-async = { workspace = true }
 static_cell = { workspace = true }
 tinyrlibc = { workspace = true, features = ["utoa", "strtoul"] }
+rand_core = "0.9"

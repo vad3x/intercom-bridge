@@ -23,12 +23,16 @@ pub mod readiness;
 
 use rs_matter::dm::{AsyncHandler, Cluster, DeviceType};
 
+pub use rand_core;
 pub use access_control::MatterAccessControlDriver;
 pub use commissioning::{
-    derive_intercom_identity, DeviceIdentity, IdentityError, HOSTNAME_PREFIX, SERIAL_PREFIX,
+    derive_intercom_identity, select_wireless_boot_mode, DeviceIdentity, IdentityError,
+    WirelessBootMode, HOSTNAME_PREFIX, SERIAL_PREFIX,
 };
 pub use config::{DOOR_LOCK_ENDPOINT_ID, MATTER_ECOSYSTEM, OCCUPANCY_SENSOR_ENDPOINT_ID};
-pub use controller::{DeviceInfo, MatterController, MatterControllerConfig, MatterPeripherals};
+pub use controller::{
+    DeviceInfo, MatterController, MatterControllerConfig, MatterStackStorage, MatterWirelessDriver,
+};
 pub use door_lock::{IntercomDoorLock, IntercomDoorLockConfig};
 pub use occupancy::{IntercomOccupancy, IntercomOccupancyConfig};
 pub use readiness::ClusterReadinessBarrier;

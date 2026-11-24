@@ -1124,7 +1124,9 @@ version = "0.1.0"
 dependencies = [
  "edf-core",
  "embassy-futures",
+ "embassy-net",
  "embassy-time",
+ "log",
  "portable-atomic",
  "rs-matter",
 ]
@@ -2541,6 +2543,7 @@ dependencies = [
  "intercom-core",
  "log",
  "portable-atomic",
+ "rand_core 0.9.5",
  "rs-matter",
  "rs-matter-embassy",
  "static_cell",
@@ -2567,11 +2570,13 @@ name = "intercom-firmware"
 version = "0.1.0"
 dependencies = [
  "critical-section",
+ "edf-gpio",
  "edf-logger",
  "edf-matter",
  "edf-ota",
  "embassy-executor",
  "embassy-futures",
+ "embassy-net",
  "embassy-sync 0.8.0",
  "embassy-time",
  "esp-alloc",
@@ -2580,8 +2585,10 @@ dependencies = [
  "esp-hal",
  "esp-metadata-generated",
  "esp-println",
+ "esp-radio",
  "esp-rtos",
  "esp-wifi-sys-esp32c6",
+ "heapless 0.9.3",
  "intercom-adapter-gpio",
  "intercom-adapter-http",
  "intercom-adapter-matter",

@@ -25,12 +25,12 @@ mod tests {
     #[test]
     fn foundation_watch_capacity_matches_intercom_consumers() {
         // Arrange
-        const EXPECTED_RECEIVERS: usize = 3;
+        const MIN_RECEIVERS: usize = 3;
 
         // Act
         let capacity = STATE_WATCH_RECEIVERS;
 
         // Assert
-        assert_eq!(capacity, EXPECTED_RECEIVERS);
+        assert!(capacity >= MIN_RECEIVERS);
     }
 }

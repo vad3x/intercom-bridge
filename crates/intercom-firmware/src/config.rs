@@ -48,8 +48,11 @@ pub const OTA_1_OFFSET: u32 = 0x370000;
 #[allow(dead_code)]
 pub const OTA_SLOT_SIZE: u32 = 0x350000;
 
-/// Start offset of the `system_kvs` partition in flash (from partitions.csv).
+/// Start offset of the `system_kvs` partition in flash (from partitions.csv / partitions-4mb.csv).
+#[cfg(not(feature = "flash-4mb"))]
 pub const SYSTEM_KVS_OFFSET: u32 = 0x6c0000;
+#[cfg(feature = "flash-4mb")]
+pub const SYSTEM_KVS_OFFSET: u32 = 0x3d0000;
 
 /// Size of the `system_kvs` partition (8 KiB = 2 sectors × 4 KiB).
 pub const SYSTEM_KVS_SIZE: u32 = 0x2000;
@@ -65,8 +68,11 @@ pub const WIFI_KVS_SIZE: u32 = SYSTEM_KVS_SIZE;
 #[allow(dead_code)]
 pub const WIFI_KVS_RANGE: Range<u32> = SYSTEM_KVS_RANGE;
 
-/// Start offset of the `matter_kvs` partition in flash (from partitions.csv).
+/// Start offset of the `matter_kvs` partition in flash (from partitions.csv / partitions-4mb.csv).
+#[cfg(not(feature = "flash-4mb"))]
 pub const MATTER_KVS_OFFSET: u32 = 0x6c2000;
+#[cfg(feature = "flash-4mb")]
+pub const MATTER_KVS_OFFSET: u32 = 0x3d2000;
 
 /// Size of the `matter_kvs` partition (24 KiB = 6 sectors × 4 KiB).
 pub const MATTER_KVS_SIZE: u32 = 0x6000;
@@ -228,7 +234,10 @@ mod tests {
     fn test_flash_partitions_are_sector_aligned_and_non_overlapping() {
         // Arrange
         const SECTOR_SIZE: u32 = 4096;
+        #[cfg(not(feature = "flash-4mb"))]
         const FLASH_TOTAL_SIZE: u32 = 0x800000; // 8 MB
+        #[cfg(feature = "flash-4mb")]
+        const FLASH_TOTAL_SIZE: u32 = 0x400000; // 4 MB
 
         // Act
         let system_offset_aligned = SYSTEM_KVS_OFFSET % SECTOR_SIZE == 0;

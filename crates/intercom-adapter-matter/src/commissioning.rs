@@ -4,6 +4,7 @@
 //! the device and the host pairing tool produce the same commissioning values.
 
 pub use edf_matter::identity::{DeviceIdentity, IdentityError, IdentityParams};
+pub use intercom_core::domain::ecosystem::{select_wireless_boot_mode, WirelessBootMode};
 
 /// Intercom serial-number prefix.
 pub const SERIAL_PREFIX: &str = "IC";

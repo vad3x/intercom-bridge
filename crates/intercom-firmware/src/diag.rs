@@ -252,7 +252,7 @@ mod target {
         wdt.feed();
 
         let stack = loop {
-            if let Some(stack) = rs_matter_embassy::enet::global_stack() {
+            if let Some(stack) = crate::platform::enet_stack() {
                 break stack;
             }
             wdt.feed();
