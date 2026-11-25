@@ -2667,7 +2667,7 @@ dependencies = [
 
 [[package]]
 name = "intercom-adapter-audio"
-version = "0.1.0"
+version = "2.0.0"
 dependencies = [
  "embassy-futures",
  "embassy-time",
@@ -2681,7 +2681,7 @@ dependencies = [
 
 [[package]]
 name = "intercom-adapter-gpio"
-version = "0.1.0"
+version = "2.0.0"
 dependencies = [
  "edf-gpio",
  "embassy-futures",
@@ -2722,7 +2722,7 @@ dependencies = [
 
 [[package]]
 name = "intercom-adapter-matter"
-version = "0.1.0"
+version = "2.0.0"
 dependencies = [
  "edf-matter",
  "embassy-futures",
@@ -2747,7 +2747,7 @@ dependencies = [
 
 [[package]]
 name = "intercom-adapter-webrtc"
-version = "0.1.0"
+version = "2.0.0"
 dependencies = [
  "aes 0.8.4",
  "aes-gcm",
@@ -2772,7 +2772,7 @@ dependencies = [
 
 [[package]]
 name = "intercom-core"
-version = "0.1.0"
+version = "2.0.0"
 dependencies = [
  "critical-section",
  "edf-core",
@@ -2787,7 +2787,7 @@ dependencies = [
 
 [[package]]
 name = "intercom-firmware"
-version = "0.1.0"
+version = "2.0.0"
 dependencies = [
  "critical-section",
  "edf-build",
@@ -2834,7 +2834,7 @@ dependencies = [
 
 [[package]]
 name = "intercom-media"
-version = "0.1.0"
+version = "2.0.0"
 dependencies = [
  "critical-section",
  "embassy-sync 0.8.0",
@@ -2843,7 +2843,7 @@ dependencies = [
 
 [[package]]
 name = "intercom-pairing-tool"
-version = "0.1.0"
+version = "2.0.0"
 dependencies = [
  "edf-matter",
  "edf-pairing-tool",
