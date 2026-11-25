@@ -49,7 +49,7 @@ embassy-sync = { workspace = true }
 embassy-futures = { workspace = true }
 embassy-time = { workspace = true, features = ["generic-queue-8"] }
 rs-matter = { workspace = true }
-rs-matter-embassy = { path = "../../../rs-matter-embassy/rs-matter-embassy", default-features = false, features = ["esp", "embassy-net", "enet-extra-sockets-4", "log", "rustcrypto", "kv-blob-store-8192", "max-im-buffers-4"] }
+rs-matter-embassy = { git = "https://github.com/sysgrok/rs-matter-embassy", rev = "0bf4ca5", default-features = false, features = ["esp", "embassy-net", "enet-extra-sockets-4", "log", "rustcrypto", "kv-blob-store-8192", "max-im-buffers-4"] }
 esp-radio = { workspace = true, default-features = false, features = ["log-04", "unstable"] }
 esp-hal = { workspace = true, features = ["log-04", "unstable"] }
 esp-rtos = { workspace = true, features = ["esp-radio", "embassy"] }

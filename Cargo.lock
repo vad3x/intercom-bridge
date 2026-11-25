@@ -4101,6 +4101,7 @@ dependencies = [
 [[package]]
 name = "rs-matter-embassy"
 version = "0.1.0"
+source = "git+https://github.com/sysgrok/rs-matter-embassy?rev=0bf4ca5#0bf4ca563e76120680b167a21d62884b6748cfe9"
 dependencies = [
  "bt-hci 0.10.1",
  "cfg-if",
