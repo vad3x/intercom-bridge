@@ -52,6 +52,21 @@ When creating, refining, or implementing OpenSpec changes (`tasks.md`), all agen
 
 ## Build, Test & Flash
 
+### Semantic Versioning & Releases
+
+Firmware versions (`SW_VER_STR` and Matter `SW_VER`) are derived automatically at build time by `edf-build` from Git tags and Conventional Commits (`git-conventional`):
+
+- **Base tag**: Nearest reachable `vX.Y.Z` tag (falls back to `CARGO_PKG_VERSION` if untagged).
+- **Automatic replay (`tag..HEAD`)**:
+  - `BREAKING CHANGE:` or `<type>!:` → bumps `MAJOR`, resets `MINOR=0, PATCH=0, N=0`
+  - `feat:` → bumps `MINOR`, resets `PATCH=0, N=0`
+  - `fix:`, `perf:`, `refactor:` → bumps `PATCH`, resets `N=0`
+  - `chore:`, `docs:`, `style:`, `test:`, `ci:`, `build:` (and non-conventional commits) → keeps `X.Y.Z`, increments `N`
+- **Formatting & encoding**:
+  - `SW_VER_STR`: `X.Y.Z` when `N == 0` on a clean tree; `X.Y.Z+<N>.g<hash>[.dirty]` otherwise (64-byte Matter cap).
+  - `SW_VER: u32`: `(major * 100_000_000) + (minor * 1_000_000) + (patch * 10_000) + N`.
+- **Workflow**: Do not manually edit `Cargo.toml` versions for releases. Commit with Conventional Commits on a clean tree before building/pushing OTA; use `git tag -a vX.Y.Z -m "Release vX.Y.Z"` only when checkpointing a milestone.
+
 ### Cargo from a nested worktree
 
 This repository's feature worktrees may live under `.worktrees/<name>` inside the primary checkout. When Cargo runs from that nested worktree, it discovers `.cargo/config.toml` in both the worktree and its containing checkout. Cargo then applies aliases and linker flags twice. Symptoms include `cargo build-devkit` reporting `unexpected argument 'build' found` and the ESP linker reporting `region 'RAM' already defined` because `linkall.x` was passed twice.
