@@ -22,6 +22,7 @@ resolver = "2"
 embedded-hal = "=1.0.0"
 intercom-media = { path = "crates/intercom-media" }
 edf-core = { path = "../embedded-device-foundation/crates/edf-core" }
+edf-build = { path = "../embedded-device-foundation/crates/edf-build" }
 edf-gpio = { path = "../embedded-device-foundation/crates/edf-gpio", default-features = false }
 edf-matter = { path = "../embedded-device-foundation/crates/edf-matter" }
 edf-pairing-tool = { path = "../embedded-device-foundation/crates/edf-pairing-tool" }

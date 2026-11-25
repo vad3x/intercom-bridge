@@ -135,3 +135,6 @@ smart-leds = { workspace = true, optional = true }
 embassy-executor = { workspace = true, features = ["platform-std", "executor-thread"] }
 critical-section = { workspace = true, features = ["std"] }
 futures = { workspace = true }
+
+[build-dependencies]
+edf-build = { workspace = true }
