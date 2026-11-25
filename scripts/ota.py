@@ -566,10 +566,10 @@ def normalize_mac(mac: str) -> str:
     return cleaned
 
 
-def build_deploy_tag_name(mac: str, ip: str, version_ref: str) -> str:
+def build_deploy_tag_name(mac: str, ip: str) -> str:
     mac_slug = normalize_mac(mac)
     device_slug = mac_slug if mac_slug != "unknown" else ip.replace(".", "-")
-    return f"deploy/{device_slug}/{version_ref}"
+    return f"deploy/{device_slug}"
 
 
 def resolve_git_version_ref(repo_dir: Path) -> Optional[str]:
@@ -584,10 +584,8 @@ def resolve_git_version_ref(repo_dir: Path) -> Optional[str]:
 
 
 def tag_deployed_device(repo_dir: Path, device: DiscoveredDevice) -> Optional[str]:
-    version_ref = resolve_git_version_ref(repo_dir)
-    if not version_ref:
-        return None
-    tag_name = build_deploy_tag_name(device.mac, device.ip, version_ref)
+    version_ref = resolve_git_version_ref(repo_dir) or "unknown"
+    tag_name = build_deploy_tag_name(device.mac, device.ip)
     msg = f"Deployed {version_ref} to {device.name} ({device.mac}) at {device.ip}"
     res = subprocess.run(
         ["git", "tag", "-f", "-a", tag_name, "-m", msg],
@@ -651,12 +649,12 @@ class OtaImageProfileTests(unittest.TestCase):
 
     def test_build_deploy_tag_name_formats_mac_and_fallback(self) -> None:
         self.assertEqual(
-            build_deploy_tag_name("98:A3:16:A6:78:44", "192.168.0.150", "v1.0.0-1-g226c28c"),
-            "deploy/98a316a67844/v1.0.0-1-g226c28c",
+            build_deploy_tag_name("98:A3:16:A6:78:44", "192.168.0.150"),
+            "deploy/98a316a67844",
         )
         self.assertEqual(
-            build_deploy_tag_name("unknown", "192.168.0.150", "v1.0.0-0-gf33fdb9"),
-            "deploy/192-168-0-150/v1.0.0-0-gf33fdb9",
+            build_deploy_tag_name("unknown", "192.168.0.150"),
+            "deploy/192-168-0-150",
         )
 
 
@@ -711,7 +709,7 @@ def main() -> None:
     parser.add_argument("--flash-size", default="8mb", help="Target flash size (default: 8mb)")
     parser.add_argument("--partition-table", default=str(DEFAULT_PARTITION_TABLE), help="ESP partition CSV used for capacity preflight")
     parser.add_argument("--target-app-partition", default="ota_0", help="Application partition whose capacity limits the image")
-    parser.add_argument("--no-tag", action="store_true", help="Skip creating a deploy/<mac>/<version> git tag")
+    parser.add_argument("--no-tag", action="store_true", help="Skip creating a deploy/<mac> git tag")
 
     args = parser.parse_args()
 
