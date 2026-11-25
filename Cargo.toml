@@ -17,6 +17,7 @@ resolver = "2"
 
 [workspace.dependencies]
 edf-core = { path = "../embedded-device-foundation/crates/edf-core" }
+edf-diag = { path = "../embedded-device-foundation/crates/edf-diag", default-features = false }
 edf-build = { path = "../embedded-device-foundation/crates/edf-build" }
 edf-gpio = { path = "../embedded-device-foundation/crates/edf-gpio", default-features = false }
 edf-matter = { path = "../embedded-device-foundation/crates/edf-matter" }

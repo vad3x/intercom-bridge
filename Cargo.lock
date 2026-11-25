@@ -1088,6 +1088,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "edf-diag"
+version = "0.1.0"
+dependencies = [
+ "embassy-net",
+ "embassy-time",
+ "esp-alloc",
+ "esp-hal",
+ "log",
+]
+
+[[package]]
 name = "edf-gpio"
 version = "0.1.0"
 dependencies = [
@@ -2588,6 +2599,7 @@ version = "1.0.0"
 dependencies = [
  "critical-section",
  "edf-build",
+ "edf-diag",
  "edf-gpio",
  "edf-logger",
  "edf-matter",

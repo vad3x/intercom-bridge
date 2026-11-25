@@ -21,6 +21,7 @@ dummy-persist = []
 [dependencies]
 intercom-core = { path = "../intercom-core" }
 edf-ota = { workspace = true, features = ["esp32c6"] }
+edf-diag = { workspace = true }
 edf-logger = { workspace = true }
 intercom-adapter-http = { path = "../intercom-adapter-http" }
 edf-matter = { workspace = true }
@@ -39,6 +40,7 @@ static_cell = { workspace = true }
 intercom-adapter-gpio = { path = "../intercom-adapter-gpio" }
 intercom-adapter-matter = { path = "../intercom-adapter-matter" }
 edf-gpio = { workspace = true, features = ["esp32c6"] }
+edf-diag = { workspace = true, features = ["esp32c6"] }
 esp-backtrace = { workspace = true, features = ["panic-handler", "println", "custom-halt", "esp32c6"] }
 esp-hal = { workspace = true, features = ["log-04", "unstable", "exception-handler", "esp32c6"] }
 esp-radio = { workspace = true, features = ["ble", "coex", "log-04", "unstable", "esp32c6"] }

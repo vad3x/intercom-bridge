@@ -8,10 +8,8 @@
 extern crate std;
 
 pub mod config;
-pub mod diag;
 pub mod hardware_info;
 pub mod platform;
 pub mod reset;
 pub mod utils;
 pub mod version;
-

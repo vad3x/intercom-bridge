@@ -1,6 +1,6 @@
 import { Badge, Card, CardBody, CardTitle } from '@embedded-device-foundation/dashboard-core';
-import { AlertTriangle, Bell, Loader2, Lock, Sparkles, Trash2, Unlock } from 'lucide-solid';
-import { type Component, createEffect, createSignal, Show } from 'solid-js';
+import { Bell, Loader2, Lock, Sparkles, Unlock } from 'lucide-solid';
+import { type Component, createEffect, createSignal } from 'solid-js';
 import {
   DEFAULT_DOOR_UNLOCK_DURATION_SEC,
   MAX_DOOR_UNLOCK_DURATION_SEC,
@@ -12,12 +12,9 @@ export interface IntercomControlsProps {
   doorUnlockDurationSec?: number;
   isUnlocking: boolean;
   isRinging: boolean;
-  lastFailure?: string;
-  isClearingFailure?: boolean;
   onUnlock: () => void;
   onRing: () => void;
   onDurationChange?: (seconds: number) => Promise<void> | void;
-  onClearLastFailure?: () => void;
 }
 
 export const IntercomControls: Component<IntercomControlsProps> = (props) => {
@@ -286,56 +283,6 @@ export const IntercomControls: Component<IntercomControlsProps> = (props) => {
           </CardBody>
         </Card>
       </div>
-
-      <Card>
-        <CardBody>
-          <div class="flex items-center justify-between gap-2">
-            <div class="flex items-center gap-2.5">
-              <div
-                class={`p-2 rounded-lg ${
-                  props.lastFailure
-                    ? 'bg-warning/20 text-warning'
-                    : 'bg-base-300 text-base-content/60'
-                }`}
-              >
-                <AlertTriangle class="w-4 h-4" />
-              </div>
-              <div>
-                <div class="font-semibold text-sm text-base-content">Persisted Last Failure</div>
-                <div class="text-xs text-base-content/60">
-                  Saved in flash across WDT resets, network stalls, and power loss
-                </div>
-              </div>
-            </div>
-            <div class="flex items-center gap-2">
-              <Badge variant={props.lastFailure ? 'warning' : 'ghost'}>
-                <span>{props.lastFailure ? 'recorded' : 'none'}</span>
-              </Badge>
-              <Show when={props.lastFailure}>
-                <button
-                  type="button"
-                  class="btn btn-xs btn-outline gap-1"
-                  disabled={props.isClearingFailure}
-                  onClick={props.onClearLastFailure}
-                >
-                  <Trash2 class="w-3 h-3" />
-                  Clear
-                </button>
-              </Show>
-            </div>
-          </div>
-          <Show
-            when={props.lastFailure}
-            fallback={
-              <div class="text-xs text-base-content/50 mt-2">No persisted failure recorded.</div>
-            }
-          >
-            <pre class="mt-3 p-2.5 rounded-lg bg-base-300/60 text-xs font-mono whitespace-pre-wrap break-all text-base-content">
-              {props.lastFailure}
-            </pre>
-          </Show>
-        </CardBody>
-      </Card>
     </div>
   );
 };

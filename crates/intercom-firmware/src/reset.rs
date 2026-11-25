@@ -187,6 +187,31 @@ pub fn clear_persisted_last_failure() {
     }
 }
 
+/// Outbound [`edf_diag::FailureStore`] backed by `system_kvs` flash.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct IntercomFailureStore;
+
+impl edf_diag::FailureStore for IntercomFailureStore {
+    fn persist(&self, summary: &str) -> Result<(), edf_diag::FailureStoreError> {
+        persist_last_failure(summary);
+        Ok(())
+    }
+
+    fn read<'a>(&self, buf: &'a mut [u8]) -> Option<&'a str> {
+        read_persisted_last_failure(buf)
+    }
+
+    fn clear(&self) -> Result<(), edf_diag::FailureStoreError> {
+        clear_persisted_last_failure();
+        Ok(())
+    }
+}
+
+/// Copy the persisted last-failure summary into `out`, returning bytes written (`0` if none).
+pub fn read_last_failure_bytes(out: &mut [u8]) -> usize {
+    edf_diag::read_last_failure_bytes(&IntercomFailureStore, out)
+}
+
 /// Outbound reporter that synchronizes runtime lock and duration state with telemetry
 /// and persists duration changes into system flash.
 pub struct FirmwarePersistenceReporter;

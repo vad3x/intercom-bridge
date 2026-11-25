@@ -2,6 +2,7 @@ import {
   Badge,
   DashboardShell,
   type EcosystemStrategy,
+  LastFailureCard,
   MatterEcosystemPanel,
   Toast,
 } from '@embedded-device-foundation/dashboard-core';
@@ -177,18 +178,22 @@ export function App() {
         </Badge>
       }
       controlTab={
-        <IntercomControls
-          doorLocked={store.status()?.door_locked}
-          doorUnlockDurationSec={store.doorUnlockDurationSec()}
-          isUnlocking={store.isUnlocking()}
-          isRinging={store.isRinging()}
-          lastFailure={lastFailure()}
-          isClearingFailure={isClearingFailure()}
-          onUnlock={handleUnlock}
-          onRing={handleRing}
-          onDurationChange={handleDurationChange}
-          onClearLastFailure={handleClearLastFailure}
-        />
+        <div class="space-y-4">
+          <IntercomControls
+            doorLocked={store.status()?.door_locked}
+            doorUnlockDurationSec={store.doorUnlockDurationSec()}
+            isUnlocking={store.isUnlocking()}
+            isRinging={store.isRinging()}
+            onUnlock={handleUnlock}
+            onRing={handleRing}
+            onDurationChange={handleDurationChange}
+          />
+          <LastFailureCard
+            lastFailure={lastFailure()}
+            isClearingFailure={isClearingFailure()}
+            onClearLastFailure={handleClearLastFailure}
+          />
+        </div>
       }
       status={store.status()}
       themeStorageKey="intercom_theme"

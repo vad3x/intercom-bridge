@@ -42,8 +42,24 @@ mod firmware {
 
     use intercom_firmware::hardware_info::FirmwareHardwareInfo;
     use intercom_firmware::platform::{self, ActivePlatform, PlatformDriver};
-    use intercom_firmware::reset::{self, FirmwarePersistenceReporter, FirmwareResetDriver};
-    use intercom_firmware::{config, diag, utils, version};
+    use intercom_firmware::reset::{
+        self, read_last_failure_bytes, FirmwarePersistenceReporter, FirmwareResetDriver,
+        IntercomFailureStore,
+    };
+    use intercom_firmware::{config, utils, version};
+
+    #[derive(Clone, Copy)]
+    struct IntercomDiagContext;
+
+    impl edf_diag::DiagContext for IntercomDiagContext {
+        fn free_heap_bytes(&self) -> usize {
+            platform::free_heap_bytes()
+        }
+
+        fn log_tail(&self, buf: &mut [u8]) -> usize {
+            utils::uptime_logger::get_buffered_logs(buf)
+        }
+    }
 
     esp_bootloader_esp_idf::esp_app_desc!(
         version::SW_VER_STR,
@@ -61,7 +77,7 @@ mod firmware {
     /// Triggers a software reset so the device recovers automatically.
     #[unsafe(no_mangle)]
     pub fn custom_halt() -> ! {
-        diag::persist_panic_and_reset();
+        edf_diag::persist_panic_and_reset(&IntercomFailureStore, &IntercomDiagContext);
     }
 
     #[esp_rtos::main]
@@ -81,7 +97,8 @@ mod firmware {
 
         let (_platform, drivers) = ActivePlatform::init();
 
-        let has_last_failure = diag::record_boot_diagnostics();
+        let has_last_failure =
+            edf_diag::record_boot_diagnostics(&IntercomFailureStore, &IntercomDiagContext);
         info!("Hardware initialized");
 
         // ====================================================================
@@ -123,9 +140,8 @@ mod firmware {
         let mac_bytes = platform::mac_address();
         static IDENTITY_CELL: StaticCell<intercom_adapter_matter::DeviceIdentity> =
             StaticCell::new();
-        let identity = &*IDENTITY_CELL.init(
-            derive_intercom_identity(&mac_bytes).expect("valid Intercom identity prefixes"),
-        );
+        let identity = &*IDENTITY_CELL
+            .init(derive_intercom_identity(&mac_bytes).expect("valid Intercom identity prefixes"));
         let hostname = identity.hostname_str();
         info!("Generated DHCP hostname: {}", hostname);
 
@@ -225,13 +241,19 @@ mod firmware {
                 http_config,
             )
             .with_last_failure_handlers(
-                diag::read_last_failure_bytes,
+                read_last_failure_bytes,
                 reset::clear_persisted_last_failure,
             );
             http_server.run().await;
         };
 
-        let diag_future = diag::run_diag_monitor(hw.timg0_wdt, has_last_failure);
+        let diag_future = edf_diag::run_diag_monitor(
+            hw.timg0_wdt,
+            hw.enet_stack,
+            &IntercomFailureStore,
+            &IntercomDiagContext,
+            has_last_failure,
+        );
 
         info!("Matter Controller Running");
 
