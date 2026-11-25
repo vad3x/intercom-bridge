@@ -112,6 +112,7 @@ mod target_init {
         pub I2S0: esp_hal::peripherals::I2S0<'static>,
         pub DMA_CH0: esp_hal::peripherals::DMA_CH0<'static>,
         pub RMT: esp_hal::peripherals::RMT<'static>,
+        pub timg0_wdt: esp_hal::timer::timg::Wdt<esp_hal::peripherals::TIMG0<'static>>,
     }
 
     pub struct S3Platform {
@@ -216,6 +217,7 @@ mod target_init {
                     I2S0,
                     DMA_CH0,
                     RMT,
+                    timg0_wdt: timg0.wdt,
                 },
             };
 

@@ -2,6 +2,7 @@
 //!
 //! Handles SPI flash Matter KVS sector erasure and software system reboot.
 
+use edf_diag::{FailureStore, FailureStoreError};
 use intercom_core::domain::intercom::{BusLineState, CallState, SessionOwner};
 use intercom_core::domain::policy::{RxPgaGain, TxDacGain};
 
@@ -193,9 +194,9 @@ pub fn init_persistence() -> (impl KvBlobStore, u32, RxPgaGain, TxDacGain) {
 #[cfg(all(target_os = "none", not(feature = "dummy-persist")))]
 mod kv_backend {
     use super::*;
-    use intercom_adapter_gpio::flash::EspFlash;
+    pub(super) use intercom_adapter_gpio::flash::EspFlash;
     use log::warn;
-    use rs_matter_embassy::persist::SeqMapKvBlobStore;
+    pub(super) use rs_matter_embassy::persist::SeqMapKvBlobStore;
 
     pub fn init_persistence() -> (
         PartitionedKvBlobStore<SeqMapKvBlobStore<EspFlash>, SeqMapKvBlobStore<EspFlash>>,
@@ -314,6 +315,81 @@ fn is_system_key(key: u16) -> bool {
         || key == crate::config::DOOR_DURATION_KEY
         || key == crate::config::AUDIO_RX_GAIN_KEY
         || key == crate::config::AUDIO_TX_GAIN_KEY
+}
+
+#[cfg(all(target_os = "none", not(feature = "dummy-persist")))]
+const LAST_FAILURE_KEY: u16 = 0x1004;
+
+/// Outbound [`FailureStore`] backed by the `system_kvs` flash partition.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct IntercomFailureStore;
+
+impl FailureStore for IntercomFailureStore {
+    fn persist(&self, summary: &str) -> Result<(), FailureStoreError> {
+        #[cfg(all(target_os = "none", not(feature = "dummy-persist")))]
+        {
+            let system_flash = kv_backend::EspFlash::new(crate::config::SYSTEM_KVS_RANGE);
+            let mut store =
+                kv_backend::SeqMapKvBlobStore::new(system_flash, crate::config::SYSTEM_KVS_RANGE);
+            let mut scratch = [0u8; 1024];
+            let bytes = summary.as_bytes();
+            let max_len = bytes.len().min(512);
+            let mut end = max_len;
+            while end > 0 && !summary.is_char_boundary(end) {
+                end -= 1;
+            }
+            store
+                .store(LAST_FAILURE_KEY, &bytes[..end], &mut scratch)
+                .map_err(|_| FailureStoreError)?;
+        }
+        #[cfg(not(all(target_os = "none", not(feature = "dummy-persist"))))]
+        {
+            let _ = summary;
+        }
+        Ok(())
+    }
+
+    fn read<'a>(&self, buf: &'a mut [u8]) -> Option<&'a str> {
+        #[cfg(all(target_os = "none", not(feature = "dummy-persist")))]
+        {
+            let system_flash = kv_backend::EspFlash::new(crate::config::SYSTEM_KVS_RANGE);
+            let mut store =
+                kv_backend::SeqMapKvBlobStore::new(system_flash, crate::config::SYSTEM_KVS_RANGE);
+            match store.load(LAST_FAILURE_KEY, buf) {
+                Ok(Some(slice)) => core::str::from_utf8(slice).ok(),
+                _ => None,
+            }
+        }
+        #[cfg(not(all(target_os = "none", not(feature = "dummy-persist"))))]
+        {
+            let _ = buf;
+            None
+        }
+    }
+
+    fn clear(&self) -> Result<(), FailureStoreError> {
+        #[cfg(all(target_os = "none", not(feature = "dummy-persist")))]
+        {
+            let system_flash = kv_backend::EspFlash::new(crate::config::SYSTEM_KVS_RANGE);
+            let mut store =
+                kv_backend::SeqMapKvBlobStore::new(system_flash, crate::config::SYSTEM_KVS_RANGE);
+            let mut scratch = [0u8; 1024];
+            store
+                .remove(LAST_FAILURE_KEY, &mut scratch)
+                .map_err(|_| FailureStoreError)?;
+        }
+        Ok(())
+    }
+}
+
+/// Copy the persisted last-failure summary into `out`, returning bytes written (`0` if none).
+pub fn read_last_failure_bytes(out: &mut [u8]) -> usize {
+    edf_diag::read_last_failure_bytes(&IntercomFailureStore, out)
+}
+
+/// Clear any persisted last-failure summary from flash.
+pub fn clear_persisted_last_failure() {
+    let _ = IntercomFailureStore.clear();
 }
 
 #[cfg(test)]

@@ -35,12 +35,28 @@ use {
         config, cpu_load,
         hardware_info::FirmwareHardwareInfo,
         platform::{self, ActivePlatform, HardwareSecureRandom, PlatformDriver},
-        reset::{self, FirmwarePersistenceReporter, FirmwareResetDriver},
+        reset::{
+            self, clear_persisted_last_failure, read_last_failure_bytes,
+            FirmwarePersistenceReporter, FirmwareResetDriver, IntercomFailureStore,
+        },
         utils, version,
     },
     log::info,
     static_cell::StaticCell,
 };
+
+#[derive(Clone, Copy)]
+struct IntercomDiagContext;
+
+impl edf_diag::DiagContext for IntercomDiagContext {
+    fn free_heap_bytes(&self) -> usize {
+        esp_alloc::HEAP.free()
+    }
+
+    fn log_tail(&self, buf: &mut [u8]) -> usize {
+        utils::uptime_logger::get_buffered_logs(buf)
+    }
+}
 
 esp_bootloader_esp_idf::esp_app_desc!(
     version::SW_VER_STR,
@@ -55,11 +71,11 @@ esp_bootloader_esp_idf::esp_app_desc!(
 );
 
 /// Called by `esp-backtrace` after printing the backtrace on panic.
-/// Triggers a software reset so the device recovers automatically.
+/// Forces bus relays low, persists failure context to flash, and triggers a software reset.
 #[unsafe(no_mangle)]
 pub fn custom_halt() -> ! {
     ActivePlatform::force_bus_relays_low();
-    ActivePlatform::software_reset();
+    edf_diag::persist_panic_and_reset(&IntercomFailureStore, &IntercomDiagContext);
 }
 
 #[esp_rtos::main]
@@ -79,6 +95,8 @@ async fn main(spawner: Spawner) {
 
     let (mut platform, platform_drivers) = ActivePlatform::init();
     let peripherals = platform_drivers.peripherals;
+    let has_last_failure =
+        edf_diag::record_boot_diagnostics(&IntercomFailureStore, &IntercomDiagContext);
 
     info!("Hardware initialized");
 
@@ -322,11 +340,20 @@ async fn main(spawner: Spawner) {
             ws_active: &WS_AUDIO_ACTIVE,
         })
         .with_webrtc_session(webrtc_session_handle)
-        .with_debug_webrtc_signaling(&webrtc_signaling);
+        .with_debug_webrtc_signaling(&webrtc_signaling)
+        .with_last_failure_handlers(read_last_failure_bytes, clear_persisted_last_failure);
         http_server.run().await;
     };
 
     info!("Matter Controller Running");
+
+    let diag_future = edf_diag::run_diag_monitor(
+        hw.timg0_wdt,
+        stack,
+        &IntercomFailureStore,
+        &IntercomDiagContext,
+        has_last_failure,
+    );
 
     let audio_input_future = platform::run_bench_audio_input(&RX_AUDIO_CHANNEL);
 
@@ -363,7 +390,7 @@ async fn main(spawner: Spawner) {
         matter_future,
         led_future,
         http_future,
-        embassy_futures::join::join(audio_input_future, webrtc_future),
+        embassy_futures::join::join3(audio_input_future, webrtc_future, diag_future),
     )
     .await;
 }

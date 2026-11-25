@@ -2,18 +2,21 @@ import {
   Badge,
   DashboardShell,
   type EcosystemStrategy,
+  LastFailureCard,
   MatterEcosystemPanel,
   Toast,
 } from '@embedded-device-foundation/dashboard-core';
 import { DoorClosed, Layers } from 'lucide-solid';
 import { createSignal, onCleanup, onMount } from 'solid-js';
-import { fetchLogs } from './api';
+import { clearLastFailure, fetchLastFailure, fetchLogs } from './api';
 import { IntercomControls } from './components/IntercomControls';
 import { LiveAudioCard } from './components/LiveAudioCard';
 import { createIntercomStore } from './store/intercomStore';
 
 export function App() {
   const store = createIntercomStore();
+  const [lastFailure, setLastFailure] = createSignal<string>('');
+  const [isClearingFailure, setIsClearingFailure] = createSignal(false);
   const [toastMsg, setToastMsg] = createSignal<string | null>(null);
   const [toastType, setToastType] = createSignal<'info' | 'success' | 'error'>('info');
 
@@ -148,10 +151,37 @@ export function App() {
     },
   ];
 
+  const refreshLastFailure = async () => {
+    try {
+      setLastFailure(await fetchLastFailure());
+    } catch {
+      // Ignore transient poll errors
+    }
+  };
+
+  const handleClearLastFailure = async () => {
+    setIsClearingFailure(true);
+    try {
+      await clearLastFailure();
+      setLastFailure('');
+      showToast('Persisted failure record cleared', 'success');
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Failed to clear failure record';
+      showToast(msg, 'error');
+    } finally {
+      setIsClearingFailure(false);
+    }
+  };
+
   onMount(() => {
     store.poll();
+    void refreshLastFailure();
     const interval = setInterval(store.poll, 2500);
-    onCleanup(() => clearInterval(interval));
+    const failureInterval = setInterval(refreshLastFailure, 30000);
+    onCleanup(() => {
+      clearInterval(interval);
+      clearInterval(failureInterval);
+    });
   });
 
   return (
@@ -175,6 +205,11 @@ export function App() {
             onUnlock={handleUnlock}
             onRing={handleRing}
             onDurationChange={handleDurationChange}
+          />
+          <LastFailureCard
+            lastFailure={lastFailure()}
+            isClearingFailure={isClearingFailure()}
+            onClearLastFailure={handleClearLastFailure}
           />
           <LiveAudioCard
             busState={store.status()?.bus_state}

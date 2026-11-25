@@ -24,6 +24,7 @@ esp32c6 = [
     "rs-matter-embassy/tcp",
     "rs-matter/large-buffers-4096",
     "intercom-adapter-webrtc/esp32c6",
+    "edf-diag/esp32c6",
     "edf-gpio/esp32c6",
     "edf-ota/esp32c6",
     "dep:esp-wifi-sys-esp32c6",
@@ -43,6 +44,7 @@ esp32s31 = [
     "intercom-adapter-webrtc/esp32s31",
     "rs-matter-embassy/tcp",
     "rs-matter/large-buffers-4096",
+    "edf-diag/esp32s31",
     "edf-gpio/esp32s31",
     "edf-ota/esp32s31",
     "dep:esp-wifi-sys-esp32s31",
@@ -63,6 +65,7 @@ esp32s3 = [
     "rs-matter-embassy/trouble",
     "rs-matter-embassy/tcp",
     "rs-matter/large-buffers-4096",
+    "edf-diag/esp32s3",
     "edf-gpio/esp32s3",
     "edf-ota/esp32s3",
     "edf-ota/psram",
@@ -94,6 +97,7 @@ intercom-media = { workspace = true }
 intercom-adapter-webrtc = { path = "../intercom-adapter-webrtc" }
 intercom-adapter-audio = { path = "../intercom-adapter-audio", default-features = false }
 edf-core = { workspace = true }
+edf-diag = { workspace = true }
 edf-gpio = { workspace = true }
 edf-ota = { workspace = true }
 edf-logger = { workspace = true }

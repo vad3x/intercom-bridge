@@ -31,6 +31,7 @@ pub enum Route {
     Dashboard,
     Status,
     Logs,
+    LastFailure,
     ActionRing,
     ActionUnlock,
     ActionListen,
@@ -41,6 +42,7 @@ pub enum Route {
     ActionResetMatter,
     ActionResetFactory,
     ActionReboot,
+    ActionClearFailure,
     ActionSetDoorDuration(u32),
     OtaFlash,
     NotFound,
@@ -87,6 +89,8 @@ pub fn parse_route(request_line: &str) -> Route {
     }
 
     match (method, path) {
+        ("GET", "/api/last-failure") => Route::LastFailure,
+        ("POST", "/api/action/clear-failure") => Route::ActionClearFailure,
         ("POST", "/api/action/ring") => Route::ActionRing,
         ("POST", "/api/action/unlock") => Route::ActionUnlock,
         ("POST", "/api/action/listen") => Route::ActionListen,

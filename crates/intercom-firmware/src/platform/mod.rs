@@ -132,6 +132,7 @@ mod target {
         pub indicator: &'static ActiveIndicator,
         pub boot_button: intercom_adapter_gpio::boot_button::GpioBootButtonDriver,
         pub ota_driver: ActiveOtaDriver,
+        pub timg0_wdt: esp_hal::timer::timg::Wdt<esp_hal::peripherals::TIMG0<'static>>,
     }
 
     pub struct HardwareSecureRandom;

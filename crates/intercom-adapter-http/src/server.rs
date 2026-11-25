@@ -74,6 +74,8 @@ pub(crate) struct AppState<
     pub(crate) webrtc_session: Option<&'a WebRtcSessionHandle<'a>>,
     pub(crate) debug_webrtc_signaling: Option<&'a dyn DebugWebRtcSignaling>,
     pub(crate) log_provider: fn(&mut [u8]) -> usize,
+    pub(crate) last_failure_provider: Option<fn(&mut [u8]) -> usize>,
+    pub(crate) clear_last_failure: Option<fn()>,
 }
 
 impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, T: EcosystemType> Clone
@@ -115,6 +117,8 @@ pub struct HttpServer<
     reset_driver: Option<&'a R>,
     state_sender: Option<SystemStateSender<'a>>,
     log_provider: fn(&mut [u8]) -> usize,
+    last_failure_provider: Option<fn(&mut [u8]) -> usize>,
+    clear_last_failure: Option<fn()>,
     config: HttpServerConfig,
     audio_media: Option<crate::HttpAudioMedia<'a>>,
     webrtc_session: Option<&'a WebRtcSessionHandle<'a>>,
@@ -150,6 +154,8 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, T: Ec
             memory_info: None,
             cpu_info: None,
             log_provider,
+            last_failure_provider: None,
+            clear_last_failure: None,
             config,
         }
     }
@@ -190,8 +196,21 @@ impl<
             memory_info: None,
             cpu_info: None,
             log_provider,
+            last_failure_provider: None,
+            clear_last_failure: None,
             config,
         }
+    }
+
+    /// Attach handlers for reading and clearing the persisted last-failure summary.
+    pub fn with_last_failure_handlers(
+        mut self,
+        provider: fn(&mut [u8]) -> usize,
+        clear: fn(),
+    ) -> Self {
+        self.last_failure_provider = Some(provider);
+        self.clear_last_failure = Some(clear);
+        self
     }
 
     /// Attach the static audio channels and lifecycle watches.
@@ -243,6 +262,8 @@ impl<
             memory_info: self.memory_info,
             cpu_info: self.cpu_info,
             log_provider: self.log_provider,
+            last_failure_provider: self.last_failure_provider,
+            clear_last_failure: self.clear_last_failure,
             config: self.config,
         }
     }
@@ -286,6 +307,8 @@ impl<
             reboot_requested: &reboot_requested,
             reset_requested: &reset_requested,
             log_provider: self.log_provider,
+            last_failure_provider: self.last_failure_provider,
+            clear_last_failure: self.clear_last_failure,
         };
 
         let router = build_router(app_state);
@@ -331,6 +354,8 @@ impl<
         let memory_info = self.memory_info;
         let cpu_info = self.cpu_info;
         let log_provider = self.log_provider;
+        let last_failure_provider = self.last_failure_provider;
+        let clear_last_failure = self.clear_last_failure;
         let proxy = crate::ota_proxy::OtaProxy::new();
         let picoserve_config = picoserve::Config::new(picoserve::Timeouts {
             start_read_request: config.start_read_timeout,
@@ -369,6 +394,8 @@ impl<
                     reboot_requested: &reboot_requested,
                     reset_requested: &reset_requested,
                     log_provider,
+                    last_failure_provider,
+                    clear_last_failure,
                 };
                 let router = build_router(app_state);
                 loop {
@@ -483,6 +510,38 @@ fn build_router<
                         alloc::string::String::from_utf8_lossy(&log_buf[..log_len]).into_owned();
                     picoserve::response::Response::ok(log_str)
                         .with_content_type("text/plain; charset=utf-8")
+                },
+            ),
+        )
+        .route(
+            "/api/last-failure",
+            picoserve::routing::get(
+                |picoserve::extract::State(state): picoserve::extract::State<
+                    AppState<'a, H, E, O, T>,
+                >| async move {
+                    let failure_str = if let Some(provider) = state.last_failure_provider {
+                        let mut buf = [0u8; 512];
+                        let len = provider(&mut buf);
+                        alloc::string::String::from_utf8_lossy(&buf[..len]).into_owned()
+                    } else {
+                        alloc::string::String::new()
+                    };
+                    picoserve::response::Response::ok(failure_str)
+                        .with_content_type("text/plain; charset=utf-8")
+                },
+            ),
+        )
+        .route(
+            "/api/action/clear-failure",
+            picoserve::routing::post(
+                |picoserve::extract::State(state): picoserve::extract::State<
+                    AppState<'a, H, E, O, T>,
+                >| async move {
+                    if let Some(clear) = state.clear_last_failure {
+                        clear();
+                    }
+                    picoserve::response::Response::ok("{\"status\":\"ok\"}")
+                        .with_content_type("application/json")
                 },
             ),
         )

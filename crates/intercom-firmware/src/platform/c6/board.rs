@@ -260,5 +260,6 @@ pub async fn wire_board(
         indicator,
         boot_button,
         ota_driver,
+        timg0_wdt: peripherals.timg0_wdt,
     }
 }

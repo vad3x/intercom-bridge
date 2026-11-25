@@ -24,6 +24,7 @@ mod target_init {
         pub GPIO18: esp_hal::peripherals::GPIO18<'static>,
         pub GPIO19: esp_hal::peripherals::GPIO19<'static>,
         pub RMT: esp_hal::peripherals::RMT<'static>,
+        pub timg0_wdt: esp_hal::timer::timg::Wdt<esp_hal::peripherals::TIMG0<'static>>,
     }
 
     pub struct S31Platform {
@@ -107,6 +108,7 @@ mod target_init {
                     GPIO18,
                     GPIO19,
                     RMT,
+                    timg0_wdt: timg0.wdt,
                 },
             };
 
