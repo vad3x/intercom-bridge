@@ -559,6 +559,47 @@ def push_ota_to_device(
                 pass
 
 
+def normalize_mac(mac: str) -> str:
+    cleaned = mac.strip().replace(":", "").replace("-", "").lower()
+    if not cleaned or cleaned == "unknown":
+        return "unknown"
+    return cleaned
+
+
+def build_deploy_tag_name(mac: str, ip: str, version_ref: str) -> str:
+    mac_slug = normalize_mac(mac)
+    device_slug = mac_slug if mac_slug != "unknown" else ip.replace(".", "-")
+    return f"deploy/{device_slug}/{version_ref}"
+
+
+def resolve_git_version_ref(repo_dir: Path) -> Optional[str]:
+    for args in (
+        ["git", "describe", "--tags", "--match", "v[0-9]*.[0-9]*.[0-9]*", "--long", "--abbrev=7"],
+        ["git", "rev-parse", "--short=7", "HEAD"],
+    ):
+        res = subprocess.run(args, cwd=repo_dir, capture_output=True, text=True)
+        if res.returncode == 0 and res.stdout.strip():
+            return res.stdout.strip()
+    return None
+
+
+def tag_deployed_device(repo_dir: Path, device: DiscoveredDevice) -> Optional[str]:
+    version_ref = resolve_git_version_ref(repo_dir)
+    if not version_ref:
+        return None
+    tag_name = build_deploy_tag_name(device.mac, device.ip, version_ref)
+    msg = f"Deployed {version_ref} to {device.name} ({device.mac}) at {device.ip}"
+    res = subprocess.run(
+        ["git", "tag", "-f", "-a", tag_name, "-m", msg],
+        cwd=repo_dir,
+        capture_output=True,
+        text=True,
+    )
+    if res.returncode == 0:
+        return tag_name
+    return None
+
+
 class OtaImageProfileTests(unittest.TestCase):
     def test_uses_selected_chip_layout_and_slot_capacity(self) -> None:
         profile = OtaImageProfile(
@@ -607,6 +648,16 @@ class OtaImageProfileTests(unittest.TestCase):
         self.assertEqual(c6_profile.chip, "esp32c6")
         self.assertEqual(c6_profile.flash_size, "8mb")
         self.assertEqual(c6_profile.max_app_slot_size, MAX_APP_SLOT_SIZE)
+
+    def test_build_deploy_tag_name_formats_mac_and_fallback(self) -> None:
+        self.assertEqual(
+            build_deploy_tag_name("98:A3:16:A6:78:44", "192.168.0.150", "v1.0.0-1-g226c28c"),
+            "deploy/98a316a67844/v1.0.0-1-g226c28c",
+        )
+        self.assertEqual(
+            build_deploy_tag_name("unknown", "192.168.0.150", "v1.0.0-0-gf33fdb9"),
+            "deploy/192-168-0-150/v1.0.0-0-gf33fdb9",
+        )
 
 
 def main() -> None:
@@ -660,6 +711,7 @@ def main() -> None:
     parser.add_argument("--flash-size", default="8mb", help="Target flash size (default: 8mb)")
     parser.add_argument("--partition-table", default=str(DEFAULT_PARTITION_TABLE), help="ESP partition CSV used for capacity preflight")
     parser.add_argument("--target-app-partition", default="ota_0", help="Application partition whose capacity limits the image")
+    parser.add_argument("--no-tag", action="store_true", help="Skip creating a deploy/<mac>/<version> git tag")
 
     args = parser.parse_args()
 
@@ -766,13 +818,22 @@ def main() -> None:
             targets = prompt_device_selection(discovered)
 
     # 4. Push OTA update to target(s)
+    repo_dir = Path(__file__).resolve().parent.parent
     success_count = 0
     total_targets = len(targets)
     for idx, target in enumerate(targets, start=1):
         if total_targets > 1:
             print(f"\n--- Updating Device {idx}/{total_targets} ---")
+        if normalize_mac(target.mac) == "unknown":
+            status = probe_intercom_status(target.ip, port=target.port, timeout=1.5)
+            if status and status.get("mac"):
+                target.mac = status["mac"]
         if push_ota_to_device(target, header, binary_path, binary_len, http_timeout=args.http_timeout):
             success_count += 1
+            if not args.no_tag:
+                tag_name = tag_deployed_device(repo_dir, target)
+                if tag_name:
+                    print(f"🏷️  Tagged deployment: {tag_name}")
 
     if total_targets > 1:
         print(f"\nSummary: {success_count}/{total_targets} devices updated successfully.")
