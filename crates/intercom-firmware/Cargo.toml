@@ -52,3 +52,6 @@ esp-wifi-sys-esp32c6 = { workspace = true }
 
 [dev-dependencies]
 critical-section = { workspace = true, features = ["std"] }
+
+[build-dependencies]
+edf-build = { workspace = true }
