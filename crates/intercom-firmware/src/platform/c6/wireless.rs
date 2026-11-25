@@ -138,15 +138,12 @@ impl MatterWirelessDriver for BoardWireless {
             rs_matter_embassy::matter::dm::clusters::gen_diag::InterfaceTypeEnum::WiFi,
         );
         let net_ctl =
-            rs_matter_embassy::wifi::esp::EspWifiController::new(self.wifi_controller);
-        let net_ctl = net_ctl.with_protocols(
-            rs_matter_embassy::wireless::esp::Protocols::default().with_2_4(
-                rs_matter_embassy::wireless::esp::Protocol::B
-                    | rs_matter_embassy::wireless::esp::Protocol::G
-                    | rs_matter_embassy::wireless::esp::Protocol::N
-                    | rs_matter_embassy::wireless::esp::Protocol::AX,
-            ),
-        );
+            rs_matter_embassy::wifi::esp::EspWifiController::new(self.wifi_controller)
+                .with_wifi_config(
+                    rs_matter_embassy::wireless::esp::WifiConfig::new()
+                        .with_scan_method(rs_matter_embassy::wireless::esp::ScanMethod::AllChannels)
+                        .with_failure_retry_cnt(3),
+                );
         let mdns =
             rs_matter_embassy::matter::transport::network::mdns::builtin::BuiltinMdns::new();
         let gatt = rs_matter_embassy::wireless::esp::EspGattPeripheral::new(

@@ -47,7 +47,7 @@ esp-alloc = { workspace = true }
 esp-println = { workspace = true, features = ["log-04", "esp32c6"] }
 esp-bootloader-esp-idf = { workspace = true, features = ["log-04", "esp32c6"] }
 esp-metadata-generated = { workspace = true, features = ["esp32c6"] }
-rs-matter-embassy = { path = "../../../rs-matter-embassy/rs-matter-embassy", default-features = false, features = ["esp", "trouble", "embassy-net", "enet-extra-sockets-4", "log", "rustcrypto", "kv-blob-store-8192", "max-im-buffers-4"] }
+rs-matter-embassy = { git = "https://github.com/sysgrok/rs-matter-embassy", rev = "0bf4ca5", default-features = false, features = ["esp", "trouble", "embassy-net", "enet-extra-sockets-4", "log", "rustcrypto", "kv-blob-store-8192", "max-im-buffers-4"] }
 esp-wifi-sys-esp32c6 = { workspace = true }
 
 [dev-dependencies]
