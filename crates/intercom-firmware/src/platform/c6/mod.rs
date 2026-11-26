@@ -47,6 +47,20 @@ mod target_init {
         // This leaves about 1.8 KiB of headroom and reserves SRAM for the main stack.
         const MATTER_BUMP_SIZE: usize = 34_000;
 
+        fn is_wdt_reset() -> bool {
+            use esp_hal::rtc_cntl::SocResetReason;
+            matches!(
+                esp_hal::system::reset_reason(),
+                Some(
+                    SocResetReason::CoreMwdt0
+                        | SocResetReason::CoreMwdt1
+                        | SocResetReason::CoreRtcWdt
+                        | SocResetReason::Cpu0Mwdt0
+                        | SocResetReason::Cpu0RtcWdt
+                )
+            )
+        }
+
         fn init() -> (Self, Self::Drivers) {
             let peripherals = esp_hal::init(
                 esp_hal::Config::default().with_cpu_clock(esp_hal::clock::CpuClock::max()),

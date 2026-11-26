@@ -93,10 +93,11 @@ async fn main(spawner: Spawner) {
         version::SW_VER
     );
 
+    let wdt_reset = ActivePlatform::is_wdt_reset();
     let (mut platform, platform_drivers) = ActivePlatform::init();
     let peripherals = platform_drivers.peripherals;
     let has_last_failure =
-        edf_diag::record_boot_diagnostics(&IntercomFailureStore, &IntercomDiagContext);
+        edf_diag::record_boot_diagnostics(&IntercomFailureStore, &IntercomDiagContext, wdt_reset);
 
     info!("Hardware initialized");
 

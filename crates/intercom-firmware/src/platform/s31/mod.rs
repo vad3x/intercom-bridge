@@ -62,6 +62,20 @@ mod target_init {
 
         const MATTER_BUMP_SIZE: usize = 38_000;
 
+        fn is_wdt_reset() -> bool {
+            use esp_hal::rtc_cntl::SocResetReason;
+            matches!(
+                esp_hal::system::reset_reason(),
+                Some(
+                    SocResetReason::CoreMwdt0
+                        | SocResetReason::CoreMwdt1
+                        | SocResetReason::CoreRwdt
+                        | SocResetReason::CpuMwdt
+                        | SocResetReason::CpuRwdt
+                )
+            )
+        }
+
         fn init() -> (Self, Self::Drivers) {
             let peripherals = esp_hal::init(
                 esp_hal::Config::default().with_cpu_clock(esp_hal::clock::CpuClock::max()),

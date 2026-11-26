@@ -14,6 +14,10 @@ impl PlatformDriver for MockPlatform {
         (Self, PlatformDrivers { peripherals: () })
     }
 
+    fn is_wdt_reset() -> bool {
+        false
+    }
+
     fn force_bus_relays_low() {}
 
     fn software_reset() -> ! {
