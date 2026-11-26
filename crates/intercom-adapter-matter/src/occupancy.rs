@@ -20,11 +20,11 @@ use rs_matter::dm::{
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::with;
 
+use super::readiness::ClusterReadinessBarrier;
+use super::MatterCluster;
 use rs_matter::dm::clusters::decl::occupancy_sensing::{
     self, OccupancyBitmap, OccupancySensorTypeBitmap, OccupancySensorTypeEnum,
 };
-use super::readiness::ClusterReadinessBarrier;
-use super::MatterCluster;
 
 // ============================================================================
 // Occupancy Sensing handler

@@ -23,7 +23,6 @@ pub mod readiness;
 
 use rs_matter::dm::{AsyncHandler, Cluster, DeviceType};
 
-pub use rand_core;
 pub use access_control::MatterAccessControlDriver;
 pub use commissioning::{
     derive_intercom_identity, select_wireless_boot_mode, DeviceIdentity, IdentityError,
@@ -35,6 +34,7 @@ pub use controller::{
 };
 pub use door_lock::{IntercomDoorLock, IntercomDoorLockConfig};
 pub use occupancy::{IntercomOccupancy, IntercomOccupancyConfig};
+pub use rand_core;
 pub use readiness::ClusterReadinessBarrier;
 
 /// Bump allocator size for the Matter protocol stack.

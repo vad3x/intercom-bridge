@@ -166,7 +166,5 @@ fn main() {
     encoder
         .write_all(&html_bytes)
         .expect("Failed to compress dashboard.html");
-    encoder
-        .finish()
-        .expect("Failed to finish gzip compression");
+    encoder.finish().expect("Failed to finish gzip compression");
 }

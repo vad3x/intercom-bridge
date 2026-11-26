@@ -48,7 +48,8 @@ impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, T: EcosystemType>
 
     /// Aggregate current domain state, ecosystem status, and hardware telemetry into a snapshot.
     pub fn snapshot(&self) -> SystemDiagnostics<IntercomState, T> {
-        self.inner.snapshot(crate::domain::diagnostics::current_intercom_state())
+        self.inner
+            .snapshot(crate::domain::diagnostics::current_intercom_state())
     }
 
     /// Reference to the underlying hardware info driver.

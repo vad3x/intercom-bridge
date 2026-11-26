@@ -123,9 +123,7 @@ fn test_partitioned_kv_store_routes_door_duration_key_to_system_store() {
         Some(duration_bytes.as_slice())
     );
     assert_eq!(
-        partitioned
-            .load(DOOR_DURATION_KEY, &mut scratch)
-            .unwrap(),
+        partitioned.load(DOOR_DURATION_KEY, &mut scratch).unwrap(),
         Some(duration_bytes.as_slice())
     );
 }
@@ -166,7 +164,10 @@ fn test_partitioned_kv_store_routes_fabric_keys_to_matter_store() {
             .unwrap(),
         None
     );
-    assert_eq!(partitioned.system_store.load(1, &mut read_buf).unwrap(), None);
+    assert_eq!(
+        partitioned.system_store.load(1, &mut read_buf).unwrap(),
+        None
+    );
 }
 
 #[test]
@@ -226,7 +227,10 @@ fn test_partitioned_kv_store_remove_networks_key_only_touches_system_store() {
 
     // Assert
     assert_eq!(
-        partitioned.system_store.load(NETWORKS_KEY, &mut buf).unwrap(),
+        partitioned
+            .system_store
+            .load(NETWORKS_KEY, &mut buf)
+            .unwrap(),
         None
     );
     assert_eq!(
@@ -387,7 +391,9 @@ fn test_load_door_duration_falls_back_on_invalid_or_corrupt_data() {
 fn test_load_door_duration_succeeds_when_larger_network_key_stored() {
     let mut store = MockKvStore::new();
     let mut scratch = [0u8; 128];
-    store.store(NETWORKS_KEY, &[0xAA; 40], &mut scratch).unwrap();
+    store
+        .store(NETWORKS_KEY, &[0xAA; 40], &mut scratch)
+        .unwrap();
     intercom_firmware::reset::save_door_duration(&mut store, 10).unwrap();
     let loaded = intercom_firmware::reset::load_door_duration(&mut store);
     assert_eq!(loaded, 10, "Expected 10 but got {}", loaded);

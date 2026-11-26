@@ -5,9 +5,8 @@ extern crate alloc;
 use core::cell::UnsafeCell;
 
 use intercom_adapter_matter::{
-    commissioning::select_wireless_boot_mode,
-    commissioning::WirelessBootMode,
-    MatterStackStorage, MatterWirelessDriver,
+    commissioning::select_wireless_boot_mode, commissioning::WirelessBootMode, MatterStackStorage,
+    MatterWirelessDriver,
 };
 use portable_atomic::{AtomicBool, Ordering};
 use rs_matter::dm::{AsyncHandler, Node};
@@ -137,15 +136,13 @@ impl MatterWirelessDriver for BoardWireless {
             self.enet_stack,
             rs_matter_embassy::matter::dm::clusters::gen_diag::InterfaceTypeEnum::WiFi,
         );
-        let net_ctl =
-            rs_matter_embassy::wifi::esp::EspWifiController::new(self.wifi_controller)
-                .with_wifi_config(
-                    rs_matter_embassy::wireless::esp::WifiConfig::new()
-                        .with_scan_method(rs_matter_embassy::wireless::esp::ScanMethod::AllChannels)
-                        .with_failure_retry_cnt(3),
-                );
-        let mdns =
-            rs_matter_embassy::matter::transport::network::mdns::builtin::BuiltinMdns::new();
+        let net_ctl = rs_matter_embassy::wifi::esp::EspWifiController::new(self.wifi_controller)
+            .with_wifi_config(
+                rs_matter_embassy::wireless::esp::WifiConfig::new()
+                    .with_scan_method(rs_matter_embassy::wireless::esp::ScanMethod::AllChannels)
+                    .with_failure_retry_cnt(3),
+            );
+        let mdns = rs_matter_embassy::matter::transport::network::mdns::builtin::BuiltinMdns::new();
         let gatt = rs_matter_embassy::wireless::esp::EspGattPeripheral::new(
             self.bt,
             Some(weak_rand),

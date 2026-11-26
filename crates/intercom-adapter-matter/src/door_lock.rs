@@ -18,12 +18,12 @@ use rs_matter::error::{Error, ErrorCode};
 use rs_matter::tlv::Nullable;
 use rs_matter::with;
 
-use rs_matter::dm::clusters::decl::door_lock::{
-    self, DlLockState, DlLockType, DlSupportedOperatingModes, OperatingModeEnum,
-};
 use super::readiness::ClusterReadinessBarrier;
 use super::MatterCluster;
 use intercom_core::ports::AccessControllerHandle;
+use rs_matter::dm::clusters::decl::door_lock::{
+    self, DlLockState, DlLockType, DlSupportedOperatingModes, OperatingModeEnum,
+};
 
 // ============================================================================
 // Door Lock handler
@@ -67,7 +67,9 @@ impl IntercomDoorLock {
     /// Bumps dataver and signals the `run()` background task to push
     /// a subscription report to HomeKit immediately.
     pub fn lock(&self) {
-        let prev = self.lock_state.swap(DlLockState::Locked as u8, Ordering::SeqCst);
+        let prev = self
+            .lock_state
+            .swap(DlLockState::Locked as u8, Ordering::SeqCst);
         if prev != DlLockState::Locked as u8 {
             info!("lock() called → state=Locked, signalling subscription notify");
             self.dataver.changed();
@@ -81,7 +83,9 @@ impl IntercomDoorLock {
     /// Bumps dataver and signals the `run()` background task to push
     /// a subscription report to HomeKit immediately.
     pub fn unlock(&self) {
-        let prev = self.lock_state.swap(DlLockState::Unlocked as u8, Ordering::SeqCst);
+        let prev = self
+            .lock_state
+            .swap(DlLockState::Unlocked as u8, Ordering::SeqCst);
         if prev != DlLockState::Unlocked as u8 {
             info!("unlock() called → state=Unlocked, signalling subscription notify");
             self.dataver.changed();
@@ -98,7 +102,10 @@ impl IntercomDoorLock {
         let clamped = intercom_core::config::clamp_door_unlock_duration(duration_sec);
         let prev = self.unlock_duration_sec.swap(clamped, Ordering::SeqCst);
         if prev != clamped {
-            info!("Door lock auto-relock duration updated: {}s -> {}s", prev, clamped);
+            info!(
+                "Door lock auto-relock duration updated: {}s -> {}s",
+                prev, clamped
+            );
             self.dataver.changed();
             self.state_changed.signal(());
         }
@@ -145,7 +152,9 @@ impl MatterCluster for IntercomDoorLock {
 
 impl AsyncHandler for IntercomDoorLock {
     async fn read(&self, ctx: impl ReadContext, reply: impl ReadReply) -> Result<(), Error> {
-        self.config.readiness.mark_door_lock_ready(ctx.attr().fab_idx);
+        self.config
+            .readiness
+            .mark_door_lock_ready(ctx.attr().fab_idx);
 
         if let Some(writer) = reply.with_dataver(self.dataver.get())? {
             if ctx.attr().is_system() {
@@ -178,10 +187,7 @@ impl AsyncHandler for IntercomDoorLock {
                     }
                     // SupportedOperatingModes (id=38): DlSupportedOperatingModes (0xFFF6 = Normal mode supported)
                     x if x == door_lock::AttributeId::SupportedOperatingModes as u16 => {
-                        Reply::set(
-                            writer,
-                            DlSupportedOperatingModes::from_bits_retain(0xFFF6),
-                        )
+                        Reply::set(writer, DlSupportedOperatingModes::from_bits_retain(0xFFF6))
                     }
                     // RequirePINforRemoteOperation (id=51): bool (false = remote unlock allowed without PIN)
                     x if x == door_lock::AttributeId::RequirePINforRemoteOperation as u16 => {

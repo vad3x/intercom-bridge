@@ -161,7 +161,10 @@ mod tests {
         // Assert
         assert!(effects.trigger_unlock);
         assert_eq!(effects.report_lock, Some(LockState::Unlocked));
-        assert_eq!(sm.next_deadline(), Some(1000 + sm.unlock_duration_sec() as u64 * 1000));
+        assert_eq!(
+            sm.next_deadline(),
+            Some(1000 + sm.unlock_duration_sec() as u64 * 1000)
+        );
     }
 
     #[test]

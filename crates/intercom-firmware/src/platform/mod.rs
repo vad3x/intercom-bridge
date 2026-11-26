@@ -30,7 +30,9 @@ pub use c6::board::{
     wire_board, BoardHardware,
 };
 #[cfg(target_os = "none")]
-pub use c6::wireless::{enet_stack, init_esp_network, BoardWireless, EnetMatterBuffers, EspWifiDriver};
+pub use c6::wireless::{
+    enet_stack, init_esp_network, BoardWireless, EnetMatterBuffers, EspWifiDriver,
+};
 
 #[cfg(not(target_os = "none"))]
 pub use mock::{

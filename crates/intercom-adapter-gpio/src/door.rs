@@ -3,9 +3,9 @@
 //! Async door unlock via PhotoMOS relay (AQY212EHA).
 //! Uses Embassy async `Timer::after()` for the pulse duration.
 
+use crate::config;
 use embassy_time::{Duration, Timer};
 use esp_hal::gpio::{Level, Output, OutputConfig};
-use crate::config;
 use intercom_core::ports::DoorDriver;
 use log::{info, warn};
 

@@ -42,13 +42,7 @@ where
     RST: SystemResetDriver,
 {
     /// Create the application from port driver implementations.
-    pub fn new(
-        ring: R,
-        door: D,
-        reporter: REP,
-        reset_trigger: T,
-        reset: RST,
-    ) -> Self {
+    pub fn new(ring: R, door: D, reporter: REP, reset_trigger: T, reset: RST) -> Self {
         Self {
             ring_watcher: RingWatcher::new(ring),
             access_controller: AccessController::new(door, reporter),

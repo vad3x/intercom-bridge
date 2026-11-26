@@ -12,11 +12,11 @@ pub mod reset;
 
 pub use diagnostics::HardwareInfoDriver;
 pub use ecosystem::EcosystemInfoDriver;
+pub use edf_core::ports::ota as ota_edf;
 pub use inbound::{
     AccessCommand, AccessControllerHandle, CommandChannel, CommandReceiver, CommandSender,
 };
 pub use ota::{OtaDriverError, OtaFlashDriver, OtaStream};
-pub use edf_core::ports::ota as ota_edf;
 pub use reporter::{IntercomReporter, LockState};
 pub use reset::{ResetScope, ResetTriggerDriver, SystemResetDriver};
 
