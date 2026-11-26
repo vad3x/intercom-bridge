@@ -764,8 +764,8 @@ def main() -> None:
     parser.add_argument(
         "--http-timeout",
         type=float,
-        default=120.0,
-        help="HTTP upload timeout in seconds (default: 120.0)",
+        default=180.0,
+        help="HTTP upload timeout in seconds (default: 180.0)",
     )
     parser.add_argument("--chip", default="esp32c6", choices=("esp32c6", "esp32s3"), help="Image target chip (default: esp32c6)")
     parser.add_argument("--flash-size", default="8mb", help="Target flash size (default: 8mb)")

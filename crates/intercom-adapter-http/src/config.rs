@@ -110,8 +110,9 @@ pub const DEFAULT_OTA_READ_TIMEOUT: Duration = Duration::from_secs(360);
 /// Default timeout for writing an HTTP response.
 pub const DEFAULT_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Default idle timeout for an accepted TCP socket.
-pub const DEFAULT_SOCKET_TIMEOUT: Duration = Duration::from_secs(60);
+/// Default idle timeout for an accepted TCP socket (must exceed `DEFAULT_OTA_READ_TIMEOUT`
+/// so PSRAM-staged OTA flash writes do not trigger a premature TCP RST while awaiting 200 OK).
+pub const DEFAULT_SOCKET_TIMEOUT: Duration = DEFAULT_OTA_READ_TIMEOUT;
 
 /// Delay before initiating hardware reboot after OTA commit to allow HTTP response flush.
 pub const DEFAULT_REBOOT_DELAY: Duration = Duration::from_millis(500);
