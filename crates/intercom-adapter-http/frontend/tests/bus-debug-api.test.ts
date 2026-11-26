@@ -1,4 +1,5 @@
 import { afterEach, expect, mock, spyOn, test } from 'bun:test';
+import type { IntercomStatus } from '../src/types';
 
 // The shared barrel also loads browser-only UI; these helpers only need fetch.
 mock.module('@embedded-device-foundation/dashboard-core', () => ({
@@ -8,6 +9,60 @@ mock.module('@embedded-device-foundation/dashboard-core', () => ({
 }));
 const api = await import('../src/api');
 const { createIntercomStore } = await import('../src/store/intercomStore');
+
+function makeStatus(deviceState: Partial<IntercomStatus> = {}) {
+  return {
+    system: {
+      status: 'Operational',
+      uptime_sec: 120,
+      memory: {
+        internal: { free_bytes: 12480, total_bytes: 122880 },
+        psram: null,
+      },
+      cpu: {
+        core_0: { load_pct: 25 },
+      },
+    },
+    network: {
+      ssid: 'Home_IoT_5G',
+      rssi_dbm: -58,
+      ip: '192.168.1.142',
+      mac: '98:A3:16:A6:78:44',
+    },
+    firmware: {
+      version: '2.1.0',
+      git_commit: 'a1b2c3d',
+      build_date: '2026-11-26',
+      active_slot: 'ota_0',
+      slot_valid: true,
+    },
+    ecosystems: {
+      available: ['matter'],
+      active: {
+        type: 'matter',
+        paired: true,
+        properties: { door_lock_subscribed: true },
+        fabrics: [],
+        endpoints: [],
+      },
+    },
+    device: {
+      type: 'intercom_bridge',
+      state: {
+        door_locked: true,
+        door_unlock_duration_sec: 5,
+        bus_state: 'idle',
+        call_state: 'idle',
+        rx_rms_dbfs: -60,
+        rx_peak_dbfs: -48,
+        rx_gain_half_db: 40,
+        tx_gain_half_db: 0,
+        tone_active: false,
+        ...deviceState,
+      },
+    },
+  };
+}
 
 const actions = [
   ['startBusListen', '/api/action/listen', 'Listen failed'],
@@ -58,7 +113,7 @@ test.each(['startListen', 'startTalk'] as const)(
     // Arrange
     fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (path) =>
       path === '/api/status'
-        ? Response.json({ door_locked: true, call_state: 'idle' })
+        ? Response.json(makeStatus({ call_state: 'idle' }))
         : new Response(null, { status: 204 }),
     );
     const store = createIntercomStore();
@@ -77,13 +132,13 @@ test('idle from a deferred pre-session poll cannot end the new session', async (
   fetchSpy = spyOn(globalThis, 'fetch')
     .mockReturnValueOnce(stale.promise)
     .mockResolvedValueOnce(new Response(null, { status: 204 }))
-    .mockResolvedValueOnce(Response.json({ door_locked: true, call_state: 'listening' }));
+    .mockResolvedValueOnce(Response.json(makeStatus({ call_state: 'listening' })));
   const store = createIntercomStore();
   const oldPoll = store.poll();
   await store.startListen();
 
   // Act
-  stale.resolve(Response.json({ door_locked: true, call_state: 'idle' }));
+  stale.resolve(Response.json(makeStatus({ call_state: 'idle' })));
   await oldPoll;
 
   // Assert
@@ -95,7 +150,7 @@ test('idle from a superseded session cannot end a newer session', async () => {
   const stale = Promise.withResolvers<Response>();
   fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (path) =>
     path === '/api/status'
-      ? Response.json({ door_locked: true, call_state: 'listening' })
+      ? Response.json(makeStatus({ call_state: 'listening' }))
       : new Response(null, { status: 204 }),
   );
   const store = createIntercomStore();
@@ -105,7 +160,7 @@ test('idle from a superseded session cannot end a newer session', async () => {
   await store.startTalk();
 
   // Act
-  stale.resolve(Response.json({ door_locked: true, call_state: 'idle' }));
+  stale.resolve(Response.json(makeStatus({ call_state: 'idle' })));
   await oldPoll;
 
   // Assert
@@ -116,8 +171,8 @@ test('a later current-session idle observation ends the heartbeat session', asyn
   // Arrange
   fetchSpy = spyOn(globalThis, 'fetch')
     .mockResolvedValueOnce(new Response(null, { status: 204 }))
-    .mockResolvedValueOnce(Response.json({ door_locked: true, call_state: 'listening' }))
-    .mockResolvedValueOnce(Response.json({ door_locked: true, call_state: 'idle' }));
+    .mockResolvedValueOnce(Response.json(makeStatus({ call_state: 'listening' })))
+    .mockResolvedValueOnce(Response.json(makeStatus({ call_state: 'idle' })));
   const store = createIntercomStore();
   await store.startListen();
 
@@ -132,7 +187,7 @@ test('hangup ends the heartbeat session even when its request fails', async () =
   // Arrange
   fetchSpy = spyOn(globalThis, 'fetch')
     .mockResolvedValueOnce(new Response(null, { status: 204 }))
-    .mockResolvedValueOnce(Response.json({ door_locked: true, call_state: 'listening' }))
+    .mockResolvedValueOnce(Response.json(makeStatus({ call_state: 'listening' })))
     .mockResolvedValueOnce(new Response(null, { status: 503 }));
   const store = createIntercomStore();
   await store.startListen();
@@ -152,7 +207,7 @@ test.each(['startListen', 'startTalk'] as const)(
     clockSpy = spyOn(Date, 'now').mockReturnValue(1000);
     fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (path) =>
       path === '/api/status'
-        ? Response.json({ door_locked: true, call_state: 'idle' })
+        ? Response.json(makeStatus({ call_state: 'idle' }))
         : new Response(null, { status: 204 }),
     );
     const store = createIntercomStore();
@@ -176,7 +231,7 @@ test.each([
   clockSpy = spyOn(Date, 'now').mockReturnValue(1000);
   fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (path) =>
     path === '/api/status'
-      ? Response.json({ door_locked: true, call_state: 'idle' })
+      ? Response.json(makeStatus({ call_state: 'idle' }))
       : new Response(null, { status: 204 }),
   );
   const store = createIntercomStore();
@@ -195,9 +250,9 @@ test('an active observation ends startup grace before its deadline', async () =>
   clockSpy = spyOn(Date, 'now').mockReturnValue(1000);
   fetchSpy = spyOn(globalThis, 'fetch')
     .mockResolvedValueOnce(new Response(null, { status: 204 }))
-    .mockResolvedValueOnce(Response.json({ door_locked: true, call_state: 'idle' }))
-    .mockResolvedValueOnce(Response.json({ door_locked: true, call_state: 'listening' }))
-    .mockResolvedValueOnce(Response.json({ door_locked: true, call_state: 'idle' }));
+    .mockResolvedValueOnce(Response.json(makeStatus({ call_state: 'idle' })))
+    .mockResolvedValueOnce(Response.json(makeStatus({ call_state: 'listening' })))
+    .mockResolvedValueOnce(Response.json(makeStatus({ call_state: 'idle' })));
   const store = createIntercomStore();
   await store.startListen();
   await store.poll();
@@ -217,14 +272,14 @@ test('a stale active observation cannot acknowledge a newer startup', async () =
   fetchSpy = spyOn(globalThis, 'fetch')
     .mockReturnValueOnce(stale.promise)
     .mockResolvedValueOnce(new Response(null, { status: 204 }))
-    .mockResolvedValueOnce(Response.json({ door_locked: true, call_state: 'idle' }))
-    .mockResolvedValueOnce(Response.json({ door_locked: true, call_state: 'idle' }));
+    .mockResolvedValueOnce(Response.json(makeStatus({ call_state: 'idle' })))
+    .mockResolvedValueOnce(Response.json(makeStatus({ call_state: 'idle' })));
   const store = createIntercomStore();
   const oldPoll = store.poll();
   await store.startListen();
 
   // Act
-  stale.resolve(Response.json({ door_locked: true, call_state: 'listening' }));
+  stale.resolve(Response.json(makeStatus({ call_state: 'listening' })));
   await oldPoll;
   await store.poll();
 
@@ -238,16 +293,16 @@ test('an older startup idle response cannot undo a newer active observation', as
   const stale = Promise.withResolvers<Response>();
   fetchSpy = spyOn(globalThis, 'fetch')
     .mockResolvedValueOnce(new Response(null, { status: 204 }))
-    .mockResolvedValueOnce(Response.json({ door_locked: true, call_state: 'idle' }))
+    .mockResolvedValueOnce(Response.json(makeStatus({ call_state: 'idle' })))
     .mockReturnValueOnce(stale.promise)
-    .mockResolvedValueOnce(Response.json({ door_locked: true, call_state: 'listening' }));
+    .mockResolvedValueOnce(Response.json(makeStatus({ call_state: 'listening' })));
   const store = createIntercomStore();
   await store.startListen();
   const oldPoll = store.poll();
   await store.poll();
 
   // Act
-  stale.resolve(Response.json({ door_locked: true, call_state: 'idle' }));
+  stale.resolve(Response.json(makeStatus({ call_state: 'idle' })));
   await oldPoll;
 
   // Assert
@@ -282,12 +337,13 @@ test.each(audioActions)(
     fetchSpy = spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(new Response(null, { status: 204 }))
       .mockResolvedValueOnce(
-        Response.json({
-          door_locked: true,
-          rx_gain_half_db: 40,
-          tx_gain_half_db: -12,
-          tone_active: true,
-        }),
+        Response.json(
+          makeStatus({
+            rx_gain_half_db: 40,
+            tx_gain_half_db: -12,
+            tone_active: true,
+          }),
+        ),
       );
 
     // Act
@@ -296,7 +352,7 @@ test.each(audioActions)(
     // Assert
     expect(fetchSpy).toHaveBeenNthCalledWith(1, path, { method: 'POST' });
     expect(fetchSpy).toHaveBeenNthCalledWith(2, '/api/status');
-    expect(store.status()?.tone_active).toBe(true);
+    expect(store.status()?.device.state.tone_active).toBe(true);
   },
 );
 
@@ -325,7 +381,7 @@ test('rapid independent gain edits preserve the optimistic pair and serialize PO
   let backendGain = { rx_gain_half_db: 40, tx_gain_half_db: 0 };
   const posts: string[] = [];
   fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (path) => {
-    if (path === '/api/status') return Response.json({ door_locked: true, ...backendGain });
+    if (path === '/api/status') return Response.json(makeStatus(backendGain));
     posts.push(String(path));
     if (posts.length === 1) {
       firstStarted.resolve();
@@ -371,13 +427,11 @@ test('a delayed older poll cannot undo a confirmed gain pair', async () => {
   // Arrange
   const stale = Promise.withResolvers<Response>();
   fetchSpy = spyOn(globalThis, 'fetch')
-    .mockResolvedValueOnce(
-      Response.json({ door_locked: true, rx_gain_half_db: 40, tx_gain_half_db: 0 }),
-    )
+    .mockResolvedValueOnce(Response.json(makeStatus({ rx_gain_half_db: 40, tx_gain_half_db: 0 })))
     .mockReturnValueOnce(stale.promise)
     .mockResolvedValueOnce(new Response(null, { status: 204 }))
     .mockResolvedValueOnce(
-      Response.json({ door_locked: true, rx_gain_half_db: 50, tx_gain_half_db: -12 }),
+      Response.json(makeStatus({ rx_gain_half_db: 50, tx_gain_half_db: -12 })),
     );
   const store = createIntercomStore();
   const rxGain = Reflect.get(store, 'rxGainHalfDb') as () => number | undefined;
@@ -389,7 +443,7 @@ test('a delayed older poll cannot undo a confirmed gain pair', async () => {
   await store.updateAudioGain(50, -12);
 
   // Act
-  stale.resolve(Response.json({ door_locked: true, rx_gain_half_db: 40, tx_gain_half_db: 0 }));
+  stale.resolve(Response.json(makeStatus({ rx_gain_half_db: 40, tx_gain_half_db: 0 })));
   await oldPoll;
 
   // Assert
@@ -399,13 +453,11 @@ test('a delayed older poll cannot undo a confirmed gain pair', async () => {
 test('a rejected gain write rolls back its optimistic pair without poisoning later writes', async () => {
   // Arrange
   fetchSpy = spyOn(globalThis, 'fetch')
-    .mockResolvedValueOnce(
-      Response.json({ door_locked: true, rx_gain_half_db: 40, tx_gain_half_db: 0 }),
-    )
+    .mockResolvedValueOnce(Response.json(makeStatus({ rx_gain_half_db: 40, tx_gain_half_db: 0 })))
     .mockResolvedValueOnce(new Response(null, { status: 503 }))
     .mockResolvedValueOnce(new Response(null, { status: 204 }))
     .mockResolvedValueOnce(
-      Response.json({ door_locked: true, rx_gain_half_db: 60, tx_gain_half_db: -10 }),
+      Response.json(makeStatus({ rx_gain_half_db: 60, tx_gain_half_db: -10 })),
     );
   const store = createIntercomStore();
   const rxGain = Reflect.get(store, 'rxGainHalfDb') as () => number | undefined;
@@ -433,7 +485,7 @@ test('matching pre-write status cannot acknowledge a pair while earlier writes a
   let posts = 0;
   fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (path) => {
     if (path === '/api/status') {
-      return Response.json({ door_locked: true, rx_gain_half_db: backendRx, tx_gain_half_db: 0 });
+      return Response.json(makeStatus({ rx_gain_half_db: backendRx, tx_gain_half_db: 0 }));
     }
     if (++posts === 1) {
       firstStarted.resolve();
@@ -467,7 +519,7 @@ test('failure of an older queued gain write cannot roll back the newer desired p
   let posts = 0;
   fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (path) => {
     if (path === '/api/status') {
-      return Response.json({ door_locked: true, rx_gain_half_db: 40, tx_gain_half_db: 0 });
+      return Response.json(makeStatus({ rx_gain_half_db: 40, tx_gain_half_db: 0 }));
     }
     return ++posts === 1 ? firstResponse.promise : new Response(null, { status: 204 });
   });
@@ -493,7 +545,7 @@ test('failed queued TX edit preserves a successful RX write through stale status
   const posts: string[] = [];
   fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (path) => {
     if (path === '/api/status') {
-      return Response.json({ door_locked: true, rx_gain_half_db: 40, tx_gain_half_db: 0 });
+      return Response.json(makeStatus({ rx_gain_half_db: 40, tx_gain_half_db: 0 }));
     }
     posts.push(String(path));
     if (posts.length === 1) return firstResponse.promise;
@@ -527,7 +579,7 @@ test('rollback after latest failure remains until confirmed then follows fresh s
   let posts = 0;
   fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (path) => {
     if (path === '/api/status') {
-      return Response.json({ door_locked: true, rx_gain_half_db: backendRx, tx_gain_half_db: 0 });
+      return Response.json(makeStatus({ rx_gain_half_db: backendRx, tx_gain_half_db: 0 }));
     }
     return new Response(null, { status: ++posts === 1 ? 204 : 503 });
   });
@@ -552,4 +604,37 @@ test('rollback after latest failure remains until confirmed then follows fresh s
     'Audio gain update failed: HTTP 503',
   );
   expect([store.rxGainHalfDb(), store.txGainHalfDb()]).toEqual([55, 0]);
+});
+
+test('dashboard API reads system, network, firmware, ecosystems, and device.state', async () => {
+  // Arrange
+  const payload = makeStatus({
+    door_locked: false,
+    door_unlock_duration_sec: 9,
+    rx_gain_half_db: 52,
+    tx_gain_half_db: -6,
+  });
+  fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json(payload));
+  const store = createIntercomStore();
+
+  // Act
+  const fetched = await api.fetchStatus();
+  await store.poll();
+
+  // Assert
+  expect(fetched).toEqual(payload);
+  expect(store.status()?.system.status).toBe('Operational');
+  expect(store.status()?.system.memory.internal).toEqual({
+    free_bytes: 12480,
+    total_bytes: 122880,
+  });
+  expect(store.status()?.system.cpu.core_0?.load_pct).toBe(25);
+  expect(store.status()?.network.mac).toBe('98:A3:16:A6:78:44');
+  expect(store.status()?.firmware.active_slot).toBe('ota_0');
+  expect(store.status()?.ecosystems.available).toEqual(['matter']);
+  expect(store.status()?.device.type).toBe('intercom_bridge');
+  expect(store.status()?.device.state.door_locked).toBe(false);
+  expect(store.doorUnlockDurationSec()).toBe(9);
+  expect(store.rxGainHalfDb()).toBe(52);
+  expect(store.txGainHalfDb()).toBe(-6);
 });

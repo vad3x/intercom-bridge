@@ -9,7 +9,8 @@ use flate2::read::GzDecoder;
 use futures::executor::block_on;
 use intercom_adapter_http::server::DebugWebRtcSignaling;
 use intercom_adapter_http::{
-    HttpServer, HttpServerConfig, MemoryRegion, MemorySnapshot, DASHBOARD_HTML_GZ,
+    CpuCoreLoad, CpuSnapshot, HttpServer, HttpServerConfig, MemoryRegion, MemorySnapshot,
+    DASHBOARD_HTML_GZ,
 };
 use intercom_adapter_webrtc::signaling::SignalingError;
 use intercom_core::events::{SystemState, SystemStateWatch};
@@ -87,6 +88,50 @@ fn test_memory_info() -> MemorySnapshot {
             free_bytes: 1_900_000,
             total_bytes: 2_000_000,
         }),
+    }
+}
+
+fn test_cpu_info() -> CpuSnapshot {
+    CpuSnapshot::from_cores(&[
+        CpuCoreLoad {
+            id: 0,
+            load_pct: 24,
+        },
+        CpuCoreLoad {
+            id: 1,
+            load_pct: 61,
+        },
+    ])
+}
+
+struct MockEcosystemInfo;
+
+impl intercom_core::ports::ecosystem::EcosystemInfoDriver for MockEcosystemInfo {
+    fn status(&self) -> Option<intercom_core::domain::EcosystemStatus> {
+        Some(
+            intercom_core::domain::EcosystemStatus::new(
+                intercom_core::domain::EcosystemId::new("matter"),
+                true,
+            )
+            .with_property(
+                "door_lock_subscribed",
+                intercom_core::domain::EcosystemValue::Bool(true),
+            )
+            .with_fabric(
+                intercom_core::domain::FabricInfo::new(
+                    1,
+                    4996,
+                    0x1B8246E1309A4D12,
+                    0x0000000000000002,
+                    intercom_core::domain::FabricLabel::from_str("Apple Home"),
+                )
+                .with_subscription(intercom_core::domain::FabricSubscription::new(2, 0x0101)),
+            )
+            .with_endpoint(
+                intercom_core::domain::EndpointInfo::new(1, "Audio Doorbell", 0x0141)
+                    .with_cluster(intercom_core::domain::ClusterInfo::new(0x003B, "Switch")),
+            ),
+        )
     }
 }
 
@@ -376,31 +421,43 @@ fn test_get_status_returns_valid_telemetry_json() {
 
     let body_str = core::str::from_utf8(&response[header_end + 4..]).unwrap();
     let v: Value = serde_json::from_str(body_str).expect("invalid JSON");
-    assert_eq!(v["device_type"], "intercom_bridge");
-    assert_eq!(v["state"], "Operational");
-    assert_eq!(v["door_locked"], true);
-    assert_eq!(v["door_unlock_duration_sec"], 5);
-    assert_eq!(v["uptime_sec"], 1234);
-    assert_eq!(v["wifi_ssid"], "TestNet");
-    assert_eq!(v["wifi_rssi_dbm"], -55);
-    assert_eq!(v["ip"], "192.168.1.142");
-    assert_eq!(v["mac"], "AA:BB:CC:DD:EE:FF");
-    assert_eq!(v["active_slot"], "ota_0");
-    assert_eq!(v["slot_valid"], true);
-    assert_eq!(v["free_heap_bytes"], 120_000);
-    assert_eq!(v["total_heap_bytes"], 320_000);
+    let root = v.as_object().expect("root must be JSON object");
+    assert_eq!(root.len(), 5);
+    assert!(!root.contains_key("device_type"));
+    assert!(!root.contains_key("state"));
+    assert!(!root.contains_key("door_locked"));
+    assert!(!root.contains_key("free_heap_bytes"));
+
+    assert_eq!(v["system"]["status"], "Operational");
+    assert_eq!(v["system"]["uptime_sec"], 1234);
     assert_eq!(
-        v["memory"],
+        v["system"]["memory"],
         serde_json::json!({
             "internal": {"free_bytes": 120_000, "total_bytes": 320_000},
             "psram": null
         })
     );
-    assert_eq!(v["available_ecosystems"], serde_json::json!([]));
-    assert!(v["active_ecosystem"].is_null());
-    assert_eq!(v["version"], "1.2.3");
-    assert_eq!(v["git_commit"], "deadbeef");
-    assert_eq!(v["build_date"], "2026-10-15");
+    assert_eq!(v["system"]["cpu"], serde_json::json!({}));
+
+    assert_eq!(v["network"]["ssid"], "TestNet");
+    assert_eq!(v["network"]["rssi_dbm"], -55);
+    assert_eq!(v["network"]["ip"], "192.168.1.142");
+    assert_eq!(v["network"]["mac"], "AA:BB:CC:DD:EE:FF");
+
+    assert_eq!(v["firmware"]["version"], "1.2.3");
+    assert_eq!(v["firmware"]["git_commit"], "deadbeef");
+    assert_eq!(v["firmware"]["build_date"], "2026-10-15");
+    assert_eq!(v["firmware"]["active_slot"], "ota_0");
+    assert_eq!(v["firmware"]["slot_valid"], true);
+
+    assert_eq!(v["ecosystems"]["available"], serde_json::json!([]));
+    assert!(v["ecosystems"]["active"].is_null());
+
+    assert_eq!(v["device"]["type"], "intercom_bridge");
+    assert_eq!(v["device"]["state"]["door_locked"], true);
+    assert_eq!(v["device"]["state"]["door_unlock_duration_sec"], 5);
+    assert_eq!(v["device"]["state"]["bus_state"], "idle");
+    assert_eq!(v["device"]["state"]["call_state"], "idle");
 }
 
 #[test]
@@ -428,12 +485,132 @@ fn test_status_memory_schema() {
     let body = response.split_once("\r\n\r\n").unwrap().1;
     let status: Value = serde_json::from_str(body).expect("status should be JSON");
     assert_eq!(
-        status["memory"],
+        status["system"]["memory"],
         serde_json::json!({
             "internal": {"free_bytes": 96_000, "total_bytes": 160_000},
             "psram": {"free_bytes": 1_900_000, "total_bytes": 2_000_000}
         })
     );
+}
+
+#[test]
+fn get_status_matches_golden_five_bucket_intercom_json_snapshot() {
+    const AVAILABLE: &[intercom_core::domain::EcosystemId] =
+        &[intercom_core::domain::EcosystemId::new("matter")];
+
+    // Arrange
+    let cmd_channel = CommandChannel::new();
+    let access_handle = AccessControllerHandle::new(cmd_channel.sender());
+    let hardware = MockHardwareInfo;
+    let ecosystem = MockEcosystemInfo;
+    let state_watch = SystemStateWatch::new();
+    state_watch.sender().send(SystemState::Operational);
+    let diagnostics =
+        DiagnosticsService::with_ecosystem(&hardware, &ecosystem, AVAILABLE, &state_watch);
+    let mut ota_driver = MockOtaFlashDriver::new(false);
+    let mut server = HttpServer::new_unbound(
+        access_handle,
+        &BusSafetyDriverMock,
+        &diagnostics,
+        &mut ota_driver,
+        test_log_provider,
+        HttpServerConfig::default(),
+    )
+    .with_memory_info_provider(test_memory_info)
+    .with_cpu_info_provider(test_cpu_info);
+    let mut stream = MockStream::new(b"GET /api/status HTTP/1.1\r\nHost: 192.168.1.142\r\n\r\n");
+
+    // Act
+    let result = block_on(server.handle_request(&mut stream));
+
+    // Assert
+    assert!(result.is_ok());
+    let response = stream.written_bytes();
+    let header_end = response
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .expect("missing header separator");
+    let header_str = core::str::from_utf8(&response[..header_end]).unwrap();
+    assert!(header_str.starts_with("HTTP/1.1 200"));
+    assert!(header_str.contains("Content-Type: application/json"));
+
+    let actual: Value =
+        serde_json::from_slice(&response[header_end + 4..]).expect("valid JSON body");
+    let expected = serde_json::json!({
+        "system": {
+            "status": "Operational",
+            "uptime_sec": 1234,
+            "memory": {
+                "internal": { "free_bytes": 96_000, "total_bytes": 160_000 },
+                "psram": { "free_bytes": 1_900_000, "total_bytes": 2_000_000 }
+            },
+            "cpu": {
+                "core_0": { "load_pct": 24 },
+                "core_1": { "load_pct": 61 }
+            }
+        },
+        "network": {
+            "ssid": "TestNet",
+            "rssi_dbm": -55,
+            "ip": "192.168.1.142",
+            "mac": "AA:BB:CC:DD:EE:FF"
+        },
+        "firmware": {
+            "version": "1.2.3",
+            "git_commit": "deadbeef",
+            "build_date": "2026-10-15",
+            "active_slot": "ota_0",
+            "slot_valid": true
+        },
+        "ecosystems": {
+            "available": ["matter"],
+            "active": {
+                "type": "matter",
+                "paired": true,
+                "properties": {
+                    "door_lock_subscribed": true
+                },
+                "fabrics": [
+                    {
+                        "fab_idx": 1,
+                        "vendor_id": 4996,
+                        "fabric_id": "0x1B8246E1309A4D12",
+                        "node_id": "0x0000000000000002",
+                        "label": "Apple Home",
+                        "subscriptions": [
+                            { "endpoint": 2, "cluster": "0x0101" }
+                        ]
+                    }
+                ],
+                "endpoints": [
+                    {
+                        "id": 1,
+                        "name": "Audio Doorbell",
+                        "device_type": "0x0141",
+                        "clusters": [
+                            { "id": "0x003B", "name": "Switch" }
+                        ]
+                    }
+                ]
+            }
+        },
+        "device": {
+            "type": "intercom_bridge",
+            "state": {
+                "door_locked": true,
+                "door_unlock_duration_sec": 5,
+                "bus_state": "idle",
+                "call_state": "idle",
+                "rx_rms_dbfs": -96,
+                "rx_peak_dbfs": -96,
+                "rx_gain_half_db": 40,
+                "tx_gain_half_db": 0,
+                "tone_active": false
+            }
+        }
+    });
+
+    assert_eq!(actual, expected);
 }
 
 #[test]

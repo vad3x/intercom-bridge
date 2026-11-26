@@ -181,15 +181,29 @@ def probe_intercom_status(ip: str, port: int = 8080, timeout: float = 1.5) -> Op
         if res.status == 200:
             data = json.loads(res.read().decode())
             if isinstance(data, dict):
-                dev_type = data.get("device_type")
-                if dev_type == "intercom_bridge":
-                    return data
-                if dev_type is None and "door_locked" in data and "active_slot" in data and "mac" in data:
+                device = data.get("device")
+                if isinstance(device, dict) and device.get("type") == "intercom_bridge":
                     return data
         conn.close()
     except Exception:
         pass
     return None
+
+
+def extract_status_metadata(status: Optional[Dict]) -> Tuple[str, str, str]:
+    """Extract (mac, sw_ver, active_slot) from a five-bucket /api/status payload."""
+    if not isinstance(status, dict):
+        return ("unknown", "unknown", "unknown")
+    network = status.get("network")
+    firmware = status.get("firmware")
+    mac = network.get("mac") if isinstance(network, dict) else None
+    sw_ver = firmware.get("version") if isinstance(firmware, dict) else None
+    slot = firmware.get("active_slot") if isinstance(firmware, dict) else None
+    return (
+        mac or "unknown",
+        sw_ver or "unknown",
+        slot or "unknown",
+    )
 
 
 def discover_devices(timeout: float = 3.5, port: int = 8080) -> List[DiscoveredDevice]:
@@ -230,9 +244,7 @@ def discover_devices(timeout: float = 3.5, port: int = 8080) -> List[DiscoveredD
         # Probe HTTP /api/status on port 8080 to verify device identity and read live telemetry
         status = probe_intercom_status(ip, port=port, timeout=1.5)
         if status:
-            mac = status.get("mac") or "unknown"
-            sw_ver = status.get("version") or "unknown"
-            slot = status.get("active_slot") or "unknown"
+            mac, sw_ver, slot = extract_status_metadata(status)
             return DiscoveredDevice(
                 name="Intercom Bridge",
                 hostname=hostname,
@@ -658,6 +670,56 @@ class OtaImageProfileTests(unittest.TestCase):
         )
 
 
+class OtaStatusTests(unittest.TestCase):
+    @staticmethod
+    def _mock_status_conn(payload: Dict) -> mock.MagicMock:
+        response = mock.MagicMock()
+        response.status = 200
+        response.read.return_value = json.dumps(payload).encode("utf-8")
+        conn = mock.MagicMock()
+        conn.getresponse.return_value = response
+        return conn
+
+    def test_probe_intercom_status_accepts_five_bucket_payload(self) -> None:
+        payload = {
+            "system": {"status": "Operational", "uptime_sec": 120},
+            "network": {"mac": "98:A3:16:A6:78:44"},
+            "firmware": {"version": "2.1.0", "active_slot": "ota_0"},
+            "ecosystems": {"available": ["matter"], "active": None},
+            "device": {"type": "intercom_bridge", "state": {"door_locked": True}},
+        }
+        with mock.patch("http.client.HTTPConnection", return_value=self._mock_status_conn(payload)):
+            result = probe_intercom_status("192.168.1.142")
+        self.assertEqual(result, payload)
+
+    def test_probe_intercom_status_rejects_legacy_flat_and_other_device_types(self) -> None:
+        legacy_payload = {
+            "device_type": "intercom_bridge",
+            "door_locked": True,
+            "active_slot": "ota_0",
+            "mac": "98:A3:16:A6:78:44",
+        }
+        other_device = {
+            "system": {"status": "Operational"},
+            "device": {"type": "hvac_bridge", "state": {}},
+        }
+        for payload in (legacy_payload, other_device):
+            with mock.patch("http.client.HTTPConnection", return_value=self._mock_status_conn(payload)):
+                self.assertIsNone(probe_intercom_status("192.168.1.142"))
+
+    def test_extract_status_metadata_reads_nested_network_and_firmware_buckets(self) -> None:
+        payload = {
+            "network": {"mac": "98:A3:16:A6:78:44"},
+            "firmware": {"version": "2.1.0", "active_slot": "ota_1"},
+            "device": {"type": "intercom_bridge"},
+        }
+        self.assertEqual(
+            extract_status_metadata(payload),
+            ("98:A3:16:A6:78:44", "2.1.0", "ota_1"),
+        )
+        self.assertEqual(extract_status_metadata({}), ("unknown", "unknown", "unknown"))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Smart Intercom Over-The-Air (OTA) Firmware Updater",
@@ -783,15 +845,16 @@ def main() -> None:
                 try:
                     resolved_ip = socket.gethostbyname(hostname)
                     status = probe_intercom_status(resolved_ip, port=args.port, timeout=1.0)
+                    mac, sw_ver, slot = extract_status_metadata(status)
                     targets = [
                         DiscoveredDevice(
                             name="Intercom Bridge" if status else f"Hostname Target ({hostname})",
                             hostname=hostname,
                             ip=resolved_ip,
                             port=args.port,
-                            sw_ver=status.get("version") if status else "unknown",
-                            slot=status.get("active_slot") if status else "unknown",
-                            mac=status.get("mac") if status else "unknown",
+                            sw_ver=sw_ver,
+                            slot=slot,
+                            mac=mac,
                         )
                     ]
                 except socket.gaierror:
@@ -824,8 +887,9 @@ def main() -> None:
             print(f"\n--- Updating Device {idx}/{total_targets} ---")
         if normalize_mac(target.mac) == "unknown":
             status = probe_intercom_status(target.ip, port=target.port, timeout=1.5)
-            if status and status.get("mac"):
-                target.mac = status["mac"]
+            mac, _, _ = extract_status_metadata(status)
+            if mac != "unknown":
+                target.mac = mac
         if push_ota_to_device(target, header, binary_path, binary_len, http_timeout=args.http_timeout):
             success_count += 1
             if not args.no_tag:

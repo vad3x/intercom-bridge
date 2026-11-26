@@ -2,9 +2,10 @@
 //!
 //! Follows the Arrange -> Act -> Assert pattern strictly.
 
+use intercom_adapter_http::config::JSON_BUFFER_SIZE;
 use intercom_adapter_http::router::{
-    format_status_json, parse_route, Route, HTTP_200_JSON_OK, HTTP_400_BAD_REQUEST,
-    HTTP_404_NOT_FOUND,
+    format_status_json, parse_route, CpuCoreLoad, CpuSnapshot, DiagnosticError, MemoryRegion,
+    MemorySnapshot, Route, HTTP_200_JSON_OK, HTTP_400_BAD_REQUEST, HTTP_404_NOT_FOUND,
 };
 use intercom_core::domain::diagnostics::{IntercomState, SystemDiagnostics};
 use intercom_core::events::SystemState;
@@ -77,14 +78,29 @@ fn parse_route_action_door_duration() {
     );
 }
 
+fn default_memory() -> MemorySnapshot {
+    MemorySnapshot {
+        internal: MemoryRegion {
+            free_bytes: 151552,
+            total_bytes: 215040,
+        },
+        psram: None,
+    }
+}
+
+fn empty_cpu() -> CpuSnapshot {
+    CpuSnapshot::from_cores(&[])
+}
+
 #[test]
 fn format_status_json_includes_door_unlock_duration() {
     let mut diag = test_diagnostics();
     diag.domain.door_unlock_duration_sec = 8;
-    let mut buf = [0u8; 1024];
-    let len = format_status_json(&diag, &mut buf).unwrap();
-    let json = core::str::from_utf8(&buf[..len]).unwrap();
-    assert!(json.contains("\"door_unlock_duration_sec\":8"));
+    let mut buf = [0u8; JSON_BUFFER_SIZE];
+    let len = format_status_json(&diag, default_memory(), empty_cpu(), &mut buf).unwrap();
+    let val: Value = serde_json::from_slice(&buf[..len]).unwrap();
+    assert_eq!(val["device"]["type"], "intercom_bridge");
+    assert_eq!(val["device"]["state"]["door_unlock_duration_sec"], 8);
 }
 
 #[test]
@@ -245,52 +261,99 @@ fn test_format_status_json_success() {
         git_commit: "a3f89b",
         build_date: "2026-10-15",
     };
-    let mut buf = [0u8; intercom_adapter_http::config::JSON_BUFFER_SIZE];
+    let mut buf = [0u8; JSON_BUFFER_SIZE];
+    let memory = default_memory();
+    let cpu = CpuSnapshot::from_cores(&[CpuCoreLoad {
+        id: 0,
+        load_pct: 48,
+    }]);
 
     // Act
-    let written = format_status_json(&diag, &mut buf).expect("serialization should succeed");
+    let written =
+        format_status_json(&diag, memory, cpu, &mut buf).expect("serialization should succeed");
     let json_str = core::str::from_utf8(&buf[..written]).expect("valid utf-8");
     let val: Value = serde_json::from_str(json_str).expect("valid json format");
 
     // Assert
-    assert_eq!(val["device_type"], "intercom_bridge");
-    assert_eq!(val["state"], "Operational");
-    assert_eq!(val["door_locked"], true);
-    assert_eq!(val["door_unlock_duration_sec"], 5);
-    assert_eq!(val["uptime_sec"], 14250);
-    assert_eq!(val["wifi_ssid"], "MyHomeNetwork");
-    assert_eq!(val["wifi_rssi_dbm"], -58);
-    assert_eq!(val["ip"], "192.168.1.142");
-    assert_eq!(val["mac"], "68:B6:B3:21:40:8C");
-    assert_eq!(val["active_slot"], "ota_0");
-    assert_eq!(val["slot_valid"], true);
-    assert_eq!(val["free_heap_bytes"], 151552);
-    assert_eq!(val["total_heap_bytes"], 215040);
+    let root = val.as_object().expect("root must be a JSON object");
+    assert_eq!(root.len(), 5);
+    for legacy in [
+        "device_type",
+        "state",
+        "door_locked",
+        "door_unlock_duration_sec",
+        "uptime_sec",
+        "wifi_ssid",
+        "wifi_rssi_dbm",
+        "ip",
+        "mac",
+        "active_slot",
+        "slot_valid",
+        "free_heap_bytes",
+        "total_heap_bytes",
+        "available_ecosystems",
+        "active_ecosystem",
+        "version",
+        "git_commit",
+        "build_date",
+        "memory",
+        "cpu",
+    ] {
+        assert!(
+            !root.contains_key(legacy),
+            "unexpected legacy root key: {legacy}"
+        );
+    }
+
+    assert_eq!(val["system"]["status"], "Operational");
+    assert_eq!(val["system"]["uptime_sec"], 14250);
+    assert_eq!(val["system"]["memory"]["internal"]["free_bytes"], 151552);
+    assert_eq!(val["system"]["memory"]["internal"]["total_bytes"], 215040);
+    assert!(val["system"]["memory"]["psram"].is_null());
     assert_eq!(
-        val["available_ecosystems"],
+        val["system"]["cpu"],
+        serde_json::json!({ "core_0": { "load_pct": 48 } })
+    );
+
+    assert_eq!(val["network"]["ssid"], "MyHomeNetwork");
+    assert_eq!(val["network"]["rssi_dbm"], -58);
+    assert_eq!(val["network"]["ip"], "192.168.1.142");
+    assert_eq!(val["network"]["mac"], "68:B6:B3:21:40:8C");
+
+    assert_eq!(val["firmware"]["version"], "0.1.0");
+    assert_eq!(val["firmware"]["git_commit"], "a3f89b");
+    assert_eq!(val["firmware"]["build_date"], "2026-10-15");
+    assert_eq!(val["firmware"]["active_slot"], "ota_0");
+    assert_eq!(val["firmware"]["slot_valid"], true);
+
+    assert_eq!(
+        val["ecosystems"]["available"],
         serde_json::json!(["Matter", "HomeAssistant"])
     );
-    assert_eq!(val["active_ecosystem"]["type"], "Matter");
-    assert_eq!(val["active_ecosystem"]["paired"], true);
+    assert_eq!(val["ecosystems"]["active"]["type"], "Matter");
+    assert_eq!(val["ecosystems"]["active"]["paired"], true);
     assert_eq!(
-        val["active_ecosystem"]["properties"]["door_lock_subscribed"],
+        val["ecosystems"]["active"]["properties"]["door_lock_subscribed"],
         true
     );
     assert_eq!(
-        val["active_ecosystem"]["properties"]["door_lock_endpoint"],
+        val["ecosystems"]["active"]["properties"]["door_lock_endpoint"],
         1
     );
     assert_eq!(
-        val["active_ecosystem"]["properties"]["ring_sensor_subscribed"],
+        val["ecosystems"]["active"]["properties"]["ring_sensor_subscribed"],
         false
     );
     assert_eq!(
-        val["active_ecosystem"]["properties"]["ring_sensor_endpoint"],
+        val["ecosystems"]["active"]["properties"]["ring_sensor_endpoint"],
         2
     );
-    assert_eq!(val["active_ecosystem"]["fabrics"], serde_json::json!([]));
     assert_eq!(
-        val["active_ecosystem"]["endpoints"],
+        val["ecosystems"]["active"]["fabrics"],
+        serde_json::json!([])
+    );
+    assert_eq!(
+        val["ecosystems"]["active"]["endpoints"],
         serde_json::json!([
             {
                 "id": 1,
@@ -310,9 +373,13 @@ fn test_format_status_json_success() {
             }
         ])
     );
-    assert_eq!(val["version"], "0.1.0");
-    assert_eq!(val["git_commit"], "a3f89b");
-    assert_eq!(val["build_date"], "2026-10-15");
+
+    assert_eq!(val["device"]["type"], "intercom_bridge");
+    assert_eq!(val["device"]["state"]["door_locked"], true);
+    assert_eq!(val["device"]["state"]["door_unlock_duration_sec"], 5);
+    assert_eq!(val["device"]["state"]["bus_state"], "idle");
+    assert_eq!(val["device"]["state"]["call_state"], "idle");
+    assert_eq!(val["device"]["state"]["tone_active"], false);
 }
 
 #[test]
@@ -369,16 +436,17 @@ fn test_format_status_json_with_multiple_fabrics() {
         git_commit: "abcdef",
         build_date: "2026-10-17",
     };
-    let mut buf = [0u8; intercom_adapter_http::config::JSON_BUFFER_SIZE];
+    let mut buf = [0u8; JSON_BUFFER_SIZE];
 
     // Act
-    let written = format_status_json(&diag, &mut buf).expect("serialization should succeed");
+    let written = format_status_json(&diag, default_memory(), empty_cpu(), &mut buf)
+        .expect("serialization should succeed");
     let json_str = core::str::from_utf8(&buf[..written]).expect("valid utf-8");
     let val: Value = serde_json::from_str(json_str).expect("valid json format");
 
     // Assert
-    assert_eq!(val["device_type"], "intercom_bridge");
-    let fabrics = &val["active_ecosystem"]["fabrics"];
+    assert_eq!(val["device"]["type"], "intercom_bridge");
+    let fabrics = &val["ecosystems"]["active"]["fabrics"];
     assert_eq!(fabrics.as_array().unwrap().len(), 2);
 
     assert_eq!(fabrics[0]["fab_idx"], 1);
@@ -427,66 +495,54 @@ fn test_format_status_json_with_none_options() {
         git_commit: "deadbeef",
         build_date: "2026-10-16",
     };
-    let mut buf = [0u8; intercom_adapter_http::config::JSON_BUFFER_SIZE];
+    let mut buf = [0u8; JSON_BUFFER_SIZE];
+    let memory = MemorySnapshot {
+        internal: MemoryRegion {
+            free_bytes: 100000,
+            total_bytes: 200000,
+        },
+        psram: None,
+    };
 
     // Act
-    let written = format_status_json(&diag, &mut buf).expect("serialization should succeed");
+    let written = format_status_json(&diag, memory, empty_cpu(), &mut buf)
+        .expect("serialization should succeed");
     let json_str = core::str::from_utf8(&buf[..written]).expect("valid utf-8");
     let val: Value = serde_json::from_str(json_str).expect("valid json format");
 
     // Assert
-    assert_eq!(val["device_type"], "intercom_bridge");
-    assert_eq!(val["state"], "WifiConnecting");
-    assert_eq!(val["door_locked"], false);
-    assert_eq!(val["uptime_sec"], 42);
-    assert!(val["wifi_ssid"].is_null());
-    assert!(val["wifi_rssi_dbm"].is_null());
-    assert!(val["ip"].is_null());
-    assert_eq!(val["mac"], "AA:BB:CC:DD:EE:FF");
-    assert_eq!(val["active_slot"], "ota_1");
-    assert_eq!(val["slot_valid"], false);
-    assert_eq!(val["free_heap_bytes"], 100000);
-    assert_eq!(val["total_heap_bytes"], 200000);
-    assert_eq!(val["available_ecosystems"], serde_json::json!([]));
-    assert!(val["active_ecosystem"].is_null());
-    assert_eq!(val["version"], "0.2.0");
-    assert_eq!(val["git_commit"], "deadbeef");
-    assert_eq!(val["build_date"], "2026-10-16");
+    assert_eq!(val["device"]["type"], "intercom_bridge");
+    assert_eq!(val["system"]["status"], "WifiConnecting");
+    assert_eq!(val["device"]["state"]["door_locked"], false);
+    assert_eq!(val["system"]["uptime_sec"], 42);
+    assert!(val["network"]["ssid"].is_null());
+    assert!(val["network"]["rssi_dbm"].is_null());
+    assert!(val["network"]["ip"].is_null());
+    assert_eq!(val["network"]["mac"], "AA:BB:CC:DD:EE:FF");
+    assert_eq!(val["firmware"]["active_slot"], "ota_1");
+    assert_eq!(val["firmware"]["slot_valid"], false);
+    assert_eq!(val["system"]["memory"]["internal"]["free_bytes"], 100000);
+    assert_eq!(val["system"]["memory"]["internal"]["total_bytes"], 200000);
+    assert!(val["system"]["memory"]["psram"].is_null());
+    assert_eq!(val["system"]["cpu"], serde_json::json!({}));
+    assert_eq!(val["ecosystems"]["available"], serde_json::json!([]));
+    assert!(val["ecosystems"]["active"].is_null());
+    assert_eq!(val["firmware"]["version"], "0.2.0");
+    assert_eq!(val["firmware"]["git_commit"], "deadbeef");
+    assert_eq!(val["firmware"]["build_date"], "2026-10-16");
 }
 
 #[test]
 fn test_format_status_json_buffer_overflow_protection() {
     // Arrange
-    let diag = SystemDiagnostics::<IntercomState, intercom_core::domain::EcosystemId> {
-        device_type: "intercom_bridge",
-        state: SystemState::Operational,
-        domain: IntercomState {
-            door_locked: true,
-            door_unlock_duration_sec: 5,
-            ..IntercomState::default()
-        },
-        uptime_sec: 14250,
-        wifi_ssid: intercom_core::domain::diagnostics::WifiSsid::new("MyHomeNetwork"),
-        wifi_rssi_dbm: Some(-58),
-        ip: Some([192, 168, 1, 142]),
-        mac: [0x68, 0xB6, 0xB3, 0x21, 0x40, 0x8C],
-        active_slot: "ota_0",
-        slot_valid: true,
-        free_heap_bytes: 151552,
-        total_heap_bytes: 215040,
-        available_ecosystems: &[],
-        active_ecosystem: None,
-        version: "0.1.0",
-        git_commit: "a3f89b",
-        build_date: "2026-10-15",
-    };
-    let mut small_buf = [0u8; 32];
+    let diag = test_diagnostics();
+    let mut small_buf = [0u8; 64];
 
     // Act
-    let result = format_status_json(&diag, &mut small_buf);
+    let result = format_status_json(&diag, default_memory(), empty_cpu(), &mut small_buf);
 
     // Assert
-    assert_eq!(result, Err(()));
+    assert_eq!(result, Err(DiagnosticError::BufferTooSmall));
 }
 
 #[test]
@@ -555,15 +611,16 @@ fn status_json_includes_all_bus_and_call_states() {
         let mut diag = test_diagnostics();
         diag.domain.bus_state = bus;
         diag.domain.call_state = call;
-        let mut buf = [0u8; 2048];
+        let mut buf = [0u8; JSON_BUFFER_SIZE];
 
         // Act
-        let len = format_status_json(&diag, &mut buf).expect("json fits buffer");
+        let len = format_status_json(&diag, default_memory(), empty_cpu(), &mut buf)
+            .expect("json fits buffer");
         let json: Value = serde_json::from_slice(&buf[..len]).unwrap();
 
         // Assert
-        assert_eq!(json["bus_state"], bus_name);
-        assert_eq!(json["call_state"], call_name);
+        assert_eq!(json["device"]["state"]["bus_state"], bus_name);
+        assert_eq!(json["device"]["state"]["call_state"], call_name);
     }
 }
 
@@ -576,30 +633,25 @@ fn status_reports_live_audio_levels_and_calibration() {
     diag.domain.rx_gain_half_db = 95;
     diag.domain.tx_gain_half_db = -127;
     diag.domain.tone_active = true;
-    let mut out = [0; 1536];
+    let mut out = [0; JSON_BUFFER_SIZE];
     // Act
-    let len = format_status_json(&diag, &mut out).unwrap();
+    let len = format_status_json(&diag, default_memory(), empty_cpu(), &mut out).unwrap();
     let json: Value = serde_json::from_slice(&out[..len]).unwrap();
     // Assert
-    assert_eq!(json["rx_rms_dbfs"], -68);
-    assert_eq!(json["rx_peak_dbfs"], -62);
-    assert_eq!(json["rx_gain_half_db"], 95);
-    assert_eq!(json["tx_gain_half_db"], -127);
-    assert_eq!(json["tone_active"], true);
+    assert_eq!(json["device"]["state"]["rx_rms_dbfs"], -68);
+    assert_eq!(json["device"]["state"]["rx_peak_dbfs"], -62);
+    assert_eq!(json["device"]["state"]["rx_gain_half_db"], 95);
+    assert_eq!(json["device"]["state"]["tx_gain_half_db"], -127);
+    assert_eq!(json["device"]["state"]["tone_active"], true);
 }
 
 #[test]
 fn status_json_includes_memory_and_cpu_telemetry() {
-    use intercom_adapter_http::{
-        config::JSON_BUFFER_SIZE, format_status_json_with_telemetry, CpuCoreLoad, CpuSnapshot,
-        MemoryRegion, MemorySnapshot,
-    };
-
     let diag = test_diagnostics();
     let mut out = [0u8; JSON_BUFFER_SIZE];
 
-    // 1. Single-core without PSRAM
-    let len = format_status_json_with_telemetry(
+    // 1. Empty CPU without PSRAM
+    let len = format_status_json(
         &diag,
         MemorySnapshot {
             internal: MemoryRegion {
@@ -608,24 +660,44 @@ fn status_json_includes_memory_and_cpu_telemetry() {
             },
             psram: None,
         },
-        Some(CpuSnapshot::from_cores(&[CpuCoreLoad {
+        empty_cpu(),
+        &mut out,
+    )
+    .expect("empty-cpu telemetry fits JSON_BUFFER_SIZE");
+    let json: Value = serde_json::from_slice(&out[..len]).unwrap();
+    assert_eq!(json["system"]["memory"]["internal"]["free_bytes"], 54160);
+    assert_eq!(json["system"]["memory"]["internal"]["total_bytes"], 122880);
+    assert!(json["system"]["memory"]["psram"].is_null());
+    assert_eq!(json["system"]["cpu"], serde_json::json!({}));
+
+    // 2. Single-core without PSRAM
+    let len = format_status_json(
+        &diag,
+        MemorySnapshot {
+            internal: MemoryRegion {
+                free_bytes: 54160,
+                total_bytes: 122880,
+            },
+            psram: None,
+        },
+        CpuSnapshot::from_cores(&[CpuCoreLoad {
             id: 0,
             load_pct: 37,
-        }])),
+        }]),
         &mut out,
     )
     .expect("single-core telemetry fits JSON_BUFFER_SIZE");
     let json: Value = serde_json::from_slice(&out[..len]).unwrap();
-    assert_eq!(json["memory"]["internal"]["free_bytes"], 54160);
-    assert_eq!(json["memory"]["internal"]["total_bytes"], 122880);
-    assert!(json["memory"]["psram"].is_null());
+    assert_eq!(json["system"]["memory"]["internal"]["free_bytes"], 54160);
+    assert_eq!(json["system"]["memory"]["internal"]["total_bytes"], 122880);
+    assert!(json["system"]["memory"]["psram"].is_null());
     assert_eq!(
-        json["cpu"],
+        json["system"]["cpu"],
         serde_json::json!({ "core_0": { "load_pct": 37 } })
     );
 
-    // 2. Dual-core with PSRAM
-    let len = format_status_json_with_telemetry(
+    // 3. Dual-core with PSRAM
+    let len = format_status_json(
         &diag,
         MemorySnapshot {
             internal: MemoryRegion {
@@ -637,7 +709,7 @@ fn status_json_includes_memory_and_cpu_telemetry() {
                 total_bytes: 8388608,
             }),
         },
-        Some(CpuSnapshot::from_cores(&[
+        CpuSnapshot::from_cores(&[
             CpuCoreLoad {
                 id: 0,
                 load_pct: 24,
@@ -646,18 +718,124 @@ fn status_json_includes_memory_and_cpu_telemetry() {
                 id: 1,
                 load_pct: 61,
             },
-        ])),
+        ]),
         &mut out,
     )
     .expect("dual-core PSRAM telemetry fits JSON_BUFFER_SIZE");
     let json: Value = serde_json::from_slice(&out[..len]).unwrap();
-    assert_eq!(json["memory"]["psram"]["free_bytes"], 8197040);
-    assert_eq!(json["memory"]["psram"]["total_bytes"], 8388608);
+    assert_eq!(json["system"]["memory"]["psram"]["free_bytes"], 8197040);
+    assert_eq!(json["system"]["memory"]["psram"]["total_bytes"], 8388608);
     assert_eq!(
-        json["cpu"],
+        json["system"]["cpu"],
         serde_json::json!({
             "core_0": { "load_pct": 24 },
             "core_1": { "load_pct": 61 }
         })
     );
+}
+
+#[test]
+fn maximum_capacity_payload_fits_json_buffer_size() {
+    use intercom_core::domain::{
+        ClusterInfo, EcosystemId, EcosystemStatus, EcosystemValue, EndpointInfo, FabricInfo,
+        FabricLabel, FabricSubscription,
+    };
+
+    const AVAILABLE: &[EcosystemId] = &[
+        EcosystemId::new("Matter"),
+        EcosystemId::new("HomeAssistant"),
+    ];
+    let mut active = EcosystemStatus::new(EcosystemId::new("Matter"), true);
+    for key in ["prop_1", "prop_2", "prop_3", "prop_4", "prop_5", "prop_6"] {
+        active = active.with_property(key, EcosystemValue::Text("long_value_string"));
+    }
+    for fab_idx in 1..=5u8 {
+        let mut fabric = FabricInfo::new(
+            fab_idx,
+            0x1388 + u16::from(fab_idx),
+            0x1B8246E1309A4D10 + u64::from(fab_idx),
+            0x0000000000000100 + u64::from(fab_idx),
+            FabricLabel::from_str("MaxLengthThirtyTwoByteFabricLabl"),
+        );
+        for ep in 1..=4u16 {
+            fabric = fabric.with_subscription(FabricSubscription::new(ep, 0x0551));
+        }
+        active = active.with_fabric(fabric);
+    }
+    for ep_id in 1..=4u16 {
+        let mut ep = EndpointInfo::new(ep_id, "Max Endpoint Descriptor", 0x0141);
+        for cl_idx in 0..6u32 {
+            ep = ep.with_cluster(ClusterInfo::new(
+                0x0500 + cl_idx,
+                "Camera AV Stream Management",
+            ));
+        }
+        active = active.with_endpoint(ep);
+    }
+
+    let mut diag = test_diagnostics();
+    diag.available_ecosystems = AVAILABLE;
+    diag.active_ecosystem = Some(active);
+    diag.domain = IntercomState {
+        door_locked: false,
+        door_unlock_duration_sec: 30,
+        bus_state: intercom_core::domain::intercom::BusLineState::DoorUnlock,
+        call_state: intercom_core::domain::intercom::CallState::Listening,
+        rx_rms_dbfs: -128,
+        rx_peak_dbfs: -128,
+        rx_gain_half_db: 255,
+        tx_gain_half_db: -128,
+        tone_active: true,
+    };
+
+    let memory = MemorySnapshot {
+        internal: MemoryRegion {
+            free_bytes: 123_456,
+            total_bytes: 320_000,
+        },
+        psram: Some(MemoryRegion {
+            free_bytes: 8_197_040,
+            total_bytes: 8_388_608,
+        }),
+    };
+    let cpu = CpuSnapshot::from_cores(&[
+        CpuCoreLoad {
+            id: 0,
+            load_pct: 100,
+        },
+        CpuCoreLoad {
+            id: 1,
+            load_pct: 100,
+        },
+        CpuCoreLoad {
+            id: 2,
+            load_pct: 100,
+        },
+        CpuCoreLoad {
+            id: 3,
+            load_pct: 100,
+        },
+    ]);
+
+    let mut out = [0u8; JSON_BUFFER_SIZE];
+    let len = format_status_json(&diag, memory, cpu, &mut out)
+        .expect("maximal 5-fabric/4-endpoint/4-cpu payload must fit JSON_BUFFER_SIZE");
+    assert!(len <= JSON_BUFFER_SIZE);
+
+    let val: Value = serde_json::from_slice(&out[..len]).expect("valid JSON");
+    assert_eq!(
+        val["ecosystems"]["active"]["fabrics"]
+            .as_array()
+            .unwrap()
+            .len(),
+        5
+    );
+    assert_eq!(
+        val["ecosystems"]["active"]["endpoints"]
+            .as_array()
+            .unwrap()
+            .len(),
+        4
+    );
+    assert_eq!(val["system"]["cpu"].as_object().unwrap().len(), 4);
 }

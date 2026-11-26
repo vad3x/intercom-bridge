@@ -17,14 +17,14 @@ export type CallState = 'idle' | 'listening' | 'talking' | 'settling' | 'unlocki
 
 export interface IntercomStatus {
   door_locked: boolean;
-  door_unlock_duration_sec?: number;
-  bus_state?: BusLineState;
-  call_state?: CallState;
-  rx_rms_dbfs?: number;
-  rx_peak_dbfs?: number;
-  rx_gain_half_db?: number;
-  tx_gain_half_db?: number;
-  tone_active?: boolean;
+  door_unlock_duration_sec: number;
+  bus_state: BusLineState;
+  call_state: CallState;
+  rx_rms_dbfs: number;
+  rx_peak_dbfs: number;
+  rx_gain_half_db: number;
+  tx_gain_half_db: number;
+  tone_active: boolean;
 }
 
-export interface SystemDiagnostics extends SystemDiagnosticsBase, IntercomStatus {}
+export type SystemDiagnostics = SystemDiagnosticsBase<IntercomStatus>;

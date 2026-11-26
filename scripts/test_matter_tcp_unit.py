@@ -1,8 +1,9 @@
 import importlib.util
+import json
 import sys
 import types
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from pathlib import Path
 
 # Discovery is mocked; zeroconf is not required to run these unit tests.
@@ -40,6 +41,42 @@ class SmokeTest(unittest.TestCase):
                 smoke.verify_accepted("192.0.2.20", 1234, old, 1)
         with patch.object(smoke, "read_device_logs", return_value=old | {"new Matter TCP accepted peer 192.0.2.10:1234"}):
             smoke.verify_accepted("192.0.2.20", 1234, old, 1)
+
+    @staticmethod
+    def _mock_http(payload: dict) -> MagicMock:
+        response = MagicMock()
+        response.status = 200
+        response.read.return_value = json.dumps(payload).encode("utf-8")
+        conn = MagicMock()
+        conn.getresponse.return_value = response
+        return conn
+
+    def test_is_intercom_bridge_accepts_five_bucket_payload(self):
+        payload = {
+            "system": {"status": "Operational"},
+            "device": {"type": "intercom_bridge", "state": {"door_locked": True}},
+        }
+        with patch.object(smoke.http.client, "HTTPConnection", return_value=self._mock_http(payload)):
+            self.assertTrue(smoke.is_intercom_bridge("192.0.2.10", 1.0))
+
+    def test_is_intercom_bridge_rejects_legacy_flat_and_invalid_payloads(self):
+        legacy = {
+            "device_type": "intercom_bridge",
+            "door_locked": True,
+            "active_slot": "ota_0",
+            "mac": "AA:BB:CC:DD:EE:FF",
+        }
+        other_bridge = {
+            "system": {"status": "Operational"},
+            "device": {"type": "hvac_bridge", "state": {}},
+        }
+        missing_system_status = {
+            "system": {},
+            "device": {"type": "intercom_bridge", "state": {}},
+        }
+        for payload in (legacy, other_bridge, missing_system_status):
+            with patch.object(smoke.http.client, "HTTPConnection", return_value=self._mock_http(payload)):
+                self.assertFalse(smoke.is_intercom_bridge("192.0.2.10", 1.0))
 
 
 if __name__ == "__main__":

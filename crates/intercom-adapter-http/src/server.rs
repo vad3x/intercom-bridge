@@ -26,7 +26,7 @@ use crate::config::{
     HttpServerConfig, HTTP_BUFFER_SIZE, JSON_BUFFER_SIZE, LOG_BUFFER_SIZE,
     STREAM_WRITE_BUFFER_SIZE, TCP_RX_BUFFER_SIZE, TCP_TX_BUFFER_SIZE,
 };
-use crate::router::MemorySnapshot;
+use crate::router::{CpuSnapshot, MemorySnapshot};
 use crate::DASHBOARD_HTML_GZ;
 
 // ============================================================================
@@ -481,8 +481,11 @@ fn build_router<
                             psram: None,
                         },
                     );
-                    let cpu = state.cpu_info.map(|provider| provider());
-                    let json_str = match crate::router::format_status_json_with_telemetry(
+                    let cpu = state
+                        .cpu_info
+                        .map(|provider| provider())
+                        .unwrap_or_else(|| CpuSnapshot::from_cores(&[]));
+                    let json_str = match crate::router::format_status_json(
                         &diag,
                         memory,
                         cpu,

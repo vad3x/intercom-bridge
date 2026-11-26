@@ -60,16 +60,16 @@ export function createIntercomStore() {
         desired &&
         gainGeneration === audioGainGeneration &&
         completedGainGeneration === desired.generation &&
-        data.rx_gain_half_db === desired.rxHalfDb &&
-        data.tx_gain_half_db === desired.txHalfDb
+        data.device.state.rx_gain_half_db === desired.rxHalfDb &&
+        data.device.state.tx_gain_half_db === desired.txHalfDb
       ) {
         setDesiredAudioGain(null);
         if (lastPostedAudioGain?.generation === desired.generation) lastPostedAudioGain = null;
       }
-      if (data.door_unlock_duration_sec !== undefined) {
-        setDoorUnlockDurationSec(data.door_unlock_duration_sec);
+      if (data.device.state.door_unlock_duration_sec !== undefined) {
+        setDoorUnlockDurationSec(data.device.state.door_unlock_duration_sec);
       }
-      if (data.door_locked && isUnlocking()) {
+      if (data.device.state.door_locked && isUnlocking()) {
         setIsUnlocking(false);
       }
       if (
@@ -78,12 +78,12 @@ export function createIntercomStore() {
         debugSessionActive()
       ) {
         latestSessionPoll = sequence;
-        if (data.call_state !== undefined && data.call_state !== 'idle') {
+        if (data.device.state.call_state !== undefined && data.device.state.call_state !== 'idle') {
           debugSessionAcknowledged = true;
         }
         // Start routes queue commands; idle may persist until the controller observes them.
         if (
-          data.call_state === 'idle' &&
+          data.device.state.call_state === 'idle' &&
           (debugSessionAcknowledged || Date.now() >= debugSessionStartupDeadline)
         ) {
           setDebugSessionActive(false);
@@ -183,8 +183,8 @@ export function createIntercomStore() {
     }
   };
 
-  const rxGainHalfDb = () => desiredAudioGain()?.rxHalfDb ?? status()?.rx_gain_half_db;
-  const txGainHalfDb = () => desiredAudioGain()?.txHalfDb ?? status()?.tx_gain_half_db;
+  const rxGainHalfDb = () => desiredAudioGain()?.rxHalfDb ?? status()?.device.state.rx_gain_half_db;
+  const txGainHalfDb = () => desiredAudioGain()?.txHalfDb ?? status()?.device.state.tx_gain_half_db;
 
   const updateAudioGain = async (rxHalfDb: number, txHalfDb: number) => {
     const generation = ++audioGainGeneration;

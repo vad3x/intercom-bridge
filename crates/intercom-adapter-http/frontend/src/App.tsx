@@ -39,7 +39,7 @@ export function App() {
         text: 'connecting',
       };
     }
-    if (store.status()?.door_locked) {
+    if (store.status()?.device.state.door_locked) {
       return { variant: 'success' as const, dotClass: 'bg-success', text: 'locked' };
     }
     return { variant: 'warning' as const, dotClass: 'bg-warning', text: 'unlocked' };
@@ -198,7 +198,7 @@ export function App() {
       controlTab={
         <>
           <IntercomControls
-            doorLocked={store.status()?.door_locked}
+            doorLocked={store.status()?.device.state.door_locked}
             doorUnlockDurationSec={store.doorUnlockDurationSec()}
             isUnlocking={store.isUnlocking()}
             isRinging={store.isRinging()}
@@ -212,10 +212,10 @@ export function App() {
             onClearLastFailure={handleClearLastFailure}
           />
           <LiveAudioCard
-            busState={store.status()?.bus_state}
-            callState={store.status()?.call_state}
-            rxRmsDbfs={store.status()?.rx_rms_dbfs}
-            rxPeakDbfs={store.status()?.rx_peak_dbfs}
+            busState={store.status()?.device.state.bus_state}
+            callState={store.status()?.device.state.call_state}
+            rxRmsDbfs={store.status()?.device.state.rx_rms_dbfs}
+            rxPeakDbfs={store.status()?.device.state.rx_peak_dbfs}
             rxGainHalfDb={store.rxGainHalfDb()}
             txGainHalfDb={store.txGainHalfDb()}
             onStartListen={store.startListen}

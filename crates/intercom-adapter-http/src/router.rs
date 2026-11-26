@@ -3,8 +3,10 @@
 //! Provides static route parsing and diagnostic telemetry formatting
 //! directly into pre-allocated byte slices without heap allocation.
 
-use core::fmt::Write as _;
-use edf_http_diagnostics::{parse_diagnostic_route, DiagnosticPayload, DiagnosticRoute};
+use edf_http_diagnostics::{parse_diagnostic_route, DiagnosticRoute};
+pub use edf_http_diagnostics::{
+    CpuCoreLoad, CpuSnapshot, DiagnosticError, MemoryRegion, MemorySnapshot, MAX_CPU_CORES,
+};
 use intercom_core::domain::diagnostics::{IntercomState, SystemDiagnostics};
 use intercom_core::domain::ecosystem::EcosystemType;
 
@@ -117,185 +119,56 @@ pub fn parse_route(request_line: &str) -> Route {
     }
 }
 
-/// Formats `SystemDiagnostics` into caller-provided buffer as compact JSON.
+/// Typed JSON DTO for [`IntercomState`] serialized under `device.state`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct IntercomStatusDto<'a> {
+    pub door_locked: bool,
+    pub door_unlock_duration_sec: u32,
+    pub bus_state: &'a str,
+    pub call_state: &'a str,
+    pub rx_rms_dbfs: i8,
+    pub rx_peak_dbfs: i8,
+    pub rx_gain_half_db: u8,
+    pub tx_gain_half_db: i8,
+    pub tone_active: bool,
+}
+
+impl From<&IntercomState> for IntercomStatusDto<'static> {
+    fn from(state: &IntercomState) -> Self {
+        Self {
+            door_locked: state.door_locked,
+            door_unlock_duration_sec: state.door_unlock_duration_sec,
+            bus_state: state.bus_state.as_str(),
+            call_state: state.call_state.as_str(),
+            rx_rms_dbfs: state.rx_rms_dbfs,
+            rx_peak_dbfs: state.rx_peak_dbfs,
+            rx_gain_half_db: state.rx_gain_half_db,
+            tx_gain_half_db: state.tx_gain_half_db,
+            tone_active: state.tone_active,
+        }
+    }
+}
+
+/// Formats `SystemDiagnostics` into a caller-provided buffer as five-bucket compact JSON.
 ///
-/// Returns the number of bytes written, or `Err(())` if the buffer is too small.
+/// Returns the number of bytes written, or [`DiagnosticError::BufferTooSmall`] if `out` is too small.
 pub fn format_status_json<T: EcosystemType>(
     diag: &SystemDiagnostics<IntercomState, T>,
-    out: &mut [u8],
-) -> Result<usize, ()> {
-    format_status_json_with_memory(
-        diag,
-        MemorySnapshot {
-            internal: MemoryRegion {
-                free_bytes: diag.free_heap_bytes,
-                total_bytes: diag.total_heap_bytes,
-            },
-            psram: None,
-        },
-        out,
-    )
-}
-
-/// Memory statistics for one allocator region.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct MemoryRegion {
-    pub free_bytes: usize,
-    pub total_bytes: usize,
-}
-
-/// Internal RAM and optional external PSRAM allocator statistics.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct MemorySnapshot {
-    pub internal: MemoryRegion,
-    pub psram: Option<MemoryRegion>,
-}
-
-/// Maximum number of CPU cores reported in a `CpuSnapshot`.
-pub const MAX_CPU_CORES: usize = 4;
-
-/// Utilization telemetry for a single CPU core.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct CpuCoreLoad {
-    pub id: u8,
-    pub load_pct: u8,
-}
-
-/// Fixed-capacity snapshot of per-core CPU load percentages.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct CpuSnapshot {
-    core_count: u8,
-    cores: [CpuCoreLoad; MAX_CPU_CORES],
-}
-
-impl CpuSnapshot {
-    /// Construct a `CpuSnapshot` from up to `MAX_CPU_CORES` core readings.
-    pub fn from_cores(cores: &[CpuCoreLoad]) -> Self {
-        let mut buf = [CpuCoreLoad::default(); MAX_CPU_CORES];
-        let count = cores.len().min(MAX_CPU_CORES);
-        for (idx, core) in cores.iter().take(count).enumerate() {
-            buf[idx] = CpuCoreLoad {
-                id: core.id,
-                load_pct: core.load_pct.min(100),
-            };
-        }
-        Self {
-            core_count: count as u8,
-            cores: buf,
-        }
-    }
-
-    /// Return the active core load entries.
-    pub fn cores(&self) -> &[CpuCoreLoad] {
-        &self.cores[..usize::from(self.core_count)]
-    }
-}
-
-/// Formats status JSON with allocator-specific memory region statistics.
-pub fn format_status_json_with_memory<T: EcosystemType>(
-    diag: &SystemDiagnostics<IntercomState, T>,
     memory: MemorySnapshot,
+    cpu: CpuSnapshot,
     out: &mut [u8],
-) -> Result<usize, ()> {
-    format_status_json_with_telemetry(diag, memory, None, out)
-}
-
-/// Formats status JSON with allocator-specific memory region and optional CPU core telemetry.
-pub fn format_status_json_with_telemetry<T: EcosystemType>(
-    diag: &SystemDiagnostics<IntercomState, T>,
-    memory: MemorySnapshot,
-    cpu: Option<CpuSnapshot>,
-    out: &mut [u8],
-) -> Result<usize, ()> {
+) -> Result<usize, DiagnosticError> {
     let shared = shared_snapshot(diag);
-    let base_len = edf_http_diagnostics::format_status_json(&shared, out).map_err(|_| ())?;
-    if base_len == 0 || out[base_len - 1] != b'}' {
-        return Err(());
-    }
-
-    let mut suffix = [0u8; 256];
-    let mut writer = ByteWriter::new(&mut suffix);
-    core::write!(
-        writer,
-        ",\"memory\":{{\"internal\":{{\"free_bytes\":{},\"total_bytes\":{}}},\"psram\":",
-        memory.internal.free_bytes,
-        memory.internal.total_bytes
-    )
-    .map_err(|_| ())?;
-    match memory.psram {
-        Some(psram) => core::write!(
-            writer,
-            "{{\"free_bytes\":{},\"total_bytes\":{}}}}}",
-            psram.free_bytes,
-            psram.total_bytes
-        ),
-        None => core::write!(writer, "null}}"),
-    }
-    .map_err(|_| ())?;
-
-    if let Some(cpu) = cpu {
-        let cores = cpu.cores();
-        if !cores.is_empty() {
-            core::write!(writer, ",\"cpu\":{{").map_err(|_| ())?;
-            for (idx, core) in cores.iter().enumerate() {
-                if idx != 0 {
-                    core::write!(writer, ",").map_err(|_| ())?;
-                }
-                core::write!(
-                    writer,
-                    "\"core_{}\":{{\"load_pct\":{}}}",
-                    core.id,
-                    core.load_pct.min(100)
-                )
-                .map_err(|_| ())?;
-            }
-            core::write!(writer, "}}").map_err(|_| ())?;
-        }
-    }
-
-    core::write!(writer, "}}").map_err(|_| ())?;
-
-    let suffix_len = writer.len();
-    let final_len = base_len - 1 + suffix_len;
-    if final_len > out.len() {
-        return Err(());
-    }
-    out[base_len - 1..final_len].copy_from_slice(&suffix[..suffix_len]);
-    Ok(final_len)
+    edf_http_diagnostics::format_status_json(&shared, memory, cpu, out)
 }
 
-struct ByteWriter<'a> {
-    out: &'a mut [u8],
-    len: usize,
-}
-
-impl<'a> ByteWriter<'a> {
-    fn new(out: &'a mut [u8]) -> Self {
-        Self { out, len: 0 }
-    }
-
-    fn len(&self) -> usize {
-        self.len
-    }
-}
-
-impl core::fmt::Write for ByteWriter<'_> {
-    fn write_str(&mut self, value: &str) -> core::fmt::Result {
-        let end = self.len.checked_add(value.len()).ok_or(core::fmt::Error)?;
-        let target = self.out.get_mut(self.len..end).ok_or(core::fmt::Error)?;
-        target.copy_from_slice(value.as_bytes());
-        self.len = end;
-        Ok(())
-    }
-}
-
-pub(crate) fn shared_snapshot<'a, T: EcosystemType>(
-    diag: &'a SystemDiagnostics<IntercomState, T>,
-) -> SystemDiagnostics<IntercomPayload<'a>, T> {
+pub(crate) fn shared_snapshot<T: EcosystemType>(
+    diag: &SystemDiagnostics<IntercomState, T>,
+) -> SystemDiagnostics<IntercomStatusDto<'static>, T> {
     SystemDiagnostics {
         device_type: diag.device_type,
         state: diag.state,
-        domain: IntercomPayload(&diag.domain),
+        domain: IntercomStatusDto::from(&diag.domain),
         uptime_sec: diag.uptime_sec,
         wifi_ssid: diag.wifi_ssid,
         wifi_rssi_dbm: diag.wifi_rssi_dbm,
@@ -306,33 +179,9 @@ pub(crate) fn shared_snapshot<'a, T: EcosystemType>(
         free_heap_bytes: diag.free_heap_bytes,
         total_heap_bytes: diag.total_heap_bytes,
         available_ecosystems: diag.available_ecosystems,
-        active_ecosystem: diag.active_ecosystem.clone(),
+        active_ecosystem: diag.active_ecosystem,
         version: diag.version,
         git_commit: diag.git_commit,
         build_date: diag.build_date,
     }
 }
-
-pub(crate) struct IntercomPayload<'a>(&'a IntercomState);
-
-impl DiagnosticPayload for IntercomPayload<'_> {
-    fn write_fields<W: core::fmt::Write>(&self, out: &mut W) -> core::fmt::Result {
-        write!(
-            out,
-            ",\"door_locked\":{},\"door_unlock_duration_sec\":{},\"bus_state\":\"{}\",\"call_state\":\"{}\",\"rx_rms_dbfs\":{},\"rx_peak_dbfs\":{},\"rx_gain_half_db\":{},\"tx_gain_half_db\":{},\"tone_active\":{}",
-            if self.0.door_locked { "true" } else { "false" },
-            self.0.door_unlock_duration_sec,
-            self.0.bus_state.as_str(),
-            self.0.call_state.as_str(),
-            self.0.rx_rms_dbfs,
-            self.0.rx_peak_dbfs,
-            self.0.rx_gain_half_db,
-            self.0.tx_gain_half_db,
-            self.0.tone_active,
-        )
-    }
-}
-
-// ============================================================================
-// Private Helpers & Writers
-// ============================================================================

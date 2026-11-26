@@ -106,9 +106,15 @@ def is_intercom_bridge(ip: str, timeout: float) -> bool:
         if response.status != 200:
             return False
         data: Any = json.loads(response.read().decode("utf-8"))
-        return isinstance(data, dict) and (
-            data.get("device_type") == "intercom_bridge"
-            or ("door_locked" in data and "active_slot" in data and "mac" in data)
+        if not isinstance(data, dict):
+            return False
+        device = data.get("device")
+        system = data.get("system")
+        return (
+            isinstance(device, dict)
+            and device.get("type") == "intercom_bridge"
+            and isinstance(system, dict)
+            and isinstance(system.get("status"), str)
         )
     except Exception:
         return False
