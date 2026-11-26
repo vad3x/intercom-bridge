@@ -2,13 +2,13 @@
 //!
 //! Follows the Arrange -> Act -> Assert pattern strictly.
 
+use edf_core::ports::ota::{OtaDriverError, OtaFlashDriver, OtaStream};
 use flate2::read::GzDecoder;
 use futures::executor::block_on;
 use intercom_adapter_http::{HttpServer, HttpServerConfig, DASHBOARD_HTML_GZ};
 use intercom_core::events::{SystemState, SystemStateWatch};
 use intercom_core::ports::diagnostics::HardwareInfoDriver;
 use intercom_core::ports::inbound::{AccessCommand, AccessControllerHandle, CommandChannel};
-use edf_core::ports::ota::{OtaDriverError, OtaFlashDriver, OtaStream};
 use intercom_core::service::DiagnosticsService;
 use serde_json::Value;
 use std::io::Read;
@@ -152,7 +152,10 @@ impl OtaFlashDriver for MockOtaFlashDriver {
         let mut total = 0;
         while total < content_length {
             let to_read = core::cmp::min(buf.len(), content_length - total);
-            let n = stream.read(&mut buf[..to_read]).await.map_err(|_| OtaDriverError::TruncatedStream)?;
+            let n = stream
+                .read(&mut buf[..to_read])
+                .await
+                .map_err(|_| OtaDriverError::TruncatedStream)?;
             if n == 0 {
                 break;
             }
@@ -219,7 +222,9 @@ fn test_get_dashboard_returns_gzipped_html() {
 
     let mut decoder = GzDecoder::new(body);
     let mut html = String::new();
-    decoder.read_to_string(&mut html).expect("decompression failed");
+    decoder
+        .read_to_string(&mut html)
+        .expect("decompression failed");
     assert!(html.contains("<!DOCTYPE html>"));
     assert!(html.contains("Intercom Bridge"));
 }
@@ -258,25 +263,46 @@ fn test_get_status_returns_valid_telemetry_json() {
     assert!(header_str.contains("Content-Type: application/json"));
 
     let body_str = core::str::from_utf8(&response[header_end + 4..]).unwrap();
-    let v: Value = serde_json::from_str(body_str).expect("invalid JSON");
-    assert_eq!(v["device_type"], "intercom_bridge");
-    assert_eq!(v["state"], "Operational");
-    assert_eq!(v["door_locked"], true);
-    assert_eq!(v["door_unlock_duration_sec"], 5);
-    assert_eq!(v["uptime_sec"], 1234);
-    assert_eq!(v["wifi_ssid"], "TestNet");
-    assert_eq!(v["wifi_rssi_dbm"], -55);
-    assert_eq!(v["ip"], "192.168.1.142");
-    assert_eq!(v["mac"], "AA:BB:CC:DD:EE:FF");
-    assert_eq!(v["active_slot"], "ota_0");
-    assert_eq!(v["slot_valid"], true);
-    assert_eq!(v["free_heap_bytes"], 120_000);
-    assert_eq!(v["total_heap_bytes"], 320_000);
-    assert_eq!(v["available_ecosystems"], serde_json::json!([]));
-    assert!(v["active_ecosystem"].is_null());
-    assert_eq!(v["version"], "1.2.3");
-    assert_eq!(v["git_commit"], "deadbeef");
-    assert_eq!(v["build_date"], "2026-10-15");
+    let actual: Value = serde_json::from_str(body_str).expect("invalid JSON");
+    let expected = serde_json::json!({
+        "system": {
+            "status": "Operational",
+            "uptime_sec": 1234,
+            "memory": {
+                "internal": {
+                    "free_bytes": 120_000,
+                    "total_bytes": 320_000
+                },
+                "psram": null
+            },
+            "cpu": {}
+        },
+        "network": {
+            "ssid": "TestNet",
+            "rssi_dbm": -55,
+            "ip": "192.168.1.142",
+            "mac": "AA:BB:CC:DD:EE:FF"
+        },
+        "firmware": {
+            "version": "1.2.3",
+            "git_commit": "deadbeef",
+            "build_date": "2026-10-15",
+            "active_slot": "ota_0",
+            "slot_valid": true
+        },
+        "ecosystems": {
+            "available": [],
+            "active": null
+        },
+        "device": {
+            "type": "intercom_bridge",
+            "state": {
+                "door_locked": true,
+                "door_unlock_duration_sec": 5
+            }
+        }
+    });
+    assert_eq!(actual, expected);
 }
 
 #[test]
@@ -313,7 +339,10 @@ fn test_get_logs_returns_text_plain_logs() {
     assert!(header_str.contains("Content-Type: text/plain; charset=utf-8"));
 
     let body_str = core::str::from_utf8(&response[header_end + 4..]).unwrap();
-    assert_eq!(body_str, "00:01:23.456 INFO  test - system running smoothly\n");
+    assert_eq!(
+        body_str,
+        "00:01:23.456 INFO  test - system running smoothly\n"
+    );
 }
 
 #[test]
@@ -333,7 +362,8 @@ fn test_post_action_ring_dispatches_command() {
         test_log_provider,
         HttpServerConfig::default(),
     );
-    let mut stream = MockStream::new(b"POST /api/action/ring HTTP/1.1\r\nHost: 192.168.1.142\r\n\r\n");
+    let mut stream =
+        MockStream::new(b"POST /api/action/ring HTTP/1.1\r\nHost: 192.168.1.142\r\n\r\n");
 
     // Act
     let result = block_on(server.handle_request(&mut stream));
@@ -361,7 +391,8 @@ fn test_post_action_unlock_dispatches_command() {
         test_log_provider,
         HttpServerConfig::default(),
     );
-    let mut stream = MockStream::new(b"POST /api/action/unlock HTTP/1.1\r\nHost: 192.168.1.142\r\n\r\n");
+    let mut stream =
+        MockStream::new(b"POST /api/action/unlock HTTP/1.1\r\nHost: 192.168.1.142\r\n\r\n");
 
     // Act
     let result = block_on(server.handle_request(&mut stream));
@@ -522,7 +553,8 @@ fn test_post_ota_flash_missing_content_length_returns_400() {
         test_log_provider,
         HttpServerConfig::default(),
     );
-    let mut stream = MockStream::new(b"POST /api/v1/ota/flash HTTP/1.1\r\nHost: 192.168.1.142\r\n\r\n");
+    let mut stream =
+        MockStream::new(b"POST /api/v1/ota/flash HTTP/1.1\r\nHost: 192.168.1.142\r\n\r\n");
 
     // Act
     let result = block_on(server.handle_request(&mut stream));
@@ -651,7 +683,8 @@ impl intercom_core::ports::SystemResetDriver for RecordingResetDriver {
             intercom_core::ports::ResetScope::Ecosystem => 1,
             intercom_core::ports::ResetScope::Factory => 2,
         };
-        self.erased_scope.store(val, std::sync::atomic::Ordering::SeqCst);
+        self.erased_scope
+            .store(val, std::sync::atomic::Ordering::SeqCst);
     }
     fn reboot(&self) -> ! {
         assert_eq!(
@@ -765,7 +798,8 @@ impl intercom_core::ports::SystemResetDriver for RecordingFactoryResetDriver {
             intercom_core::ports::ResetScope::Ecosystem => 1,
             intercom_core::ports::ResetScope::Factory => 2,
         };
-        self.erased_scope.store(val, std::sync::atomic::Ordering::SeqCst);
+        self.erased_scope
+            .store(val, std::sync::atomic::Ordering::SeqCst);
     }
     fn reboot(&self) -> ! {
         assert_eq!(
@@ -803,5 +837,3 @@ fn test_post_action_reset_factory_erases_and_reboots() {
 
     let _ = block_on(server.handle_request(&mut stream));
 }
-
-

@@ -1,7 +1,7 @@
 import { createDashboardApi } from '@embedded-device-foundation/dashboard-core';
-import type { SystemDiagnostics } from './types';
+import type { IntercomDiagnostics } from './types';
 
-const dashboardApi = createDashboardApi<SystemDiagnostics>();
+const dashboardApi = createDashboardApi<IntercomDiagnostics>();
 
 async function preserveHttpError<T>(
   request: () => Promise<T>,
@@ -16,7 +16,7 @@ async function preserveHttpError<T>(
   }
 }
 
-export async function fetchStatus(): Promise<SystemDiagnostics> {
+export async function fetchStatus(): Promise<IntercomDiagnostics> {
   return preserveHttpError(dashboardApi.fetchStatus, (status) => `HTTP error ${status}`);
 }
 

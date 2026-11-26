@@ -8,10 +8,10 @@ import {
   triggerRing,
   triggerUnlock,
 } from '../api';
-import type { SystemDiagnostics } from '../types';
+import type { IntercomDiagnostics } from '../types';
 
 export function createIntercomStore() {
-  const [status, setStatus] = createSignal<SystemDiagnostics | null>(null);
+  const [status, setStatus] = createSignal<IntercomDiagnostics | null>(null);
   const [doorUnlockDurationSec, setDoorUnlockDurationSec] = createSignal<number | undefined>(
     undefined,
   );
@@ -24,11 +24,11 @@ export function createIntercomStore() {
     try {
       const data = await fetchStatus();
       setStatus(data);
-      if (data.door_unlock_duration_sec !== undefined) {
-        setDoorUnlockDurationSec(data.door_unlock_duration_sec);
+      if (data.device.state.door_unlock_duration_sec !== undefined) {
+        setDoorUnlockDurationSec(data.device.state.door_unlock_duration_sec);
       }
       // If hardware reports locked and unlocking intent expired, clear unlocking
-      if (data.door_locked && isUnlocking()) {
+      if (data.device.state.door_locked && isUnlocking()) {
         setIsUnlocking(false);
       }
     } catch {

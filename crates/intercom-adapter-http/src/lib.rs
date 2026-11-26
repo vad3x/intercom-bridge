@@ -15,7 +15,10 @@ pub mod router;
 pub mod server;
 
 pub use config::HttpServerConfig;
-pub use router::{format_status_json, parse_route, Route};
+pub use router::{
+    format_status_json, format_status_json_with_telemetry, parse_route, CpuCoreLoad, CpuSnapshot,
+    IntercomStatusDto, MemoryRegion, MemorySnapshot, Route, MAX_CPU_CORES,
+};
 pub use server::HttpServer;
 
 /// Pre-gzipped single-page dashboard application compiled into the binary.
@@ -34,7 +37,9 @@ mod tests {
         let mut html = std::string::String::new();
 
         // Act
-        decoder.read_to_string(&mut html).expect("Decompression failed");
+        decoder
+            .read_to_string(&mut html)
+            .expect("Decompression failed");
 
         // Assert
         assert!(html.to_lowercase().contains("<!doctype html>"));

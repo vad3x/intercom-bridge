@@ -38,7 +38,7 @@ export function App() {
         text: 'connecting',
       };
     }
-    if (store.status()?.door_locked) {
+    if (store.status()?.device.state.door_locked) {
       return { variant: 'success' as const, dotClass: 'bg-success', text: 'locked' };
     }
     return { variant: 'warning' as const, dotClass: 'bg-warning', text: 'unlocked' };
@@ -180,7 +180,7 @@ export function App() {
       controlTab={
         <div class="space-y-4">
           <IntercomControls
-            doorLocked={store.status()?.door_locked}
+            doorLocked={store.status()?.device.state.door_locked}
             doorUnlockDurationSec={store.doorUnlockDurationSec()}
             isUnlocking={store.isUnlocking()}
             isRinging={store.isRinging()}

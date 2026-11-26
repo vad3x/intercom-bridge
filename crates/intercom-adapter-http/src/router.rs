@@ -3,7 +3,10 @@
 //! Provides static route parsing and diagnostic telemetry formatting
 //! directly into pre-allocated byte slices without heap allocation.
 
-use edf_http_diagnostics::{parse_diagnostic_route, DiagnosticPayload, DiagnosticRoute};
+use edf_http_diagnostics::{parse_diagnostic_route, DiagnosticRoute};
+pub use edf_http_diagnostics::{
+    CpuCoreLoad, CpuSnapshot, MemoryRegion, MemorySnapshot, MAX_CPU_CORES,
+};
 use intercom_core::domain::diagnostics::{IntercomState, SystemDiagnostics};
 use intercom_core::domain::ecosystem::EcosystemType;
 
@@ -106,24 +109,73 @@ pub fn parse_route(request_line: &str) -> Route {
     }
 }
 
+/// Adapter-layer JSON DTO for `v1` intercom domain state under `device.state`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct IntercomStatusDto {
+    pub door_locked: bool,
+    pub door_unlock_duration_sec: u32,
+}
+
+impl From<&IntercomState> for IntercomStatusDto {
+    fn from(state: &IntercomState) -> Self {
+        Self {
+            door_locked: state.door_locked,
+            door_unlock_duration_sec: state.door_unlock_duration_sec,
+        }
+    }
+}
+
 /// Formats `SystemDiagnostics` into caller-provided buffer as compact JSON.
 ///
-/// Returns the number of bytes written, or `Err(())` if the buffer is too small.
+/// Uses `diag.free_heap_bytes` / `diag.total_heap_bytes` with `psram: None` and
+/// empty CPU telemetry (`{}`). Returns the number of bytes written, or `Err(())`
+/// if the buffer is too small.
+#[expect(
+    clippy::result_unit_err,
+    reason = "preserve existing Result<usize, ()> router API"
+)]
 pub fn format_status_json<T: EcosystemType>(
     diag: &SystemDiagnostics<IntercomState, T>,
     out: &mut [u8],
 ) -> Result<usize, ()> {
-    let shared = shared_snapshot(diag);
-    edf_http_diagnostics::format_status_json(&shared, out).map_err(|_| ())
+    let memory = MemorySnapshot {
+        internal: MemoryRegion {
+            free_bytes: diag.free_heap_bytes,
+            total_bytes: diag.total_heap_bytes,
+        },
+        psram: None,
+    };
+    format_status_json_with_telemetry(diag, memory, CpuSnapshot::from_cores(&[]), out)
 }
 
-pub(crate) fn shared_snapshot<'a, T: EcosystemType>(
-    diag: &'a SystemDiagnostics<IntercomState, T>,
-) -> SystemDiagnostics<IntercomPayload<'a>, T> {
+/// Formats `SystemDiagnostics` with explicit `MemorySnapshot` and `CpuSnapshot` telemetry.
+///
+/// Returns the number of bytes written, or `Err(())` if the buffer is too small.
+#[expect(
+    clippy::result_unit_err,
+    reason = "match format_status_json Result<usize, ()> router API"
+)]
+pub fn format_status_json_with_telemetry<T: EcosystemType>(
+    diag: &SystemDiagnostics<IntercomState, T>,
+    memory: MemorySnapshot,
+    cpu: CpuSnapshot,
+    out: &mut [u8],
+) -> Result<usize, ()> {
+    let dto_diag = dto_snapshot(diag);
+    edf_http_diagnostics::format_status_json(&dto_diag, memory, cpu, out).map_err(|_| ())
+}
+
+// ============================================================================
+// Private Helpers & Writers
+// ============================================================================
+
+fn dto_snapshot<T: EcosystemType>(
+    diag: &SystemDiagnostics<IntercomState, T>,
+) -> SystemDiagnostics<IntercomStatusDto, T> {
     SystemDiagnostics {
         device_type: diag.device_type,
         state: diag.state,
-        domain: IntercomPayload(&diag.domain),
+        domain: IntercomStatusDto::from(&diag.domain),
         uptime_sec: diag.uptime_sec,
         wifi_ssid: diag.wifi_ssid,
         wifi_rssi_dbm: diag.wifi_rssi_dbm,
@@ -134,28 +186,9 @@ pub(crate) fn shared_snapshot<'a, T: EcosystemType>(
         free_heap_bytes: diag.free_heap_bytes,
         total_heap_bytes: diag.total_heap_bytes,
         available_ecosystems: diag.available_ecosystems,
-        active_ecosystem: diag.active_ecosystem.clone(),
+        active_ecosystem: diag.active_ecosystem,
         version: diag.version,
         git_commit: diag.git_commit,
         build_date: diag.build_date,
     }
 }
-
-pub(crate) struct IntercomPayload<'a>(&'a IntercomState);
-
-impl DiagnosticPayload for IntercomPayload<'_> {
-    fn write_fields<W: core::fmt::Write>(&self, out: &mut W) -> core::fmt::Result {
-        write!(
-            out,
-            ",\"door_locked\":{},\"door_unlock_duration_sec\":{}",
-            if self.0.door_locked { "true" } else { "false" },
-            self.0.door_unlock_duration_sec
-        )
-    }
-}
-
-// ============================================================================
-// Private Helpers & Writers
-// ============================================================================
-
-

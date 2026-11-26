@@ -4,6 +4,7 @@
 //! serving the pre-compressed web dashboard and REST API endpoints for telemetry,
 //! domain actions, and firmware OTA flashing.
 
+use edf_core::ports::ota::{OtaFlashDriver, OtaStream};
 use embassy_net::tcp::TcpSocket;
 use embassy_net::Stack;
 use embassy_time::{Duration, Timer};
@@ -12,7 +13,6 @@ use intercom_core::events::SystemStateSender;
 use intercom_core::ports::diagnostics::HardwareInfoDriver;
 use intercom_core::ports::ecosystem::EcosystemInfoDriver;
 use intercom_core::ports::inbound::{AccessCommand, AccessControllerHandle};
-use edf_core::ports::ota::{OtaFlashDriver, OtaStream};
 use intercom_core::ports::{ResetScope, SystemResetDriver};
 use intercom_core::service::DiagnosticsService;
 use log::{info, warn};
@@ -314,7 +314,10 @@ impl<
             }
 
             if reboot_requested.get() {
-                info!("Reboot requested; rebooting in {:?}...", self.config.reboot_delay);
+                info!(
+                    "Reboot requested; rebooting in {:?}...",
+                    self.config.reboot_delay
+                );
                 Timer::after(self.config.reboot_delay).await;
                 if let Some(reset) = self.reset_driver {
                     reset.reboot();
@@ -353,8 +356,21 @@ fn build_router<
                     AppState<'a, H, E, O, T>,
                 >| async move {
                     let diag = state.diagnostics.snapshot();
+                    let memory = crate::router::MemorySnapshot {
+                        internal: crate::router::MemoryRegion {
+                            free_bytes: diag.free_heap_bytes,
+                            total_bytes: diag.total_heap_bytes,
+                        },
+                        psram: None,
+                    };
+                    let cpu = crate::router::CpuSnapshot::from_cores(&[]);
                     let mut json_buf = [0u8; JSON_BUFFER_SIZE];
-                    let json_str = match crate::router::format_status_json(&diag, &mut json_buf) {
+                    let json_str = match crate::router::format_status_json_with_telemetry(
+                        &diag,
+                        memory,
+                        cpu,
+                        &mut json_buf,
+                    ) {
                         Ok(len) => alloc::string::String::from(
                             core::str::from_utf8(&json_buf[..len]).unwrap_or("{}"),
                         ),
@@ -513,13 +529,8 @@ struct DoorDurationQuery {
 
 struct OtaFlashService<T: EcosystemType>(core::marker::PhantomData<fn() -> T>);
 
-impl<
-        'a,
-        H: HardwareInfoDriver,
-        E: EcosystemInfoDriver,
-        O: OtaFlashDriver,
-        T: EcosystemType,
-    > picoserve::routing::RequestHandlerService<AppState<'a, H, E, O, T>> for OtaFlashService<T>
+impl<'a, H: HardwareInfoDriver, E: EcosystemInfoDriver, O: OtaFlashDriver, T: EcosystemType>
+    picoserve::routing::RequestHandlerService<AppState<'a, H, E, O, T>> for OtaFlashService<T>
 {
     async fn call_request_handler_service<
         R: picoserve::io::Read,
@@ -634,7 +645,11 @@ impl<'a, 's, S: OtaStream> picoserve::io::ErrorType for StreamReadHalf<'a, 's, S
 
 impl<'a, 's, S: OtaStream> picoserve::io::Read for StreamReadHalf<'a, 's, S> {
     async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
-        self.0.borrow_mut().read(buf).await.map_err(|_| StreamIoError)
+        self.0
+            .borrow_mut()
+            .read(buf)
+            .await
+            .map_err(|_| StreamIoError)
     }
 }
 
@@ -646,7 +661,11 @@ impl<'a, 's, S: OtaStream> picoserve::io::ErrorType for StreamWriteHalf<'a, 's, 
 
 impl<'a, 's, S: OtaStream> picoserve::io::BaseWrite for StreamWriteHalf<'a, 's, S> {
     async fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
-        self.0.borrow_mut().write_all(buf).await.map_err(|_| StreamIoError)?;
+        self.0
+            .borrow_mut()
+            .write_all(buf)
+            .await
+            .map_err(|_| StreamIoError)?;
         Ok(buf.len())
     }
 
@@ -663,7 +682,11 @@ impl<'a, 's, S: OtaStream> picoserve::io::Write for StreamWriteHalf<'a, 's, S> {
         let mut buffer = [0u8; STREAM_WRITE_BUFFER_SIZE];
         let mut buffer = picoserve::mem::BorrowedBuffer::new(&mut buffer);
         let output = f(buffer.unfilled());
-        self.0.borrow_mut().write_all(buffer.filled()).await.map_err(|_| StreamIoError)?;
+        self.0
+            .borrow_mut()
+            .write_all(buffer.filled())
+            .await
+            .map_err(|_| StreamIoError)?;
         Ok(output)
     }
 }
@@ -682,8 +705,14 @@ impl<'s, S: OtaStream> SocketStream<'s, S> {
 
 impl<'s, S: OtaStream> picoserve::io::Socket<picoserve::EmbassyRuntime> for SocketStream<'s, S> {
     type Error = StreamIoError;
-    type ReadHalf<'a> = StreamReadHalf<'a, 's, S> where 's: 'a;
-    type WriteHalf<'a> = StreamWriteHalf<'a, 's, S> where 's: 'a;
+    type ReadHalf<'a>
+        = StreamReadHalf<'a, 's, S>
+    where
+        's: 'a;
+    type WriteHalf<'a>
+        = StreamWriteHalf<'a, 's, S>
+    where
+        's: 'a;
 
     fn split(&mut self) -> (Self::ReadHalf<'_>, Self::WriteHalf<'_>) {
         (StreamReadHalf(&self.cell), StreamWriteHalf(&self.cell))
@@ -703,7 +732,11 @@ impl<'s, S: OtaStream> picoserve::io::Socket<picoserve::EmbassyRuntime> for Sock
         _timeouts: &picoserve::Timeouts,
         _timer: &Timer,
     ) -> Result<(), picoserve::Error<Self::Error>> {
-        self.cell.borrow_mut().flush().await.map_err(|_| picoserve::Error::Write(StreamIoError))?;
+        self.cell
+            .borrow_mut()
+            .flush()
+            .await
+            .map_err(|_| picoserve::Error::Write(StreamIoError))?;
         Ok(())
     }
 }

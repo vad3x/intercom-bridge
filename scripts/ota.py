@@ -118,10 +118,8 @@ def probe_intercom_status(ip: str, port: int = 8080, timeout: float = 1.5) -> Op
         if res.status == 200:
             data = json.loads(res.read().decode())
             if isinstance(data, dict):
-                dev_type = data.get("device_type")
-                if dev_type == "intercom_bridge":
-                    return data
-                if dev_type is None and "door_locked" in data and "active_slot" in data and "mac" in data:
+                device = data.get("device")
+                if isinstance(device, dict) and device.get("type") == "intercom_bridge":
                     return data
         conn.close()
     except Exception:
@@ -167,9 +165,11 @@ def discover_devices(timeout: float = 3.5, port: int = 8080) -> List[DiscoveredD
         # Probe HTTP /api/status on port 8080 to verify device identity and read live telemetry
         status = probe_intercom_status(ip, port=port, timeout=1.5)
         if status:
-            mac = status.get("mac") or "unknown"
-            sw_ver = status.get("version") or "unknown"
-            slot = status.get("active_slot") or "unknown"
+            network = status.get("network") if isinstance(status.get("network"), dict) else {}
+            firmware = status.get("firmware") if isinstance(status.get("firmware"), dict) else {}
+            mac = network.get("mac") or "unknown"
+            sw_ver = firmware.get("version") or "unknown"
+            slot = firmware.get("active_slot") or "unknown"
             return DiscoveredDevice(
                 name="Intercom Bridge",
                 hostname=hostname,
@@ -602,15 +602,25 @@ def main() -> None:
                 try:
                     resolved_ip = socket.gethostbyname(hostname)
                     status = probe_intercom_status(resolved_ip, port=args.port, timeout=1.0)
+                    network = (
+                        status.get("network")
+                        if status and isinstance(status.get("network"), dict)
+                        else {}
+                    )
+                    firmware = (
+                        status.get("firmware")
+                        if status and isinstance(status.get("firmware"), dict)
+                        else {}
+                    )
                     targets = [
                         DiscoveredDevice(
                             name="Intercom Bridge" if status else f"Hostname Target ({hostname})",
                             hostname=hostname,
                             ip=resolved_ip,
                             port=args.port,
-                            sw_ver=status.get("version") if status else "unknown",
-                            slot=status.get("active_slot") if status else "unknown",
-                            mac=status.get("mac") if status else "unknown",
+                            sw_ver=firmware.get("version") or "unknown" if status else "unknown",
+                            slot=firmware.get("active_slot") or "unknown" if status else "unknown",
+                            mac=network.get("mac") or "unknown" if status else "unknown",
                         )
                     ]
                 except socket.gaierror:
