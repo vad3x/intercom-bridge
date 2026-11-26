@@ -97,8 +97,24 @@ mod firmware {
 
         let (_platform, drivers) = ActivePlatform::init();
 
-        let has_last_failure =
-            edf_diag::record_boot_diagnostics(&IntercomFailureStore, &IntercomDiagContext);
+        let is_wdt_reset = {
+            use esp_hal::rtc_cntl::SocResetReason;
+            matches!(
+                esp_hal::system::reset_reason(),
+                Some(
+                    SocResetReason::CoreMwdt0
+                        | SocResetReason::CoreMwdt1
+                        | SocResetReason::CoreRtcWdt
+                        | SocResetReason::Cpu0Mwdt0
+                        | SocResetReason::Cpu0RtcWdt
+                )
+            )
+        };
+        let has_last_failure = edf_diag::record_boot_diagnostics(
+            &IntercomFailureStore,
+            &IntercomDiagContext,
+            is_wdt_reset,
+        );
         info!("Hardware initialized");
 
         // ====================================================================
