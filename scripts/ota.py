@@ -495,6 +495,45 @@ def push_ota_to_device(
                 pass
 
 
+def normalize_mac(mac: str) -> str:
+    cleaned = mac.strip().replace(":", "").replace("-", "").lower()
+    if not cleaned or cleaned == "unknown":
+        return "unknown"
+    return cleaned
+
+
+def build_deploy_tag_name(mac: str, ip: str) -> str:
+    mac_slug = normalize_mac(mac)
+    device_slug = mac_slug if mac_slug != "unknown" else ip.replace(".", "-")
+    return f"deploy/{device_slug}"
+
+
+def resolve_git_version_ref(repo_dir: Path) -> Optional[str]:
+    for args in (
+        ["git", "describe", "--tags", "--match", "v[0-9]*.[0-9]*.[0-9]*", "--long", "--abbrev=7"],
+        ["git", "rev-parse", "--short=7", "HEAD"],
+    ):
+        res = subprocess.run(args, cwd=repo_dir, capture_output=True, text=True)
+        if res.returncode == 0 and res.stdout.strip():
+            return res.stdout.strip()
+    return None
+
+
+def tag_deployed_device(repo_dir: Path, device: DiscoveredDevice) -> Optional[str]:
+    version_ref = resolve_git_version_ref(repo_dir) or "unknown"
+    tag_name = build_deploy_tag_name(device.mac, device.ip)
+    msg = f"Deployed {version_ref} to {device.name} ({device.mac}) at {device.ip}"
+    res = subprocess.run(
+        ["git", "tag", "-f", "-a", tag_name, "-m", msg],
+        cwd=repo_dir,
+        capture_output=True,
+        text=True,
+    )
+    if res.returncode == 0:
+        return tag_name
+    return None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Smart Intercom Over-The-Air (OTA) Firmware Updater",
@@ -541,6 +580,11 @@ def main() -> None:
         type=float,
         default=60.0,
         help="HTTP upload timeout in seconds (default: 60.0)",
+    )
+    parser.add_argument(
+        "--no-tag",
+        action="store_true",
+        help="Skip creating a deploy/<mac> git tag",
     )
 
     args = parser.parse_args()
@@ -645,13 +689,25 @@ def main() -> None:
             targets = prompt_device_selection(discovered)
 
     # 4. Push OTA update to target(s)
+    repo_dir = Path(__file__).resolve().parent.parent
     success_count = 0
     total_targets = len(targets)
     for idx, target in enumerate(targets, start=1):
         if total_targets > 1:
             print(f"\n--- Updating Device {idx}/{total_targets} ---")
+        if normalize_mac(target.mac) == "unknown":
+            status = probe_intercom_status(target.ip, port=target.port, timeout=1.5)
+            if status:
+                network = status.get("network") if isinstance(status.get("network"), dict) else {}
+                mac = network.get("mac") or status.get("mac")
+                if mac:
+                    target.mac = mac
         if push_ota_to_device(target, header, binary_path, binary_len, http_timeout=args.http_timeout):
             success_count += 1
+            if not args.no_tag:
+                tag_name = tag_deployed_device(repo_dir, target)
+                if tag_name:
+                    print(f"🏷️  Tagged deployment: {tag_name}")
 
     if total_targets > 1:
         print(f"\nSummary: {success_count}/{total_targets} devices updated successfully.")
