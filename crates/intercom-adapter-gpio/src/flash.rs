@@ -1,9 +1,11 @@
 //! ESP32 internal SPI flash driver.
 //!
 //! On host (`not(target_os = "none")`), re-exports `edf_gpio::flash::EspFlash`
-//! (in-memory mock). On target (`target_os = "none"`), wraps
-//! `esp_storage::FlashStorage` so all ROM SPI flash calls run from IRAM and, on
-//! dual-core ESP32-S3, automatically park Core 1 during write/erase.
+//! (in-memory mock). On target (`target_os = "none"`), uses `esp_storage::ll`
+//! (IRAM-placed ROM/SPI flash primitives) instead of
+//! `esp_storage::FlashStorage::new` so `get_flash_size()`'s `SPI1` RDID probe
+//! is not executed from XIP flash (which returns `capacity = 0` on ESP32-S3),
+//! and parks Core 1 during write/erase when `multicore-flash` is enabled.
 
 #[cfg(not(target_os = "none"))]
 pub use edf_gpio::flash::{EspFlash, EspFlashError};
@@ -14,14 +16,13 @@ mod target_impl {
 
     use embedded_storage::nor_flash::{ErrorType, NorFlashError, NorFlashErrorKind};
     use embedded_storage_async::nor_flash::{MultiwriteNorFlash, NorFlash, ReadNorFlash};
-    use esp_storage::{FlashStorage, FlashStorageError};
 
-    pub const SECTOR_SIZE: usize = FlashStorage::SECTOR_SIZE as usize;
-    pub const WORD_SIZE: usize = FlashStorage::WORD_SIZE as usize;
+    pub const SECTOR_SIZE: usize = 4096;
+    pub const WORD_SIZE: usize = 4;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum EspFlashError {
-        Storage(FlashStorageError),
+        RomError(i32),
         NotAligned,
         OutOfBounds,
     }
@@ -29,35 +30,54 @@ mod target_impl {
     impl NorFlashError for EspFlashError {
         fn kind(&self) -> NorFlashErrorKind {
             match self {
-                EspFlashError::Storage(FlashStorageError::NotAligned)
-                | EspFlashError::NotAligned => NorFlashErrorKind::NotAligned,
-                EspFlashError::Storage(FlashStorageError::OutOfBounds)
-                | EspFlashError::OutOfBounds => NorFlashErrorKind::OutOfBounds,
-                EspFlashError::Storage(_) => NorFlashErrorKind::Other,
+                EspFlashError::RomError(_) => NorFlashErrorKind::Other,
+                EspFlashError::NotAligned => NorFlashErrorKind::NotAligned,
+                EspFlashError::OutOfBounds => NorFlashErrorKind::OutOfBounds,
             }
         }
     }
 
-    impl From<FlashStorageError> for EspFlashError {
-        fn from(err: FlashStorageError) -> Self {
-            Self::Storage(err)
+    fn with_other_core_parked<R>(op: impl FnOnce() -> R) -> R {
+        #[cfg(feature = "multicore-flash")]
+        let parked = {
+            use esp_hal::peripherals::CPU_CTRL;
+            use esp_hal::system::{is_running, Cpu, CpuControl};
+
+            let mut cpu_ctrl = CpuControl::new(unsafe { CPU_CTRL::steal() });
+            let mut did_park = false;
+            for other_cpu in Cpu::other() {
+                if is_running(other_cpu) {
+                    unsafe { cpu_ctrl.park_core(other_cpu) };
+                    did_park = true;
+                    break;
+                }
+            }
+            did_park
+        };
+
+        let result = op();
+
+        #[cfg(feature = "multicore-flash")]
+        if parked {
+            use esp_hal::peripherals::CPU_CTRL;
+            use esp_hal::system::{Cpu, CpuControl};
+
+            let mut cpu_ctrl = CpuControl::new(unsafe { CPU_CTRL::steal() });
+            for other_cpu in Cpu::other() {
+                cpu_ctrl.unpark_core(other_cpu);
+            }
         }
+
+        result
     }
 
     pub struct EspFlash {
         range: Range<u32>,
-        storage: FlashStorage<'static>,
     }
 
     impl EspFlash {
         pub fn new(range: Range<u32>) -> Self {
-            // SAFETY: FlashStorage wraps ROM SPI flash behind a critical section
-            // (and Core 1 auto-park on dual-core chips); instances cover disjoint
-            // KVS ranges used sequentially on Core 0.
-            let storage = FlashStorage::new(unsafe { esp_hal::peripherals::FLASH::steal() });
-            #[cfg(feature = "multicore-flash")]
-            let storage = storage.multicore_auto_park();
-            Self { range, storage }
+            Self { range }
         }
 
         pub fn range(&self) -> &Range<u32> {
@@ -66,9 +86,16 @@ mod target_impl {
 
         pub fn erase_range_blocking(&mut self) -> Result<(), EspFlashError> {
             self.check_erase_bounds(self.range.start, self.range.end)?;
-            self.storage
-                .erase(self.range.start, self.range.end)
-                .map_err(EspFlashError::from)
+            let start_sector = self.range.start / SECTOR_SIZE as u32;
+            let end_sector = self.range.end / SECTOR_SIZE as u32;
+            with_other_core_parked(|| {
+                unsafe { esp_storage::ll::spiflash_unlock() }.map_err(EspFlashError::RomError)?;
+                for sector in start_sector..end_sector {
+                    unsafe { esp_storage::ll::spiflash_erase_sector(sector) }
+                        .map_err(EspFlashError::RomError)?;
+                }
+                Ok(())
+            })
         }
 
         fn check_rw_bounds(&self, offset: u32, len: usize) -> Result<(), EspFlashError> {
@@ -89,6 +116,35 @@ mod target_impl {
             }
             Ok(())
         }
+
+        fn read_chunk(&self, offset: u32, bytes: &mut [u8]) -> Result<(), EspFlashError> {
+            let aligned_start = offset & !(WORD_SIZE as u32 - 1);
+            let head_skip = (offset - aligned_start) as usize;
+            let total_len = head_skip + bytes.len();
+            let aligned_len = (total_len + WORD_SIZE - 1) & !(WORD_SIZE - 1);
+
+            let mut buf = [0u32; 68];
+            if aligned_len > buf.len() * WORD_SIZE {
+                const CHUNK: usize = 240;
+                let mut pos = 0;
+                while pos < bytes.len() {
+                    let chunk_len = (bytes.len() - pos).min(CHUNK);
+                    self.read_chunk(offset + pos as u32, &mut bytes[pos..pos + chunk_len])?;
+                    pos += chunk_len;
+                }
+                return Ok(());
+            }
+
+            unsafe {
+                esp_storage::ll::spiflash_read(aligned_start, buf.as_mut_ptr(), aligned_len as u32)
+            }
+            .map_err(EspFlashError::RomError)?;
+
+            let raw =
+                unsafe { core::slice::from_raw_parts(buf.as_ptr() as *const u8, aligned_len) };
+            bytes.copy_from_slice(&raw[head_skip..head_skip + bytes.len()]);
+            Ok(())
+        }
     }
 
     impl ErrorType for EspFlash {
@@ -103,9 +159,7 @@ mod target_impl {
                 return Ok(());
             }
             self.check_rw_bounds(offset, bytes.len())?;
-            self.storage
-                .read_nor(offset, bytes)
-                .map_err(EspFlashError::from)
+            self.read_chunk(offset, bytes)
         }
 
         fn capacity(&self) -> usize {
@@ -119,17 +173,57 @@ mod target_impl {
 
         async fn erase(&mut self, from: u32, to: u32) -> Result<(), Self::Error> {
             self.check_erase_bounds(from, to)?;
-            self.storage.erase(from, to).map_err(EspFlashError::from)
+            let start_sector = from / SECTOR_SIZE as u32;
+            let end_sector = to / SECTOR_SIZE as u32;
+            with_other_core_parked(|| {
+                unsafe { esp_storage::ll::spiflash_unlock() }.map_err(EspFlashError::RomError)?;
+                for sector in start_sector..end_sector {
+                    unsafe { esp_storage::ll::spiflash_erase_sector(sector) }
+                        .map_err(EspFlashError::RomError)?;
+                }
+                Ok(())
+            })
         }
 
         async fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Self::Error> {
             if bytes.is_empty() {
                 return Ok(());
             }
+            if !(offset as usize).is_multiple_of(WORD_SIZE)
+                || !bytes.len().is_multiple_of(WORD_SIZE)
+            {
+                return Err(EspFlashError::NotAligned);
+            }
             self.check_rw_bounds(offset, bytes.len())?;
-            self.storage
-                .write_nor(offset, bytes)
-                .map_err(EspFlashError::from)
+
+            let mut aligned = [0u32; 64];
+            let mut pos = 0;
+            with_other_core_parked(|| {
+                unsafe { esp_storage::ll::spiflash_unlock() }.map_err(EspFlashError::RomError)?;
+                while pos < bytes.len() {
+                    let chunk_bytes = (bytes.len() - pos).min(aligned.len() * WORD_SIZE);
+                    let word_count = chunk_bytes / WORD_SIZE;
+                    for (idx, word) in aligned[..word_count].iter_mut().enumerate() {
+                        let start = pos + idx * WORD_SIZE;
+                        *word = u32::from_le_bytes([
+                            bytes[start],
+                            bytes[start + 1],
+                            bytes[start + 2],
+                            bytes[start + 3],
+                        ]);
+                    }
+                    unsafe {
+                        esp_storage::ll::spiflash_write(
+                            offset + pos as u32,
+                            aligned.as_ptr(),
+                            chunk_bytes as u32,
+                        )
+                    }
+                    .map_err(EspFlashError::RomError)?;
+                    pos += chunk_bytes;
+                }
+                Ok(())
+            })
         }
     }
 
