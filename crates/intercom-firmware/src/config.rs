@@ -141,8 +141,9 @@ pub const HTTP_READ_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 /// Timeout for writing HTTP responses.
 pub const HTTP_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Socket-level timeout on accepted TCP connection.
-pub const HTTP_SOCKET_TIMEOUT: Duration = Duration::from_secs(60);
+/// Socket-level timeout on accepted TCP connection (must cover `DEFAULT_OTA_READ_TIMEOUT`
+/// so PSRAM-staged OTA flash writes do not trigger a premature TCP RST while awaiting 200 OK).
+pub const HTTP_SOCKET_TIMEOUT: Duration = Duration::from_secs(360);
 
 /// Delay before initiating hardware reboot after OTA commit to allow HTTP response flush.
 pub const HTTP_REBOOT_DELAY: Duration = Duration::from_millis(500);
