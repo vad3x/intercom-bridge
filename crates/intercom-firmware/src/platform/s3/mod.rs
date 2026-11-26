@@ -2,10 +2,15 @@
 
 #[cfg(target_os = "none")]
 pub mod board;
+#[cfg(target_os = "none")]
+pub mod flash;
 pub mod memory;
 pub mod pins;
 #[cfg(target_os = "none")]
 pub mod wireless;
+
+#[cfg(target_os = "none")]
+pub use flash::S3Flash;
 
 pub use memory::{
     heap_region_is_present, heap_region_sizes, internal_heap_layout, reclaimed_heap_size,
@@ -124,6 +129,20 @@ mod target_init {
         type Drivers = PlatformDrivers<S3Peripherals>;
 
         const MATTER_BUMP_SIZE: usize = 48_000;
+
+        fn is_wdt_reset() -> bool {
+            use esp_hal::rtc_cntl::SocResetReason;
+            matches!(
+                esp_hal::system::reset_reason(),
+                Some(
+                    SocResetReason::CoreMwdt0
+                        | SocResetReason::CoreMwdt1
+                        | SocResetReason::CoreRtcWdt
+                        | SocResetReason::CpuMwdt0
+                        | SocResetReason::CpuRtcWdt
+                )
+            )
+        }
 
         fn init() -> (Self, Self::Drivers) {
             let peripherals = esp_hal::init(

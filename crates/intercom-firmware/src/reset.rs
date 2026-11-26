@@ -194,18 +194,18 @@ pub fn init_persistence() -> (impl KvBlobStore, u32, RxPgaGain, TxDacGain) {
 #[cfg(all(target_os = "none", not(feature = "dummy-persist")))]
 mod kv_backend {
     use super::*;
-    pub(super) use intercom_adapter_gpio::flash::EspFlash;
+    pub(super) use crate::platform::target::ActiveFlash;
     use log::warn;
     pub(super) use rs_matter_embassy::persist::SeqMapKvBlobStore;
 
     pub fn init_persistence() -> (
-        PartitionedKvBlobStore<SeqMapKvBlobStore<EspFlash>, SeqMapKvBlobStore<EspFlash>>,
+        PartitionedKvBlobStore<SeqMapKvBlobStore<ActiveFlash>, SeqMapKvBlobStore<ActiveFlash>>,
         u32,
         RxPgaGain,
         TxDacGain,
     ) {
-        let matter_flash = EspFlash::new(crate::config::MATTER_KVS_RANGE.clone());
-        let system_flash = EspFlash::new(crate::config::SYSTEM_KVS_RANGE.clone());
+        let matter_flash = ActiveFlash::new(crate::config::MATTER_KVS_RANGE.clone());
+        let system_flash = ActiveFlash::new(crate::config::SYSTEM_KVS_RANGE.clone());
         let mut store = PartitionedKvBlobStore::new(
             SeqMapKvBlobStore::new(matter_flash, crate::config::MATTER_KVS_RANGE),
             SeqMapKvBlobStore::new(system_flash, crate::config::SYSTEM_KVS_RANGE),
@@ -216,7 +216,7 @@ mod kv_backend {
     }
 
     pub fn persist_audio_gains(rx: RxPgaGain, tx: TxDacGain) {
-        let system_flash = EspFlash::new(crate::config::SYSTEM_KVS_RANGE);
+        let system_flash = ActiveFlash::new(crate::config::SYSTEM_KVS_RANGE);
         let mut store = SeqMapKvBlobStore::new(system_flash, crate::config::SYSTEM_KVS_RANGE);
         if save_audio_gains(&mut store, rx, tx).is_err() {
             warn!("Failed to persist audio gains to system_kvs");
@@ -230,7 +230,7 @@ mod kv_backend {
     }
 
     pub fn persist_door_duration(duration_sec: u32) {
-        let system_flash = EspFlash::new(crate::config::SYSTEM_KVS_RANGE);
+        let system_flash = ActiveFlash::new(crate::config::SYSTEM_KVS_RANGE);
         let mut store = SeqMapKvBlobStore::new(system_flash, crate::config::SYSTEM_KVS_RANGE);
         if save_door_duration(&mut store, duration_sec).is_err() {
             warn!("Failed to persist door duration to system_kvs");
@@ -265,7 +265,7 @@ mod kv_backend {
             (range.end - range.start) / SECTOR_SIZE
         );
 
-        let mut flash = EspFlash::new(range.clone());
+        let mut flash = ActiveFlash::new(range.clone());
         if let Err(err) = flash.erase_range_blocking() {
             warn!("Flash erase for {} failed: {:?}", label, err);
             return;
@@ -328,7 +328,7 @@ impl FailureStore for IntercomFailureStore {
     fn persist(&self, summary: &str) -> Result<(), FailureStoreError> {
         #[cfg(all(target_os = "none", not(feature = "dummy-persist")))]
         {
-            let system_flash = kv_backend::EspFlash::new(crate::config::SYSTEM_KVS_RANGE);
+            let system_flash = kv_backend::ActiveFlash::new(crate::config::SYSTEM_KVS_RANGE);
             let mut store =
                 kv_backend::SeqMapKvBlobStore::new(system_flash, crate::config::SYSTEM_KVS_RANGE);
             let mut scratch = [0u8; 1024];
@@ -352,7 +352,7 @@ impl FailureStore for IntercomFailureStore {
     fn read<'a>(&self, buf: &'a mut [u8]) -> Option<&'a str> {
         #[cfg(all(target_os = "none", not(feature = "dummy-persist")))]
         {
-            let system_flash = kv_backend::EspFlash::new(crate::config::SYSTEM_KVS_RANGE);
+            let system_flash = kv_backend::ActiveFlash::new(crate::config::SYSTEM_KVS_RANGE);
             let mut store =
                 kv_backend::SeqMapKvBlobStore::new(system_flash, crate::config::SYSTEM_KVS_RANGE);
             match store.load(LAST_FAILURE_KEY, buf) {
@@ -370,7 +370,7 @@ impl FailureStore for IntercomFailureStore {
     fn clear(&self) -> Result<(), FailureStoreError> {
         #[cfg(all(target_os = "none", not(feature = "dummy-persist")))]
         {
-            let system_flash = kv_backend::EspFlash::new(crate::config::SYSTEM_KVS_RANGE);
+            let system_flash = kv_backend::ActiveFlash::new(crate::config::SYSTEM_KVS_RANGE);
             let mut store =
                 kv_backend::SeqMapKvBlobStore::new(system_flash, crate::config::SYSTEM_KVS_RANGE);
             let mut scratch = [0u8; 1024];

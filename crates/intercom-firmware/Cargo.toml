@@ -117,6 +117,8 @@ portable-atomic = { workspace = true, features = ["critical-section"] }
 static_cell = { workspace = true }
 
 [target.'cfg(target_os = "none")'.dependencies]
+embedded-storage = { workspace = true }
+embedded-storage-async = { workspace = true }
 intercom-adapter-webrtc = { path = "../intercom-adapter-webrtc", default-features = false, features = ["matter-port"] }
 intercom-adapter-gpio = { path = "../intercom-adapter-gpio", default-features = false }
 intercom-adapter-matter = { path = "../intercom-adapter-matter", default-features = false }

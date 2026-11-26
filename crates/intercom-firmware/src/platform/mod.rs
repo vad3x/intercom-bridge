@@ -81,6 +81,8 @@ pub trait PlatformDriver: Sized {
 
     fn init() -> (Self, Self::Drivers);
 
+    fn is_wdt_reset() -> bool;
+
     fn force_bus_relays_low();
 
     fn software_reset() -> !;
@@ -93,7 +95,7 @@ pub trait PlatformDriver: Sized {
 }
 
 #[cfg(target_os = "none")]
-mod target {
+pub(crate) mod target {
     #[cfg(all(feature = "esp32c6", not(feature = "esp32s31")))]
     pub use super::c6::board as active_board;
     #[cfg(all(
@@ -121,6 +123,11 @@ mod target {
     pub type ActiveOtaDriver = edf_ota::PsramOtaDriver;
     #[cfg(feature = "ota-disabled")]
     pub type ActiveOtaDriver = crate::disabled_ota::DisabledOtaDriver;
+
+    #[cfg(feature = "esp32s3")]
+    pub type ActiveFlash = super::s3::S3Flash;
+    #[cfg(not(feature = "esp32s3"))]
+    pub type ActiveFlash = intercom_adapter_gpio::flash::EspFlash;
 
     pub struct BoardHardware {
         pub wireless: BoardWireless,
